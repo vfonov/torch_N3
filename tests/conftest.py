@@ -9,6 +9,7 @@ import os
 import subprocess
 
 import pytest
+import torch
 
 from torch_n3.volume import load_volume, save_volume
 
@@ -23,6 +24,24 @@ MODEL_MASK = os.path.join("/opt/minc/1.9.18.13/share/N3",
 
 def testing_file(name):
     return os.path.join(TESTING, name)
+
+
+def assert_close(actual, expected, atol=0.0, rtol=0.0):
+    """Fail unless two arrays agree, whatever they arrived as.
+
+    Values reach these tests as tensors, as ``numpy`` arrays read back out of
+    MINC files, or as text loaded from a legacy program's output; this puts
+    them on the same footing first.
+    """
+    torch.testing.assert_close(torch.as_tensor(actual, dtype=torch.float64),
+                               torch.as_tensor(expected, dtype=torch.float64),
+                               rtol=rtol, atol=atol)
+
+
+def span(values):
+    """The range a legacy program's output covers, for scaling tolerances."""
+    values = torch.as_tensor(values, dtype=torch.float64)
+    return float(values.max() - values.min())
 
 
 @pytest.fixture(scope="session")

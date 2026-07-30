@@ -1,9 +1,13 @@
 """The *legacy* backend: N3's blocks as implemented by the original C++.
 
-Every function here is a thin, numpy-friendly wrapper around the CFFI shim in
+Every function here is a thin wrapper around the CFFI shim in
 ``torch_n3._legacy``.  No mathematics happens in this file -- that is the whole
-point.  During Stage 2 these functions are the oracle each PyTorch block is
-tested against.
+point: it is the oracle each block in :mod:`torch_n3.blocks` is tested
+against, and it exports the same names so that either can be dropped into the
+pipeline (see :func:`torch_n3.backends.resolve`).
+
+Tensors in, tensors out; the conversion to and from ``numpy`` -- and to and
+from the CPU -- happens here, because the C code knows nothing about either.
 
 Build the extension first::
 
@@ -11,13 +15,28 @@ Build the extension first::
 """
 
 import numpy as np
+import torch
 
 from torch_n3._legacy._n3legacy import ffi, lib
 
 
 def _as_double_array(values):
     """Return a contiguous float64 copy suitable for passing to the shim."""
+    if torch.is_tensor(values):
+        values = values.detach().cpu().numpy()
     return np.ascontiguousarray(values, dtype=np.float64)
+
+
+def _as_tensor(values):
+    """Hand a result back in the form the rest of the package expects."""
+    return torch.from_numpy(np.ascontiguousarray(values))
+
+
+def _as_mask_array(mask):
+    """A contiguous ``unsigned char`` mask for the shim."""
+    if torch.is_tensor(mask):
+        mask = mask.detach().cpu().numpy()
+    return np.ascontiguousarray(np.asarray(mask, dtype=bool), dtype=np.uint8)
 
 
 def _in(array):
@@ -76,12 +95,13 @@ def histogram(values, bins, value_range, parzen=True):
     if lib.n3_histogram(_in(values), values.size, int(bins), lo, hi,
                         1 if parzen else 0, _out(counts)) != 0:
         raise ValueError("histogram: bad arguments")
-    return counts
+    return _as_tensor(counts)
 
 
 def bin_centers(bins, value_range):
     """The intensity each histogram bin is centred on."""
-    return np.linspace(float(value_range[0]), float(value_range[1]), int(bins))
+    return _as_tensor(np.linspace(float(value_range[0]), float(value_range[1]),
+                                  int(bins)))
 
 
 def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
@@ -100,7 +120,7 @@ def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
     if lib.n3_sharpen_lut(_in(counts), counts.size, lo, hi, float(fwhm),
                           float(noise), 1 if deblur else 0, _out(lut)) != 0:
         raise ValueError("sharpen_lut: degenerate histogram")
-    return lut
+    return _as_tensor(lut)
 
 
 def correct_field(field, mask, step):
@@ -112,14 +132,14 @@ def correct_field(field, mask, step):
     (``legacy/N3/src/CorrectField/correctField.cc``).  Returns a new array.
     """
     out = _as_double_array(field)
-    flags = np.ascontiguousarray(np.asarray(mask, dtype=bool), dtype=np.uint8)
+    flags = _as_mask_array(mask)
     if out.shape != flags.shape:
         raise ValueError("field and mask must have the same shape")
 
     count = ffi.new("int[3]", [int(n) for n in out.shape])
     steps = ffi.new("double[3]", [float(s) for s in step])
     lib.n3_correct_field(_out(out), _mask_in(flags), count, steps)
-    return out
+    return _as_tensor(out)
 
 
 class BSplineField:
@@ -178,8 +198,7 @@ class BSplineField:
         if mask is None:
             flags, mask_ptr = None, ffi.NULL
         else:
-            flags = np.ascontiguousarray(np.asarray(mask, dtype=bool),
-                                         dtype=np.uint8)
+            flags = _as_mask_array(mask)
             mask_ptr = _mask_in(flags)
 
         if lib.n3_spline_add_volume(self._handle, _in(values), mask_ptr,
@@ -195,7 +214,7 @@ class BSplineField:
         n = lib.n3_spline_n_coefficients(self._handle)
         out = np.zeros(n, dtype=np.float64)
         lib.n3_spline_coefficients(self._handle, _out(out))
-        return out
+        return _as_tensor(out)
 
     def evaluate(self):
         """Evaluate the fitted spline on the grid it was fitted to."""
@@ -210,14 +229,14 @@ class BSplineField:
         if grid is self.grid:
             lib.n3_spline_evaluate_grid(self._handle, _out(out))
         else:
-            coef = self.coefficients
+            coef = _as_double_array(self.coefficients)
             handle = self._make_handle(grid, allocate=False)
             try:
                 lib.n3_spline_set_coefficients(handle, _in(coef), coef.size)
                 lib.n3_spline_evaluate_grid(handle, _out(out))
             finally:
                 lib.n3_spline_free(handle)
-        return out.reshape(tuple(grid.shape))
+        return _as_tensor(out.reshape(tuple(grid.shape)))
 
     def __del__(self):
         handle = getattr(self, "_handle", None)

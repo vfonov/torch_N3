@@ -2,9 +2,11 @@
 
 N3 only ever asks three things of a volume: the voxel values, the voxel size
 along each axis, and where the grid sits in world space.  :class:`Volume`
-carries exactly that, in *standard order* -- a C-ordered ``numpy`` array whose
-axes run slowest to fastest with positive steps -- so that the rest of the
-package can be written as ordinary array code.
+carries exactly that, in *standard order* -- a C-ordered ``torch`` tensor
+whose axes run slowest to fastest with positive steps -- so that the rest of
+the package can be written as ordinary tensor code.  The geometry stays in
+``numpy``: it is three numbers per axis and it describes the grid rather than
+travelling with it to a device.
 
 Note that ``minc2_simple`` reads MINC2 (HDF5) files only, while much older MINC
 data -- including ``legacy/N3/testing`` -- is MINC1, optionally gzipped.
@@ -17,6 +19,7 @@ import subprocess
 import tempfile
 
 import numpy as np
+import torch
 from minc2_simple import minc2_file
 from minc2_simple.minc2_simple import minc2_dim
 
@@ -26,11 +29,11 @@ class Volume:
 
     ``data[i, j, k]`` sits at world coordinate ``start + (i, j, k) * step``
     along the axes named by ``dir_cos``.  Axis 0 is the slowest-varying one,
-    matching ``numpy``'s C order.
+    matching C order.
     """
 
     def __init__(self, data, start, step, dir_cos=None):
-        self.data = np.ascontiguousarray(data, dtype=np.float64)
+        self.data = torch.as_tensor(data, dtype=torch.float64).contiguous()
         self.start = np.asarray(start, dtype=np.float64)
         self.step = np.asarray(step, dtype=np.float64)
         if dir_cos is None:
@@ -39,19 +42,15 @@ class Volume:
 
     @property
     def shape(self):
-        return self.data.shape
+        return tuple(self.data.shape)
 
     def like(self, data):
         """The same grid, holding ``data`` instead."""
         return Volume(data, self.start, self.step, self.dir_cos)
 
-    def world_of_axis(self, offsets):
-        """Map per-axis voxel offsets to per-axis world coordinates.
-
-        The splines work one axis at a time, so this is the only coordinate
-        conversion N3 needs: ``start + offset * step``, axis by axis.
-        """
-        return self.start + np.asarray(offsets, dtype=np.float64) * self.step
+    def to(self, device):
+        """The same volume, with its data on ``device``."""
+        return self.like(self.data.to(device))
 
     def resample_like(self, grid):
         """Sample this volume on ``grid``, as ``mincresample -nearest_neighbour``.
@@ -61,17 +60,22 @@ class Volume:
         fall outside this volume become zero, which is ``mincresample``'s
         default fill value.
         """
+        device = self.data.device
         picks, inside = [], []
         for axis in range(3):
             world = grid.start[axis] + np.arange(grid.shape[axis]) * grid.step[axis]
             index = np.rint((world - self.start[axis]) / self.step[axis]).astype(int)
-            inside.append((index >= 0) & (index < self.shape[axis]))
-            picks.append(np.clip(index, 0, self.shape[axis] - 1))
+            inside.append(torch.as_tensor((index >= 0) & (index < self.shape[axis]),
+                                          device=device))
+            picks.append(torch.as_tensor(np.clip(index, 0, self.shape[axis] - 1),
+                                         device=device))
 
         keep = (inside[0][:, None, None] & inside[1][None, :, None]
                 & inside[2][None, None, :])
-        data = np.where(keep, self.data[np.ix_(*picks)], 0.0)
-        return Volume(data, grid.start, grid.step, grid.dir_cos)
+        data = self.data[picks[0][:, None, None], picks[1][None, :, None],
+                         picks[2][None, None, :]]
+        return Volume(torch.where(keep, data, torch.zeros_like(data)),
+                      grid.start, grid.step, grid.dir_cos)
 
     def shrink(self, factor):
         """Sub-sample onto a coarser grid, as ``ShrinkVolume`` does.
@@ -90,7 +94,8 @@ class Volume:
         steps = [s * factor if do else s for s, do in zip(self.step, thin)]
 
         return self.resample_like(
-            Volume(np.zeros(counts), self.start, steps, self.dir_cos))
+            Volume(torch.zeros(counts, device=self.data.device),
+                   self.start, steps, self.dir_cos))
 
 
 def load_volume(path):
@@ -98,7 +103,7 @@ def load_volume(path):
     with _as_minc2(path) as readable:
         handle = minc2_file(readable)
         handle.setup_standard_order()
-        data = handle.load_complete_volume("float64")
+        data = torch.from_numpy(handle.load_complete_volume("float64"))
         # representation_dims() lists dimensions fastest-varying first, the
         # reverse of the array's axes.
         dims = list(reversed(handle.representation_dims()))
@@ -118,7 +123,8 @@ def save_volume(path, volume, like=None, store_dtype=None):
     ``-copy_header``, which is what the legacy drivers rely on to keep the
     output looking like the input.
     """
-    data = np.ascontiguousarray(volume.data, dtype=np.float64)
+    data = np.ascontiguousarray(volume.data.detach().cpu().numpy(),
+                                dtype=np.float64)
     out = minc2_file()
     template = None
 

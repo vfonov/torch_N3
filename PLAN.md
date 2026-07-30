@@ -6,7 +6,7 @@ N3 is decomposed into a handful of **pure functional blocks**. Every block gets 
 interchangeable implementations behind one signature:
 
 - `legacy` — calls the original N3 C/C++ through a CFFI extension (Stage 1)
-- `torch` — pure PyTorch (Stage 2)
+- `torch` — pure PyTorch (Stage 2), selected by `torch_n3.backends.resolve`
 
 The pipeline is written once, in Python, against the block interfaces. Because the two
 backends are swappable, the legacy backend is a **numerical oracle**: every Stage-2 test is
@@ -86,36 +86,56 @@ Exit criterion: `pytest tests/ -k stage1` green, and the Python pipeline reprodu
 
 ## Stage 2 — replace blocks with PyTorch, one at a time
 
-Each block, in this order (cheapest and most independently verifiable first):
+**Progress: Stage 2 complete.** `torch_n3/blocks/` is the port; `torch_n3/backends/legacy.py`
+is now only an oracle. `backends.resolve("torch"|"legacy")` switches between them and the
+pipeline runs on either, so every test below exists in both variants. Importing
+`torch_n3.pipeline` no longer pulls in the CFFI extension. 70 tests pass in ~12 s.
 
-1. `histogram` (incl. the Parzen/linear-split variant)
-2. `apply_lut` (continuous lookup = linear interpolation + clamping)
-3. `bimodal_threshold`
-4. `sharpen_lut` — `torch.fft`, Wiener filter, the `E[u|v]` ratio
-5. `bspline_fit` / `bspline_evaluate` — the hard one: cubic tensor B-spline normal equations
-   with the bending-energy penalty, solved with `torch.linalg`
-6. `shrink` / resampling
+| Block | Module | Agreement with the legacy |
+|---|---|---|
+| `histogram_range` | `blocks/histogram.py` | exact |
+| `histogram` (plain) | `blocks/histogram.py` | exact |
+| `histogram` (Parzen) | `blocks/histogram.py` | 5e-11 on 130k samples (summation order) |
+| `sharpen_lut` | `blocks/sharpen.py` | 4e-13 |
+| `apply_lut` | `minc_tools.py` | 5e-14 vs `minclookup` |
+| `bimodal_threshold` | `minc_tools.py` | exact |
+| `BSplineField` | `blocks/spline.py` | 1e-6 relative on the fitted field |
+| `correct_field` | `blocks/field.py` | 5e-6 relative |
+| `shrink` / resampling | `volume.py` | exact |
 
-Per block, red-green:
+Notes on the two loose ones:
 
-- **Red**: `tests/test_<block>.py` compares `torch` backend to `legacy` backend on fixtures
-  drawn from the real test volumes. It fails because the torch implementation does not exist.
-- **Green**: implement the smallest readable thing that passes.
-- **Refactor**: name things after the maths; docstring cites the N3 paper and the legacy lines.
+- **The B-spline normal equations are nearly singular** — condition number ~1e13 at the
+  default 200 mm spacing, where the knots are further apart than the volume is wide. The
+  *coefficients* therefore agree to only ~1e-4 (and would with any two solvers; LU, Cholesky
+  and the legacy's `dsysv` all differ by that much). The fitted field, which is what the
+  pipeline consumes, agrees to 1e-6 relative. Tests compare fields, not coefficients.
+- **`correct_field` cannot be matched exactly by construction.** The legacy sweeps its SOR
+  relaxation in raster order in `float`; the port sweeps the two checkerboard colours in turn,
+  which is the same Gauss-Seidel iteration reordered so it vectorises. Both approximate the
+  same Laplace solution, to about 5e-6 of each other.
 
-After each block flips, the end-to-end test re-runs with that block on `torch` and the rest on
-`legacy`, so a regression is always attributable to one block.
+**The iteration amplifies.** N3 feeds its own output back in, so backends that agree to 1.4e-7
+after one iteration disagree by 5e-4 after thirty (`test_the_iteration_amplifies_small
+_differences`). This is a property of the algorithm, and it caps how tightly *any* end-to-end
+comparison can be pinned — including the storage-precision story below. Running on the GPU
+moves the answer by the same order (3.4e-3 vs 3.0e-3 against `brain_nu_ref`), for the same
+reason: different reduction orders.
 
-Exit criterion: all blocks `torch`, the legacy CFFI extension no longer imported by the
-pipeline (only by tests), and the end-to-end result still matches `brain_nu_ref.mnc.gz`.
+Exit criterion (met): all blocks `torch`, the legacy CFFI extension no longer imported by the
+pipeline, and the end-to-end result still within the tolerance recorded for
+`brain_nu_ref.mnc.gz` — 3.0e-3, marginally closer than the legacy backend's 3.7e-3.
 
 ## Stage 3 — make it a PyTorch program, not a transcription
 
-Only after Stage 2 is green:
+The blocks are already device-agnostic and `--device cuda` runs end to end, but on the test
+volumes the GPU is slower than the CPU (0.95 s vs 0.42 s on `brain.mnc.gz`): the arrays are
+small and the loop is dominated by kernel launches. What is left:
 
-- batched / GPU execution, `float32` vs `float64` tolerance study
+- batching several volumes through one estimation loop, which is where a GPU would pay
+- `float32` vs `float64` tolerance study — everything is `float64` today
 - optional autograd-friendliness of the field fit
-- CLI mirroring `nu_correct`'s interface
+- the `.imp` compact-spline file, if handing fields back to the legacy tools is ever wanted
 
 ## Conventions
 

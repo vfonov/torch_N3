@@ -1,12 +1,12 @@
 """The two MINC command-line tools the N3 drivers lean on, as array code.
 
-Everything else N3 does lives in its own C++ (and is wrapped in
-:mod:`torch_n3.backends.legacy`); these two are general MINC utilities that
-happen to sit on the pipeline's critical path, so they are written out here.
-Both are pinned against the installed binaries in ``tests/test_minc_tools.py``.
+Everything else N3 does lives in its own C++, and is ported block by block in
+:mod:`torch_n3.blocks`; these two are general MINC utilities that happen to
+sit on the pipeline's critical path.  Both are pinned against the installed
+binaries in ``tests/test_minc_tools.py``.
 """
 
-import numpy as np
+import torch
 
 
 def apply_lut(values, lut, value_range):
@@ -20,9 +20,29 @@ def apply_lut(values, lut, value_range):
     This is how the sharpened histogram becomes a sharpened volume: the table
     produced by ``sharpen_hist`` *is* the mapping ``E[u | v]``.
     """
-    lut = np.asarray(lut, dtype=np.float64)
-    domain = np.linspace(float(value_range[0]), float(value_range[1]), lut.size)
-    return np.interp(values, domain, lut)
+    values = torch.as_tensor(values, dtype=torch.float64)
+    lut = torch.as_tensor(lut, dtype=torch.float64).reshape(-1)
+    entries = lut.numel()
+    if entries == 1:
+        return torch.full_like(values, float(lut[0]))
+
+    low, high = float(value_range[0]), float(value_range[1])
+    if high == low:
+        raise ValueError("apply_lut: empty range")
+
+    # Interpolate between the two table entries that bracket each value, using
+    # the entries' own positions -- which is the search minclookup performs,
+    # and is not quite the same in floating point as scaling the value into
+    # units of table entries.
+    domain = torch.linspace(low, high, entries, dtype=torch.float64,
+                            device=values.device)
+    left = (torch.searchsorted(domain, values.contiguous(), right=True) - 1)
+    left = left.clamp(0, entries - 2)
+    slope = (lut[left + 1] - lut[left]) / (domain[left + 1] - domain[left])
+
+    mapped = lut[left] + slope * (values - domain[left])
+    mapped = torch.where(values <= low, lut[0], mapped)
+    return torch.where(values >= high, lut[-1], mapped)
 
 
 def bimodal_threshold(values, bins=2000):
@@ -33,24 +53,26 @@ def bimodal_threshold(values, bins=2000):
     threshold is the centre of the winning bin, which is what ``mincstats``
     reports and what ``nu_evaluate`` uses when no mask is supplied.
     """
-    values = np.asarray(values, dtype=np.float64).ravel()
-    lo, hi = values.min(), values.max()
-    if hi <= lo:
-        return float(lo)
+    values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
+    low, high = float(values.min()), float(values.max())
+    if high <= low:
+        return low
 
-    width = (hi - lo) / bins
-    index = np.clip(((values - lo) / width).astype(int), 0, bins - 1)
-    counts = np.bincount(index, minlength=bins).astype(np.float64)
-    centres = lo + (np.arange(bins) + 0.5) * width
+    width = (high - low) / bins
+    index = ((values - low) / width).long().clamp(0, bins - 1)
+    counts = torch.bincount(index, minlength=bins).to(torch.float64)
+    centres = low + (torch.arange(bins, dtype=torch.float64,
+                                  device=values.device) + 0.5) * width
 
     # Cumulative weight and mean of the group at or below each candidate bin,
     # and of the group above it.
-    weight_lo = np.cumsum(counts)
-    weight_hi = counts.sum() - weight_lo
-    sum_lo = np.cumsum(counts * centres)
-    sum_hi = (counts * centres).sum() - sum_lo
+    weight_low = counts.cumsum(0)
+    weight_high = counts.sum() - weight_low
+    sum_low = (counts * centres).cumsum(0)
+    sum_high = (counts * centres).sum() - sum_low
 
-    with np.errstate(invalid="ignore", divide="ignore"):
-        between = weight_lo * weight_hi * (sum_lo / weight_lo - sum_hi / weight_hi) ** 2
-
-    return float(centres[np.nanargmax(between)])
+    between = (weight_low * weight_high
+               * (sum_low / weight_low - sum_high / weight_high) ** 2)
+    between = torch.where(torch.isnan(between),
+                          torch.full_like(between, -float("inf")), between)
+    return float(centres[int(between.argmax())])

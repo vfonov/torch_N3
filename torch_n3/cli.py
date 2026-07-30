@@ -55,6 +55,11 @@ def build_parser():
     protocol.add_argument("--field-floor", type=float, default=0.1,
                           help="smallest field value allowed before dividing")
 
+    parser.add_argument("--backend", choices=("torch", "legacy"),
+                        default=DEFAULTS["backend"],
+                        help="which implementation of the blocks to run "
+                             "(default: %(default)s)")
+    parser.add_argument("--device", help="run on this torch device, e.g. cuda")
     parser.add_argument("--verbose", action="store_true",
                         help="report the field change at every iteration")
     return parser
@@ -63,24 +68,29 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
 
-    volume = load_volume(args.input)
-    mask = load_volume(args.mask) if args.mask else None
-    evaluation_mask = (load_volume(args.evaluation_mask)
-                       if args.evaluation_mask else None)
+    def read(path):
+        volume = load_volume(path)
+        return volume.to(args.device) if args.device else volume
+
+    volume = read(args.input)
+    mask = read(args.mask) if args.mask else None
+    evaluation_mask = read(args.evaluation_mask) if args.evaluation_mask else None
 
     field = nu_estimate(volume, mask=mask, verbose=args.verbose,
                         distance=args.distance, fwhm=args.fwhm, noise=args.noise,
                         bins=args.bins, shrink=args.shrink, lam=args.lam,
-                        iterations=tuple(args.iterations), stop=tuple(args.stop))
+                        iterations=tuple(args.iterations), stop=tuple(args.stop),
+                        backend=args.backend)
 
     corrected = nu_evaluate(volume, field, mask=evaluation_mask,
-                            field_floor=args.field_floor)
+                            field_floor=args.field_floor, backend=args.backend)
     save_volume(args.output, corrected, like=args.input)
 
     if args.field:
         save_volume(args.field,
                     evaluate_field(volume, field, mask=evaluation_mask,
-                                   field_floor=args.field_floor),
+                                   field_floor=args.field_floor,
+                                   backend=args.backend),
                     store_dtype="float32")
 
     return 0

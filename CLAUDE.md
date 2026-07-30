@@ -25,8 +25,8 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/testing/` | Test volumes **and a reference result** (`brain_nu_ref.mnc.gz`) — the regression target. |
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
-| `torch_n3/` | The port. `pipeline.py` is N3 itself; `volume.py` is MINC I/O and geometry; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/`; `minc_tools.py` holds the two MINC utilities N3 leans on. |
-| `tests/` | `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons against the installed programs. |
+| `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
+| `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons against the installed programs, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. |
 
 ## The algorithm as the legacy code actually implements it
 
@@ -169,6 +169,26 @@ tensors.
   results depend on it when no mask is supplied. `mincstats -biModalT`, which `nu_evaluate`
   uses, is plain Otsu over a 2000-bin histogram returning the winning **bin centre** —
   reproduced exactly by `torch_n3.minc_tools.bimodal_threshold`.
+- **`torch.linspace`, `torch.zeros` etc. default to float32.** Every tensor N3 touches must
+  be `float64`; a stray float32 grid of table positions costs six digits and shows up as a
+  1e-7 disagreement with `minclookup`, which looks like an algorithm bug and is not.
+- **`torch.std` defaults to `unbiased=True`, `numpy.std` to `ddof=0`.** The stopping rule uses
+  the population standard deviation; pass `unbiased=False`.
+- **The B-spline normal equations are nearly singular** — condition number ~1e13 at the
+  default 200 mm knot spacing, because the knots are further apart than the volume is wide.
+  The coefficients are not determined to better than ~1e-4 by *any* solver (LU, Cholesky and
+  the legacy's `dsysv` all differ by that much); the fitted field is determined to ~1e-6.
+  Compare fields, never coefficients.
+- **`correct_field` cannot be reproduced exactly.** Its SOR relaxation sweeps in raster order,
+  which is inherently sequential; `blocks/field.py` sweeps the two checkerboard colours in
+  turn, the same Gauss-Seidel iteration reordered. The two agree to ~5e-6 relative, which is
+  about the accuracy of the solve itself. Its *prolongation* between levels, on the other
+  hand, is exactly reproducible and matters: after the last level (`inc == 2`) the odd voxels
+  are never relaxed, only interpolated.
+- **The iteration amplifies.** Backends that agree to 1.4e-7 after one iteration disagree by
+  5e-4 after ten, and running the same code on a GPU moves the end-to-end result as much as
+  changing backend does. No end-to-end N3 comparison is meaningful past three digits; pin
+  blocks, not pipelines.
 - **The legacy's precision is not float.** Every intermediate passes between programs as a
   MINC file, so it is rounded on the way. Worse, writing and reading disagree: `mincmath`
   writes each *slice* against its own `image-min`/`image-max`, while `volume_io` programs

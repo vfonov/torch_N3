@@ -5,15 +5,16 @@ A reimplementation of **N3** — Non-parametric Non-uniform intensity Normalizat
 multiplicative "bias field" that MRI scanners leave across a volume.
 
 The original is a set of Perl scripts driving a dozen C++ programs
-(`legacy/N3/`, reference only). This is the same algorithm as one readable Python
+(`legacy/N3/`, reference only). This is the same algorithm as one readable PyTorch
 package, block by block, with each block checked against the program it replaces.
 
 ---
 
 ## Quick start
 
-There is no install step: run everything from the repository root, and build the
-extension once first (see [Building and testing](#building-and-testing)).
+There is no install step and nothing to compile: run everything from the repository
+root. (The CFFI extension under `torch_n3/_legacy/` is only needed to run the tests
+or `--backend legacy`; see [Building and testing](#building-and-testing).)
 
 Correct a volume:
 
@@ -22,7 +23,7 @@ python3 -m torch_n3 brain.mnc corrected.mnc --mask brain_mask.mnc
 ```
 
 That is the equivalent of `nu_correct brain.mnc corrected.mnc -mask brain_mask.mnc`,
-and it uses the same defaults. On the 91×109×91 test brain it takes about 1.5 s.
+and it uses the same defaults. On the 91×109×91 test brain it takes about 0.4 s.
 
 To watch it converge, and to keep the field it found:
 
@@ -33,9 +34,9 @@ python3 -m torch_n3 brain.mnc corrected.mnc \
 
 ```
 iteration 0: field change 0.009601
-iteration 1: field change 0.008413
+iteration 1: field change 0.008428
 ...
-iteration 30: field change 0.000973
+iteration 30: field change 0.000971
 ```
 
 The volumes in `legacy/N3/testing/` work as-is, gzipped:
@@ -72,6 +73,8 @@ All of the protocol options mirror `nu_correct`'s and default to its values:
 | `--iterations` | 50 | Iteration budget, one number per stopping stage. |
 | `--stop` | 0.001 | Stop when the field moves less than this, one per stage. |
 | `--field-floor` | 0.1 | Smallest field value allowed, so the division stays sane. |
+| `--device` | cpu | Any torch device, e.g. `cuda`. See [How close is it?](#how-close-is-it) first. |
+| `--backend` | torch | `legacy` runs the original C++ for every block instead. |
 
 Staged stopping works as in N3 — `--iterations 10 20 --stop 0.001 0.005` means "stop
 at 0.001, but after iteration 10 accept 0.005 as well".
@@ -113,18 +116,22 @@ the field *as the correction applies it*: masked, extended outwards, and floored
 
 ### Volumes
 
-`Volume` is a numpy array plus the geometry N3 needs, always in standard order —
+`Volume` is a tensor plus the geometry N3 needs, always in standard order —
 C-ordered, axis 0 slowest, positive steps:
 
 ```python
-volume.data       # float64 ndarray, shape (nz, ny, nx)
-volume.step       # voxel size along each axis
-volume.start      # world coordinate of voxel (0, 0, 0)
+volume.data       # float64 tensor, shape (nz, ny, nx)
+volume.step       # voxel size along each axis   (these two stay in numpy: they
+volume.start      # world coordinate of (0,0,0)   describe the grid, and don't
+                  #                               travel to a device with it)
 
 volume.like(new_data)          # same grid, different values
+volume.to("cuda")              # same volume, data on another device
 volume.shrink(4)               # the coarse estimation grid
 other.resample_like(volume)    # nearest-neighbour onto this grid
 ```
+
+Everything downstream stays on whatever device `volume.data` is on.
 
 `load_volume` handles gzipped and MINC1 files by converting them with `mincconvert`
 first — `minc2_simple` itself reads MINC2 (HDF5) only.
@@ -144,7 +151,10 @@ additive one. Each iteration:
 3. **Keep only the smooth part.** Fit a cubic tensor B-spline with a bending-energy
    penalty, so only variation on the scale of `--distance` survives.
 
-Repeat until the field stops moving, exponentiate, and divide.
+Repeat until the field stops moving, exponentiate, and divide. Step 1 is
+`blocks/histogram.py` and `blocks/sharpen.py`, step 3 is `blocks/spline.py`, and
+`blocks/field.py` is what makes the fitted field usable outside the mask before the
+division.
 
 Read `torch_n3/pipeline.py` alongside `legacy/N3/src/NUcorrect/nu_estimate_np_and_em.in`
 — it is laid out to follow the original step by step.
@@ -154,14 +164,19 @@ Read `torch_n3/pipeline.py` alongside `legacy/N3/src/NUcorrect/nu_estimate_np_an
 | Module | Role |
 |---|---|
 | `torch_n3/pipeline.py` | N3 itself: `nu_estimate`, `nu_evaluate`, `nu_correct`. |
+| `torch_n3/blocks/histogram.py` | The masked histogram, `volume_hist`. |
+| `torch_n3/blocks/sharpen.py` | The sharpened mapping, `sharpen_hist` — the mathematical core. |
+| `torch_n3/blocks/spline.py` | The smooth field fit, `spline_smooth`. |
+| `torch_n3/blocks/field.py` | The field extension past the mask, `correct_field`. |
 | `torch_n3/volume.py` | MINC I/O, geometry, shrinking and resampling. |
 | `torch_n3/minc_tools.py` | The two MINC utilities on the critical path: continuous lookup, and the Otsu threshold. |
-| `torch_n3/backends/legacy.py` | The original C++ blocks — histogram, sharpened lookup table, B-spline fit, field extension. |
+| `torch_n3/backends/legacy.py` | The same blocks, as the original C++. |
 | `torch_n3/_legacy/` | The CFFI shim that compiles those blocks out of `legacy/N3/src`. |
 | `torch_n3/cli.py` | The command line. |
 
-The legacy backend is deliberate: it makes the original code a numerical oracle, so the
-PyTorch replacements planned in `PLAN.md` can be checked against it one block at a time.
+The legacy backend is deliberate: it makes the original code a numerical oracle, so each
+PyTorch block has something exact to be tested against. `torch_n3.backends.resolve` picks
+between the two and the pipeline runs on either — which is all `--backend legacy` does.
 
 ---
 
@@ -176,32 +191,57 @@ python3 torch_n3/_legacy/build_legacy.py
 It compiles `Spline.cc`, `TBSpline.cc`, `DHistogram.cc`, `WHistogram.cc`,
 `sharpen_hist.cc` and `correctField.cc` straight out of `legacy/N3/src` — nothing is
 copied or modified — and links against the EBTKS and LAPACK that ship with the
-installed MINC toolkit.
+installed MINC toolkit. Only the tests and `--backend legacy` need it.
 
 ```bash
-python3 -m pytest              # the whole suite, about 5 s
-python3 -m pytest tests/test_pipeline.py -k sharpen    # one test
+python3 -m pytest              # the whole suite, about 12 s
+python3 -m pytest tests/test_spline.py         # one block
+python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
 
-The tests are the cases from `legacy/N3/testing/CMakeLists.txt`, re-expressed as
-comparisons: run the installed N3 program, run the Python, require agreement. They
-need the MINC toolkit on `PATH`.
+The tests come in two kinds. The cases from `legacy/N3/testing/CMakeLists.txt` are
+re-expressed as comparisons: run the installed N3 program, run the Python, require
+agreement — those need the MINC toolkit on `PATH`. The per-block tests
+(`test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py`) compare
+the PyTorch block against the same code compiled into the CFFI shim.
 
 ### How close is it?
 
-Every block matches its legacy counterpart to the precision of the file the legacy
-writes it into — histogram, sharpened lookup table, `minclookup`, `spline_smooth`,
-`evaluate_field`, `correct_field`, `mincresample`, `resample_labels`,
-`mincstats -biModalT`.
+Block by block, against the original C++:
 
-End to end, correcting `brain.mnc.gz` lands **2.9e-3 relative RMS** from
-`brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. That gap is storage, not
-arithmetic. Legacy N3 passes every intermediate volume between programs as a MINC file:
-12-bit before the mask is applied and 16-bit after, scaled slice by slice on write and
-rescaled onto a single global grid on read. The estimation is a feedback loop, so
-thirty iterations amplify that rounding. `torch_n3` keeps float64 throughout, which is
-more accurate but not identical. Reproducing the reference voxel for voxel would mean
-modelling MINC's storage rather than N3; see `PLAN.md`.
+| Block | Agreement |
+|---|---|
+| histogram range, plain histogram, Otsu threshold, resampling | exact |
+| Parzen histogram | 5e-11 over 130k samples — summation order |
+| sharpened lookup table | 4e-13 |
+| continuous lookup, vs `minclookup` | 5e-14 |
+| B-spline fit, as a fitted field | 1e-6 relative |
+| field extension, vs `correct_field` | 5e-6 relative |
+
+The last two are loose for reasons that are not going away. The normal equations N3
+solves have a condition number around 1e13 at the default 200 mm knot spacing — the
+knots are further apart than the volume is wide — so the *coefficients* are barely
+determined and any two solvers disagree about them; the fitted field, which is what
+gets used, is fine. And `correct_field` relaxes in raster order in `float`, which is
+inherently sequential; the port sweeps the two checkerboard colours in turn instead,
+the same iteration reordered so that it vectorises.
+
+End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
+`brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for
+that, and neither is an error in the port.
+
+**Storage.** Legacy N3 passes every intermediate volume between programs as a MINC
+file: 12-bit before the mask is applied and 16-bit after, scaled slice by slice on
+write and rescaled onto a single global grid on read. `torch_n3` keeps float64
+throughout, which is more accurate but not identical. Reproducing the reference voxel
+for voxel would mean modelling MINC's storage rather than N3; see `PLAN.md`.
+
+**Amplification.** N3's loop feeds its output back into itself, and it magnifies small
+differences: the PyTorch and C++ backends agree to 1.4e-7 after one iteration and to
+only 5e-4 after ten. So no end-to-end number here is meaningful past three digits —
+running the same code on a GPU moves it by as much (3.4e-3), because the reductions
+happen in a different order. That is worth knowing before reading too much into a
+comparison of two N3 outputs, whoever produced them.
 
 ## Requirements
 
