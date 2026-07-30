@@ -21,6 +21,11 @@ def _as_double_array(values):
 
 
 def _in(array):
+    """A ``const double *`` view of ``array``.
+
+    The caller must keep ``array`` alive for the duration of the call: cffi
+    does not take a reference to the buffer it points into.
+    """
     return ffi.cast("const double *", ffi.from_buffer(array))
 
 
@@ -28,17 +33,30 @@ def _out(array):
     return ffi.cast("double *", ffi.from_buffer(array))
 
 
-def histogram_range(values):
+def _mask_in(array):
+    return ffi.cast("const unsigned char *", ffi.from_buffer(array))
+
+
+def histogram_range(values, initial=None):
     """Intensity range N3 would choose for ``volume_hist -auto_range``.
 
     Returns ``(min, max)``.  Note this is *not* simply ``(values.min(),
     values.max())`` -- the legacy scan uses an ``else if`` that lets a sample
     update only one bound per visit.  The difference is invisible except on
     degenerate inputs, but the port reproduces it so the two agree exactly.
+
+    ``initial`` is the ``(min, max)`` the scan starts from.  ``volume_hist``
+    seeds it with the range of the *whole* volume and then scans only the
+    voxels selected by the mask, so masked calls must pass that in; the
+    default reproduces the unmasked case.
     """
     values = _as_double_array(values).ravel()
+    if initial is None:
+        initial = (values.max(), values.min())
     out = np.zeros(2, dtype=np.float64)
-    if lib.n3_histogram_range(_in(values), values.size, _out(out)) != 0:
+    if lib.n3_histogram_range(_in(values), values.size,
+                              float(initial[0]), float(initial[1]),
+                              _out(out)) != 0:
         raise ValueError("histogram_range: empty input")
     return float(out[0]), float(out[1])
 
@@ -85,6 +103,25 @@ def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
     return lut
 
 
+def correct_field(field, mask, step):
+    """Extend ``field`` from the mask into the rest of the volume.
+
+    The spline that N3 fits is exactly zero outside its domain, so before
+    dividing, ``nu_evaluate`` runs ``correct_field``: a multigrid Gauss-Seidel
+    solve of Laplace's equation that grows the masked field outward smoothly
+    (``legacy/N3/src/CorrectField/correctField.cc``).  Returns a new array.
+    """
+    out = _as_double_array(field)
+    flags = np.ascontiguousarray(np.asarray(mask, dtype=bool), dtype=np.uint8)
+    if out.shape != flags.shape:
+        raise ValueError("field and mask must have the same shape")
+
+    count = ffi.new("int[3]", [int(n) for n in out.shape])
+    steps = ffi.new("double[3]", [float(s) for s in step])
+    lib.n3_correct_field(_out(out), _mask_in(flags), count, steps)
+    return out
+
+
 class BSplineField:
     """A cubic tensor B-spline fitted to a masked volume.
 
@@ -96,36 +133,59 @@ class BSplineField:
 
     where ``J`` is the bending energy tensor.  The spline evaluates to exactly
     zero outside its domain.
+
+    The domain is the whole bounding box of the fitting grid, which is what
+    ``spline_smooth -full_support`` uses and what ``nu_estimate`` asks for.
+    Because it is remembered in *world* coordinates, a spline fitted on the
+    coarse estimation grid can be evaluated at full resolution -- exactly the
+    round trip the ``.imp`` mapping file performs between ``nu_estimate`` and
+    ``nu_evaluate``.
     """
 
-    def __init__(self, shape, start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0),
-                 distance=200.0, lam=1e-7):
-        self.shape = tuple(int(s) for s in shape)
-        self._handle = lib.n3_spline_create(
-            ffi.new("double[3]", [float(v) for v in start]),
-            ffi.new("double[3]", [float(v) for v in step]),
-            ffi.new("int[3]", [int(v) for v in self.shape]),
-            float(distance), float(lam))
+    def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None):
+        self.grid = grid
+        self.distance = float(distance)
+        self.lam = float(lam)
+        self.domain_world = (_domain_of(grid) if domain_world is None
+                             else tuple(np.asarray(d, float) for d in domain_world))
+        self._handle = self._make_handle(grid, allocate=True)
         self._fitted = False
 
-    def fit(self, volume, mask=None):
-        """Fit to ``volume``; only voxels where ``mask`` is true contribute."""
-        volume = np.ascontiguousarray(volume, dtype=np.float64)
-        if volume.shape != self.shape:
-            raise ValueError(
-                "volume shape %s != spline shape %s" % (volume.shape, self.shape))
+    def _make_handle(self, grid, allocate):
+        """Create a ``TBSplineVolume`` over ``grid`` sharing this domain.
+
+        The legacy splines measure position as ``voxel index * step`` with the
+        grid's own origin at zero, so the world-space domain has to be
+        re-expressed relative to whichever grid is being used.
+        """
+        lo, hi = (np.asarray(d) - grid.start for d in self.domain_world)
+        domain = ffi.new("double[6]", [float(v) for pair in zip(lo, hi)
+                                       for v in pair])
+        return lib.n3_spline_create_on_domain(
+            domain,
+            ffi.new("double[3]", [0.0, 0.0, 0.0]),
+            ffi.new("double[3]", [float(s) for s in grid.step]),
+            ffi.new("int[3]", [int(n) for n in grid.shape]),
+            self.distance, self.lam, 1 if allocate else 0)
+
+    def fit(self, values, mask=None, subsample=1):
+        """Fit to ``values``; only voxels where ``mask`` is true contribute."""
+        values = _as_double_array(values)
+        if values.shape != tuple(self.grid.shape):
+            raise ValueError("values shape %s != grid shape %s"
+                             % (values.shape, tuple(self.grid.shape)))
+
         if mask is None:
-            mask = np.ones(self.shape, dtype=bool)
-        mask = np.ascontiguousarray(mask).astype(bool)
+            flags, mask_ptr = None, ffi.NULL
+        else:
+            flags = np.ascontiguousarray(np.asarray(mask, dtype=bool),
+                                         dtype=np.uint8)
+            mask_ptr = _mask_in(flags)
 
-        # Kept as an explicit loop: it mirrors the legacy fitting loop exactly
-        # and is only used as the reference implementation.
-        add = lib.n3_spline_add
-        handle = self._handle
-        for x, y, z in zip(*np.nonzero(mask)):
-            add(handle, int(x), int(y), int(z), float(volume[x, y, z]))
-
-        if lib.n3_spline_fit(handle) != 0:
+        if lib.n3_spline_add_volume(self._handle, _in(values), mask_ptr,
+                                    int(subsample)) != 0:
+            raise RuntimeError("B-spline: could not add data points")
+        if lib.n3_spline_fit(self._handle) != 0:
             raise RuntimeError("B-spline fit failed (singular normal equations)")
         self._fitted = True
         return self
@@ -138,15 +198,40 @@ class BSplineField:
         return out
 
     def evaluate(self):
-        """Evaluate the fitted spline on the whole voxel grid."""
+        """Evaluate the fitted spline on the grid it was fitted to."""
+        return self.evaluate_on(self.grid)
+
+    def evaluate_on(self, grid):
+        """Evaluate the fitted spline on any grid in the same world space."""
         if not self._fitted:
             raise RuntimeError("evaluate() before fit()")
-        out = np.zeros(int(np.prod(self.shape)), dtype=np.float64)
-        lib.n3_spline_evaluate_grid(self._handle, _out(out))
-        return out.reshape(self.shape)
+
+        out = np.zeros(int(np.prod(grid.shape)), dtype=np.float64)
+        if grid is self.grid:
+            lib.n3_spline_evaluate_grid(self._handle, _out(out))
+        else:
+            coef = self.coefficients
+            handle = self._make_handle(grid, allocate=False)
+            try:
+                lib.n3_spline_set_coefficients(handle, _in(coef), coef.size)
+                lib.n3_spline_evaluate_grid(handle, _out(out))
+            finally:
+                lib.n3_spline_free(handle)
+        return out.reshape(tuple(grid.shape))
 
     def __del__(self):
         handle = getattr(self, "_handle", None)
         if handle is not None:
             lib.n3_spline_free(handle)
             self._handle = None
+
+
+def _domain_of(grid):
+    """The world-space box a ``-full_support`` spline is defined on.
+
+    ``splineSmooth.cc:232`` takes the whole volume, half a voxel beyond the
+    outermost voxel centres.
+    """
+    shape = np.asarray(grid.shape, dtype=np.float64)
+    return (grid.start - 0.5 * grid.step,
+            grid.start + (shape - 0.5) * grid.step)

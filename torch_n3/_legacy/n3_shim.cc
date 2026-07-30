@@ -46,7 +46,9 @@ int n3_histogram(const double *values, long n, int nbins,
   return 0;
 }
 
-int n3_histogram_range(const double *values, long n, double *out_min_max)
+int n3_histogram_range(const double *values, long n,
+                       double init_min, double init_max,
+                       double *out_min_max)
 {
   if (n <= 0)
     return -1;
@@ -54,7 +56,7 @@ int n3_histogram_range(const double *values, long n, double *out_min_max)
   /* This mirrors minchist.cc:163-186 including its `else if`: a value can
    * only update one of the two bounds per visit.  Replicated deliberately so
    * that the PyTorch port can be compared against it exactly. */
-  double lo = values[0], hi = values[0];
+  double lo = init_min, hi = init_max;
   for (long i = 0; i < n; i++) {
     if (values[i] < lo)
       lo = values[i];
@@ -132,10 +134,48 @@ void *n3_spline_create(const double *start, const double *step,
   return (void *) h;
 }
 
+void *n3_spline_create_on_domain(const double *domain, const double *start,
+                                 const double *step, const int *count,
+                                 double distance, double lambda, int allocate)
+{
+  DblMat d(3, 2);
+  for (int i = 0; i < 3; i++) {
+    d(i, 0) = domain[2 * i];
+    d(i, 1) = domain[2 * i + 1];
+  }
+
+  n3_spline_handle *h = new n3_spline_handle;
+  h->spline = new TBSplineVolume(d, start, step, count, distance, lambda,
+                                 allocate ? TRUE : FALSE);
+  for (int i = 0; i < 3; i++)
+    h->count[i] = count[i];
+  return (void *) h;
+}
+
 int n3_spline_add(void *handle, int x, int y, int z, double value)
 {
   n3_spline_handle *h = (n3_spline_handle *) handle;
   return h->spline->addDataPoint(x, y, z, value) ? 0 : -1;
+}
+
+int n3_spline_add_volume(void *handle, const double *values,
+                         const unsigned char *mask, int subsample)
+{
+  n3_spline_handle *h = (n3_spline_handle *) handle;
+  const int *n = h->count;
+
+  if (subsample < 1)
+    return -1;
+
+  for (int x = 0; x < n[0]; x += subsample)
+    for (int y = 0; y < n[1]; y += subsample)
+      for (int z = 0; z < n[2]; z += subsample) {
+        long at = ((long) x * n[1] + y) * n[2] + z;
+        if (mask == 0 || mask[at])
+          if (!h->spline->addDataPoint(x, y, z, values[at]))
+            return -1;
+      }
+  return 0;
 }
 
 int n3_spline_fit(void *handle)
@@ -148,6 +188,15 @@ int n3_spline_n_coefficients(void *handle)
 {
   n3_spline_handle *h = (n3_spline_handle *) handle;
   return (int) h->spline->getCoefficients().size();
+}
+
+int n3_spline_set_coefficients(void *handle, const double *coef, int n)
+{
+  n3_spline_handle *h = (n3_spline_handle *) handle;
+  DblArray values(n);
+  for (int i = 0; i < n; i++)
+    values[i] = coef[i];
+  return h->spline->putCoefficients(values) ? 0 : -1;
 }
 
 int n3_spline_coefficients(void *handle, double *out)

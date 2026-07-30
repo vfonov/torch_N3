@@ -6,16 +6,18 @@ Stage 2 can trust it as an oracle.  If the shim ever drifts from what
 tests, which keeps the blame in the right place.
 """
 
-import os
 import subprocess
 
 import numpy as np
 import pytest
 
 from torch_n3.backends import legacy
+from torch_n3.volume import Volume
 
-N3_TESTING = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "legacy", "N3", "testing")
+
+def unit_grid(shape):
+    """A 1 mm isotropic grid at the origin -- geometry only, no data."""
+    return Volume(np.zeros(shape), start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0))
 
 
 @pytest.fixture(scope="module")
@@ -101,8 +103,8 @@ def test_bspline_reproduces_a_linear_ramp():
                           indexing="ij")
     ramp = 1.0 + 0.5 * x - 0.25 * y + 0.125 * z
 
-    spline = legacy.BSplineField(shape, distance=4.0, lam=1e-7).fit(ramp)
-    fitted = spline.evaluate()
+    spline = legacy.BSplineField(unit_grid(shape), distance=4.0, lam=1e-7)
+    fitted = spline.fit(ramp).evaluate()
 
     np.testing.assert_allclose(fitted, ramp, atol=1e-6)
 
@@ -116,7 +118,8 @@ def test_bspline_smooths_away_noise():
     rng = np.random.default_rng(0)
     noisy = trend + rng.normal(0.0, 0.5, shape)
 
-    fitted = legacy.BSplineField(shape, distance=12.0, lam=1e-7).fit(noisy).evaluate()
+    fitted = legacy.BSplineField(unit_grid(shape), distance=12.0,
+                                 lam=1e-7).fit(noisy).evaluate()
 
     assert np.abs(fitted - trend).max() < np.abs(noisy - trend).max() / 3
 
@@ -134,14 +137,16 @@ def test_bspline_respects_the_mask():
     corrupted = ramp.copy()
     corrupted[8:, :, :] = 1000.0
 
-    clean_fit = legacy.BSplineField(shape, distance=4.0).fit(ramp, mask).evaluate()
-    corrupt_fit = legacy.BSplineField(shape, distance=4.0).fit(corrupted, mask).evaluate()
+    grid = unit_grid(shape)
+    clean_fit = legacy.BSplineField(grid, distance=4.0).fit(ramp, mask).evaluate()
+    corrupt_fit = legacy.BSplineField(grid, distance=4.0).fit(corrupted,
+                                                              mask).evaluate()
 
     np.testing.assert_allclose(clean_fit[mask], corrupt_fit[mask], atol=1e-8)
 
 
-def test_legacy_test_volumes_are_available():
+def test_legacy_test_volumes_are_available(chunk, chunk_mask, brain,
+                                           brain_reference):
     """Stage 1's end-to-end comparison needs these fixtures."""
-    for name in ("chunk.mnc.gz", "chunk_mask.mnc.gz", "brain.mnc.gz",
-                 "brain_nu_ref.mnc.gz"):
-        assert os.path.exists(os.path.join(N3_TESTING, name)), name
+    assert chunk.shape == chunk_mask.shape
+    assert brain.shape == brain_reference.shape

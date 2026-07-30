@@ -25,6 +25,8 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/testing/` | Test volumes **and a reference result** (`brain_nu_ref.mnc.gz`) — the regression target. |
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
+| `torch_n3/` | The port. `pipeline.py` is N3 itself; `volume.py` is MINC I/O and geometry; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/`; `minc_tools.py` holds the two MINC utilities N3 leans on. |
+| `tests/` | `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons against the installed programs. |
 
 ## The algorithm as the legacy code actually implements it
 
@@ -164,7 +166,18 @@ tensors.
 - Estimation runs on the shrunk grid but the output field is evaluated at full resolution —
   don't collapse those two grids into one.
 - `volume_stats -biModalT` (Otsu-style bimodal threshold) is what produces the automatic mask;
-  results depend on it when no mask is supplied.
+  results depend on it when no mask is supplied. `mincstats -biModalT`, which `nu_evaluate`
+  uses, is plain Otsu over a 2000-bin histogram returning the winning **bin centre** —
+  reproduced exactly by `torch_n3.minc_tools.bimodal_threshold`.
+- **The legacy's precision is not float.** Every intermediate passes between programs as a
+  MINC file, so it is rounded on the way. Worse, writing and reading disagree: `mincmath`
+  writes each *slice* against its own `image-min`/`image-max`, while `volume_io` programs
+  (`volume_hist`, `spline_smooth`) hand the reader a volume rescaled onto a *single* grid for
+  the whole file. The level count depends on which file `mincmath` took its header from —
+  the input's `valid_range` (4096 for the 12-bit test data) before the mask is applied, and
+  the full 16 bits after, because the driver builds the mask with `-short -signed`. This is
+  why a float64 port cannot reproduce `brain_nu_ref.mnc.gz` to the legacy suite's `1e-4`;
+  see `tests/test_pipeline.py`.
 
 ## Environment
 
@@ -177,3 +190,18 @@ tensors.
   what makes the array numpy/torch C-order compatible — the legacy MINC files here have
   file order `xspace zspace yspace`.
 - Do not install packages; if something is missing, say so and stop.
+
+### minc2_simple gotchas (learned the hard way)
+
+- It reads **MINC2 (HDF5) only**. Everything in `legacy/N3/testing/` is MINC1 *and* gzipped,
+  so it must go through `mincconvert -2` first — `torch_n3.volume.load_volume` does this
+  transparently.
+- `representation_dims()` and `store_dims()` list dimensions **fastest-varying first**, the
+  reverse of the numpy axes. `.shape` is likewise reversed relative to `.data.shape`.
+- `voxel_to_world()` takes indices in *storage* order, not standard order. Don't mix it with
+  standard-order arrays; compute geometry from `representation_dims()` instead.
+- `imitate(other, path=...)` already calls `create()`; calling `create()` again fails.
+  `set_volume_range()` must come *after* `create()`.
+- Several legacy programs (`spline_smooth`, `sharpen_volume`, `nu_correct -mapping_dir`) do
+  not reliably resolve *relative output paths* against the working directory. Pass absolute
+  paths when driving them from Python.

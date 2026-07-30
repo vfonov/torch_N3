@@ -44,11 +44,30 @@ the corresponding lines of `legacy/N3/`.
 
 ## Stage 1 — Python pipeline over the legacy C code
 
-**Progress**: steps 1–3 done. `torch_n3/_legacy/` builds a CFFI extension that compiles
-`Spline.cc`, `TBSpline.cc`, `DHistogram.cc`, `WHistogram.cc` and `sharpen_hist.cc` straight
-from `legacy/N3/src`, and `torch_n3/backends/legacy.py` exposes them as numpy functions.
-`tests/test_legacy_backend.py` (8 tests) passes, including a direct comparison against the
-installed `sharpen_hist` binary. Steps 4–5 (pipeline + end-to-end reference match) are next.
+**Progress: Stage 1 complete.** `torch_n3/_legacy/` builds a CFFI extension over
+`Spline.cc`, `TBSpline.cc`, `DHistogram.cc`, `WHistogram.cc`, `sharpen_hist.cc` and
+`correctField.cc`, compiled straight from `legacy/N3/src`. `torch_n3/pipeline.py` is the N3
+loop over those blocks; `torch_n3/cli.py` is a `nu_correct`-style front end. 27 tests pass.
+
+**Where the port stands numerically.** Every block matches its legacy counterpart to the
+precision of the file the legacy writes it into: histogram, sharpened lookup table,
+`minclookup`, `spline_smooth`, `evaluate_field`, `correct_field`, `mincresample`,
+`resample_labels`, `mincstats -biModalT`. End to end, `nu_correct` on `brain.mnc.gz` lands
+**2.9e-3 relative RMS** from `brain_nu_ref.mnc.gz`, not the `1e-4` the legacy suite asks for.
+
+That gap is storage, not algorithm. Legacy N3 is a Perl script shelling out to `mincmath` and
+friends, so every intermediate round-trips through a MINC file: 12-bit before the mask is
+applied, 16-bit after, scaled slice by slice on write and rescaled onto a single global grid
+on read. The estimation is a feedback loop, so thirty iterations amplify that rounding. A
+faithful emulation was prototyped and abandoned: it reproduces individual stages exactly
+(1.8e-15) but needs a different rounding model per consuming program, which is not something
+a PyTorch library should carry. Reproducing `brain_nu_ref` bit for bit would mean modelling
+MINC's storage, not N3.
+
+**Not carried over from the legacy interface**: the `.imp` compact-spline file. `nu_estimate`
+returns the fitted spline as an object and the CLI can write the field as a volume; writing
+N3's own format only matters for handing the field back to the legacy tools, and its
+coefficient layout depends on the file's dimension order.
 
 
 1. **Skeleton**: `torch_n3/` package, `tests/`, pytest config. No installation; run from `/app`.

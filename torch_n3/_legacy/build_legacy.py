@@ -66,6 +66,11 @@ LEGACY_SOURCES = [
     os.path.join(N3_SRC, "MincProg", "print_version.c"),
 ]
 
+SHIM_SOURCES = [
+    os.path.join(HERE, "n3_shim.cc"),
+    os.path.join(HERE, "n3_field_shim.cc"),
+]
+
 
 def build(verbose=True):
     # Everything the build generates -- headers, object files, the extension
@@ -89,13 +94,14 @@ def build(verbose=True):
         # match the definitions in n3_shim.cc.
         'extern "C" {\n#include "n3_shim.h"\n}\n',
         source_extension=".cc",
-        sources=[os.path.join(HERE, "n3_shim.cc")] + LEGACY_SOURCES,
+        sources=SHIM_SOURCES + LEGACY_SOURCES,
         include_dirs=[
             HERE,
             generated,
             os.path.join(N3_SRC, "Splines"),
             os.path.join(N3_SRC, "VolumeHist"),
             os.path.join(N3_SRC, "SharpenHist"),
+            os.path.join(N3_SRC, "CorrectField"),
             os.path.join(TOOLKIT, "include"),
         ],
         library_dirs=[os.path.join(TOOLKIT, "lib")],
