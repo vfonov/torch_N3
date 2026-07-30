@@ -6,6 +6,7 @@ require the two to agree.
 """
 
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -24,6 +25,22 @@ MODEL_MASK = os.path.join("/opt/minc/1.9.18.13/share/N3",
 
 def legacy_data(name):
     return os.path.join(TESTING, name)
+
+
+def program_available(name):
+    """Whether ``name`` can be run.
+
+    Most of this suite needs the MINC toolkit and says so by failing.  These
+    two are for the comparisons that are worth having when the original N3
+    programs happen to be installed, and worth skipping when they are not.
+    """
+    return shutil.which(name) is not None
+
+
+def requires_program(name):
+    """Skip the test unless ``name`` is on ``PATH``."""
+    return pytest.mark.skipif(not program_available(name),
+                              reason="%s is not on PATH" % name)
 
 
 def assert_close(actual, expected, atol=0.0, rtol=0.0):

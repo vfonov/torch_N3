@@ -8,14 +8,17 @@ The substrate is ``brain_nu_ref.mnc.gz`` -- real anatomy that has already been
 through ``nu_correct``, so what little non-uniformity remains in it is small
 compared with what we are about to add.  A smooth multiplicative field of a
 set amplitude goes on top, the result is written out as
-``brain_nu_artificial.mnc``, and both implementations are asked to correct it.
+``brain_nu_artificial.mnc``, and every implementation available is asked to
+correct it: the PyTorch blocks, the same pipeline running the original C++
+blocks, and -- if it is on ``PATH`` -- the installed ``nu_correct`` itself.
 
-Two things are then checked: that the recovered field tracks the planted one,
-and that the port recovers *as much of it* as the installed ``nu_correct``
-does.  The second matters more than the first.  N3 does not recover a field
-perfectly -- it leaves about 0.9% here, whoever runs it -- so an absolute
-tolerance would be a statement about N3, not about this code; running the
-original on the same file says exactly how much of the residual is ours.
+Comparing the two backends is the test that always runs and is always fair:
+same pipeline, same input file, only the blocks differ.  The binary is the
+stronger check when it is there, because it shares no code with either.
+
+What none of them can be held to is an absolute residual.  N3 does not recover
+a field perfectly -- it leaves about 0.9% here whoever runs it -- so a
+tolerance on that would be a statement about N3, not about this code.
 """
 
 import math
@@ -24,7 +27,8 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from tests.conftest import Workspace, legacy_data
+from tests.conftest import (Workspace, legacy_data, program_available,
+                            requires_program)
 from torch_n3.pipeline import nu_estimate
 from torch_n3.volume import Volume, load_volume
 
@@ -33,6 +37,15 @@ from torch_n3.volume import Volume, load_volume
 #: +-10% about its mean -- what the BrainWeb phantoms call "20% RF", and about
 #: what a 1.5 T head coil produces.  ``0.4`` is their harder case.
 AMPLITUDES = [0.2, 0.4]
+
+#: The two block implementations, both driving the same pipeline.
+BACKENDS = ["torch", "legacy"]
+
+#: The installed program, which shares no code with either of them.
+BINARY = "nu_correct"
+
+HAVE_BINARY = program_available(BINARY)
+needs_the_binary = requires_program(BINARY)
 
 
 def synthetic_bias_field(volume, inside, log_range):
@@ -66,33 +79,73 @@ def non_uniformity(field, inside):
 
 @dataclass
 class Recovery:
-    """One planted-field experiment, corrected by both implementations."""
+    """One planted-field experiment, corrected by every implementation."""
 
     log_range: float
     inside: torch.Tensor
-    planted: torch.Tensor      # the field we put on
-    residual: torch.Tensor     # what N3 finds in the untouched reference
-    ours: torch.Tensor         # the field torch_n3 estimated
-    theirs: torch.Tensor       # the field the installed nu_correct estimated
-    reference: Volume          # brain_nu_ref, the volume we started from
-    corrected: Volume          # our correction of the artificial volume
+    planted: torch.Tensor                      # the field we put on
+    baseline: dict                             # what each finds in the reference
+    recovered: dict                            # what each finds after planting
+    reference: Volume                          # brain_nu_ref, our starting point
+    corrected: Volume                          # our correction of the artificial
 
-    def unexplained(self, field):
-        """The part of ``field`` that is not the planted field.
+    def unexplained(self, source):
+        """The part of ``source``'s answer that is not the planted field.
 
-        Divided by ``residual`` as well, because the reference is not perfectly
-        uniform to begin with and N3 removes that too; without dividing it out
-        the comparison would charge this code for non-uniformity it corrected
-        successfully.  Renormalised, since only the shape of a field means
-        anything.
+        Divided by that implementation's own baseline as well, because the
+        reference is not perfectly uniform to begin with and N3 removes that
+        too; without dividing it out the comparison would charge this code for
+        non-uniformity it corrected successfully.  Renormalised, since only
+        the shape of a field means anything.
         """
-        ratio = (field / self.residual / self.planted)[self.inside]
+        ratio = (self.recovered[source] / self.baseline[source]
+                 / self.planted)[self.inside]
         return ratio / ratio.mean()
+
+    def residual(self, source):
+        """How much non-uniformity ``source`` failed to take out."""
+        return float(self.unexplained(source).std(unbiased=False))
+
+
+def _run_the_binary(workspace, volume_path, mask_path, name):
+    """``nu_correct`` on a file, returning the field it divided out."""
+    workspace.run(BINARY, "-clobber", "-quiet", "-mapping_dir",
+                  workspace.at(""), "-mask", mask_path, volume_path,
+                  workspace.at(name))
+    return load_volume(volume_path).data / workspace.read(name).data
+
+
+@pytest.fixture(scope="module")
+def baseline(tmp_path_factory, brain_reference, model_mask):
+    """What each implementation finds in the *untouched* reference volume.
+
+    Not zero: `brain_nu_ref.mnc.gz` still carries about 0.5% of
+    non-uniformity, and each implementation has its own opinion of what it is.
+    Measuring it once here keeps that out of the comparisons below.
+    """
+    workspace = Workspace(tmp_path_factory.mktemp("baseline"))
+    inside = model_mask.resample_like(brain_reference).data != 0
+
+    fields = {backend: nu_estimate(brain_reference, mask=model_mask,
+                                   backend=backend).evaluate_on(brain_reference)
+              for backend in BACKENDS}
+
+    if not HAVE_BINARY:
+        return fields
+
+    reference = workspace.write("brain_nu_ref.mnc", brain_reference,
+                                like=legacy_data("brain_nu_ref.mnc.gz"),
+                                store_dtype="int16")
+    mask = workspace.write("mask.mnc",
+                           brain_reference.like(inside.to(torch.float64)),
+                           store_dtype="int16")
+    fields[BINARY] = _run_the_binary(workspace, reference, mask, "nu_ref.mnc")
+    return fields
 
 
 @pytest.fixture(scope="module", params=AMPLITUDES,
                 ids=["%d%%" % (a * 100) for a in AMPLITUDES])
-def recovery(request, tmp_path_factory, brain_reference, model_mask):
+def recovery(request, tmp_path_factory, brain_reference, model_mask, baseline):
     log_range = request.param
     workspace = Workspace(tmp_path_factory.mktemp("recovery"))
     reference = brain_reference
@@ -101,29 +154,26 @@ def recovery(request, tmp_path_factory, brain_reference, model_mask):
     planted = synthetic_bias_field(reference, inside, log_range)
 
     # Write the artificial volume as a real MINC file, in the reference's own
-    # 16-bit storage, so that both implementations read exactly the same
+    # 16-bit storage, so that every implementation reads exactly the same
     # numbers -- otherwise the comparison would be partly about quantisation.
     artificial = workspace.write("brain_nu_artificial.mnc",
                                  reference.like(reference.data * planted),
                                  like=legacy_data("brain_nu_ref.mnc.gz"),
                                  store_dtype="int16")
     volume = load_volume(artificial)
-
     mask = workspace.write("mask.mnc", reference.like(inside.to(torch.float64)),
                            store_dtype="int16")
-    workspace.run("nu_correct", "-clobber", "-quiet", "-mapping_dir",
-                  workspace.at(""), "-mask", mask, artificial,
-                  workspace.at("nu.mnc"))
-    theirs = volume.data / workspace.read("nu.mnc").data
 
-    field = nu_estimate(volume, mask=model_mask)
-    ours = field.evaluate_on(volume)
+    recovered = {backend: nu_estimate(volume, mask=model_mask, backend=backend
+                                      ).evaluate_on(volume)
+                 for backend in BACKENDS}
+    if HAVE_BINARY:
+        recovered[BINARY] = _run_the_binary(workspace, artificial, mask,
+                                            "nu.mnc")
 
     return Recovery(log_range=log_range, inside=inside, planted=planted,
-                    residual=nu_estimate(reference,
-                                         mask=model_mask).evaluate_on(reference),
-                    ours=ours, theirs=theirs, reference=reference,
-                    corrected=volume.like(volume.data / ours))
+                    baseline=baseline, recovered=recovered, reference=reference,
+                    corrected=volume.like(volume.data / recovered["torch"]))
 
 
 def test_the_planted_field_has_the_amplitude_asked_for(recovery):
@@ -135,30 +185,46 @@ def test_the_planted_field_has_the_amplitude_asked_for(recovery):
     assert float(field.mean()) == pytest.approx(1.0, rel=1e-9)
 
 
-def test_the_planted_field_is_recovered(recovery):
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_the_planted_field_is_recovered(recovery, backend):
     """Most of the non-uniformity we put in comes back out."""
     planted = non_uniformity(recovery.planted, recovery.inside)
-    left_over = float(recovery.unexplained(recovery.ours).std(unbiased=False))
 
-    assert left_over < planted / 4
+    assert recovery.residual(backend) < planted / 4
 
 
-def test_it_recovers_as_much_as_the_installed_nu_correct(recovery):
-    """The comparison that means something: the same field, to a few 1e-5.
+def test_the_two_backends_recover_the_same_field(recovery):
+    """The comparison that is always available: same pipeline, other blocks.
 
-    N3 leaves about 0.9% of the field behind on this data no matter who runs
-    it, so what a port can be held to is not an absolute residual but whether
-    it agrees with the original about which field is there.
+    Loose, and deliberately so.  The blocks themselves agree to between 1e-13
+    and 1e-6 (see ``test_histogram.py`` and friends), but N3's loop feeds its
+    own output back in and magnifies that; what is being checked here is that
+    the two arrive at the same field, not that they arrive by the same route.
     """
-    ours = recovery.unexplained(recovery.ours)
-    theirs = recovery.unexplained(recovery.theirs)
+    ours = recovery.unexplained("torch")
+    theirs = recovery.unexplained("legacy")
 
-    assert float(ours.std(unbiased=False)) <= 1.05 * float(
-        theirs.std(unbiased=False))
+    assert recovery.residual("torch") < 1.25 * recovery.residual("legacy")
 
     difference = ours - theirs
+    assert float((difference ** 2).mean().sqrt()) < 2e-3
+    assert float(difference.abs().max()) < 1e-2
+
+
+@needs_the_binary
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_it_recovers_as_much_as_the_installed_nu_correct(recovery, backend):
+    """The stronger check, when the original is installed: no shared code.
+
+    N3 leaves about 0.9% of the field behind on this data no matter who runs
+    it, so what an implementation can be held to is not an absolute residual
+    but whether it agrees with the original about which field is there.
+    """
+    assert recovery.residual(backend) < 1.1 * recovery.residual(BINARY)
+
+    difference = recovery.unexplained(backend) - recovery.unexplained(BINARY)
     assert float((difference ** 2).mean().sqrt()) < 1e-3
-    assert float(difference.abs().max()) < 5e-3
+    assert float(difference.abs().max()) < 8e-3
 
 
 def test_the_correction_restores_the_reference_volume(recovery):

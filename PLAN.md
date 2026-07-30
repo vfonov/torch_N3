@@ -89,7 +89,7 @@ Exit criterion: `pytest tests/ -k stage1` green, and the Python pipeline reprodu
 **Progress: Stage 2 complete.** `torch_n3/blocks/` is the port; `torch_n3/backends/legacy.py`
 is now only an oracle. `backends.resolve("torch"|"legacy")` switches between them and the
 pipeline runs on either, so every test below exists in both variants. Importing
-`torch_n3.pipeline` no longer pulls in the CFFI extension. 78 tests pass in ~19 s.
+`torch_n3.pipeline` no longer pulls in the CFFI extension. 84 tests pass in ~21 s.
 
 | Block | Module | Agreement with the legacy |
 |---|---|---|
@@ -130,13 +130,19 @@ pipeline, and the end-to-end result still within the tolerance recorded for
 
 Because the amplification above caps what an output-vs-output comparison can prove,
 `tests/test_field_recovery.py` asks the question directly: plant a smooth field of known
-amplitude on `brain_nu_ref.mnc.gz`, write `brain_nu_artificial.mnc`, and have both
-implementations correct it.
+amplitude on `brain_nu_ref.mnc.gz`, write `brain_nu_artificial.mnc`, and have each
+implementation correct it — the two backends always, the installed `nu_correct` when it is on
+`PATH` (`conftest.requires_program`).
 
-| Planted | Non-uniformity planted | left by `torch_n3` | left by `nu_correct` | fields differ by |
+| Planted | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
 |---|---|---|---|---|
-| 20% RF | 4.14% | 0.876% | 0.877% | 3.3e-5 RMS, 8.4e-4 max |
-| 40% RF | 8.28% | 0.999% | 1.000% | 7.3e-5 RMS, 1.4e-3 max |
+| 20% RF | 4.14% | 0.876% | 0.876% | 0.878% |
+| 40% RF | 8.28% | 0.999% | 1.068% | 1.000% |
+
+Pairwise agreement on the recovered field: torch/legacy 2.4e-5 RMS at 20% but 8.9e-4 at 40%
+(amplification again — at 40% the legacy backend's trajectory diverges, and the port lands
+*closer* to the binary than the C++ blocks driving the same pipeline do); torch/`nu_correct`
+5e-5 and 1e-4.
 
 N3 leaves ~0.9% of the field behind whoever runs it, and the residual does not depend on the
 planted field's frequency content (checked at 0.6/0.9/1.4 rad across the volume), so it is

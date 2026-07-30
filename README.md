@@ -194,7 +194,7 @@ copied or modified — and links against the EBTKS and LAPACK that ship with the
 installed MINC toolkit. Only the tests and `--backend legacy` need it.
 
 ```bash
-python3 -m pytest              # the whole suite, about 19 s
+python3 -m pytest              # the whole suite, about 21 s
 python3 -m pytest tests/test_spline.py         # one block
 python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
@@ -231,19 +231,21 @@ the same iteration reordered so that it vectorises.
 `tests/test_field_recovery.py` plants one and asks for it back. A smooth
 multiplicative field of a set amplitude goes onto `brain_nu_ref.mnc.gz` — which
 has already been through `nu_correct`, so it is close to uniform to begin with —
-the result is written out as `brain_nu_artificial.mnc`, and both implementations
-are asked to correct it.
+the result is written out as `brain_nu_artificial.mnc`, and every implementation
+available is asked to correct it: the PyTorch blocks, the same pipeline driving
+the original C++ blocks, and the installed `nu_correct` itself if it is on
+`PATH` (those cases skip if it is not).
 
-| Planted field | Non-uniformity planted | left by `torch_n3` | left by `nu_correct` | fields differ by |
+| Planted field | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
 |---|---|---|---|---|
-| 20% (`exp(0.2)` peak-to-peak) | 4.14% | 0.876% | 0.877% | 3e-5 RMS |
-| 40% | 8.28% | 0.999% | 1.000% | 7e-5 RMS |
+| 20% (`exp(0.2)` peak-to-peak) | 4.14% | 0.876% | 0.876% | 0.878% |
+| 40% | 8.28% | 0.999% | 1.068% | 1.000% |
 
 Two things to read off that. N3 recovers most but not all of a field — about
 0.9% of non-uniformity survives here — and that is a property of the algorithm,
-not of this code: the original leaves the same amount. And the two
-implementations agree about *which* field is there to five decimal places, which
-is the comparison a port can actually be held to.
+not of this code: the original leaves the same amount. And all three agree about
+*which* field is there to between 2e-5 and 9e-4 RMS, which is the comparison an
+implementation can actually be held to.
 
 End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
 `brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for
