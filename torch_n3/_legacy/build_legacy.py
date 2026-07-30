@@ -10,6 +10,7 @@ LAPACK that ship with the installed MINC toolkit.
 """
 
 import os
+import shutil
 import sys
 
 import cffi
@@ -17,6 +18,7 @@ import cffi
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 N3_SRC = os.path.join(ROOT, "legacy", "N3", "src")
+BUILD_DIR = os.path.join(HERE, "build")
 
 # Where EBTKS headers/libs live.  MINC_TOOLKIT is set in this environment;
 # fall back to the usual install location.
@@ -66,7 +68,10 @@ LEGACY_SOURCES = [
 
 
 def build(verbose=True):
-    generated = os.path.join(HERE, "generated")
+    # Everything the build generates -- headers, object files, the extension
+    # itself -- goes under BUILD_DIR, which is gitignored.  Only the finished
+    # .so is copied next to this script, where Python can import it.
+    generated = os.path.join(BUILD_DIR, "generated")
     os.makedirs(generated, exist_ok=True)
     with open(os.path.join(generated, "config.h"), "w") as fp:
         fp.write(CONFIG_H)
@@ -106,7 +111,13 @@ def build(verbose=True):
         ],
         extra_compile_args=["-O2", "-w"],
     )
-    ffibuilder.compile(tmpdir=ROOT, verbose=verbose)
+    # cffi lays the extension out under tmpdir following the module's package
+    # path, and scatters object files alongside it; keeping tmpdir inside
+    # BUILD_DIR confines all of that to one throwaway directory.
+    built = ffibuilder.compile(tmpdir=BUILD_DIR, verbose=verbose)
+    installed = os.path.join(HERE, os.path.basename(built))
+    shutil.copy2(built, installed)
+    return installed
 
 
 if __name__ == "__main__":

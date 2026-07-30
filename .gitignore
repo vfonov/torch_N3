@@ -2,3 +2,15 @@ __pycache__
 *.pyc
 *.mnc
 *.mnc.gz
+
+# Vendored dependencies, each with its own git repository
+/legacy/
+/minc2-simple/
+
+# Build products of torch_n3/_legacy/build_legacy.py
+/torch_n3/_legacy/build/
+*.o
+*.so
+_n3legacy.cc
+
+.pytest_cache

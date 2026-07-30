@@ -1,0 +1,179 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Goal
+
+Reimplement **N3** (Non-parametric Non-uniform intensity Normalization, Sled/Zijdenbos/Evans
+1998) in **PyTorch**. N3 removes the smooth multiplicative intensity inhomogeneity ("bias
+field") from MRI volumes without a tissue model.
+
+`legacy/N3/` is the original C++/Perl implementation — **reference only, do not modify**. It is
+also already compiled and installed, so it can be run to produce ground truth for any part of
+the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already installed.
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `legacy/N3/src/NUcorrect/*.in` | Perl drivers — these hold the *pipeline*: `nu_estimate.in` (= `nu_correct`), `nu_estimate_np_and_em.in` (the iteration loop), `sharpen_volume.in`, `nu_evaluate.in`. |
+| `legacy/N3/src/SharpenHist/` | `sharpen_hist` — histogram deconvolution and the intensity mapping. The mathematical core. |
+| `legacy/N3/src/Splines/`, `legacy/N3/src/SplineSmooth/` | `spline_smooth` — regularized tensor cubic B-spline / thin-plate spline field fit, and the `.imp` compact-field format. |
+| `legacy/N3/src/VolumeHist/` | `volume_hist` — masked histogram, with the Parzen (`-window`) variant in `WHistogram.h`. |
+| `legacy/N3/src/EvaluateField/`, `src/CorrectField/` | `evaluate_field` (`.imp` → field volume), `correct_field` (extend field outside mask). |
+| `legacy/N3/src/VolumeStats/` | `volume_stats` — mean/stddev/biModalT used for masking and the stopping rule. |
+| `legacy/N3/testing/` | Test volumes **and a reference result** (`brain_nu_ref.mnc.gz`) — the regression target. |
+| `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
+| `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
+
+## The algorithm as the legacy code actually implements it
+
+Everything except the final division happens in the **log-intensity domain**; the estimated
+field `F` is accumulated in log space and only exponentiated at the very end.
+
+Driver: `legacy/N3/src/NUcorrect/nu_estimate_np_and_em.in:60-193`.
+
+1. Optionally resample input to a coarser grid (`-shrink`, nearest-neighbour, `ShrinkVolume`
+   at `:954`). Estimation runs on that grid; the *output* is a spline, so the final field is
+   evaluated at full resolution.
+2. `log_volume = log(clamp(input, 1, 1.7e308))` — the clamp exists to stop `log` of near-zero
+   eating the dynamic range.
+3. Build the mask: threshold `input > background_threshold` (default 1), intersected with the
+   user mask, or a bimodal threshold (`-bimodalT`), or the average brain mask when
+   `-auto_mask` and the volume is tagged Talairach.
+4. Field estimate `residue` starts at zero (or `log(initial)`).
+5. **Iterate** (`for $iter < $iterations`):
+   - `corrected = log_volume − residue`
+   - **Sharpen**: build the estimate `U` of the corrected volume via histogram deconvolution
+     (below). This is `sharpen_estimate` at `:500` → `sharpen_volume` → `volume_hist`,
+     `sharpen_hist`, `minclookup -continuous`. Result is re-masked.
+   - `working = log_volume − U`  (residual field, log domain)
+   - **Smooth** `working` with the regularized B-spline fit over the mask → new `residue`.
+   - Stop when the change in the field is small (below).
+6. `field = exp(residue)`; optionally divide by its mean in the mask (`-normalize_field`).
+7. Fit *compact* splines to the field and write the `.imp` mapping file (`compact_spline_volume`
+   at `:627`, format written by `outputCompactField`, `legacy/N3/src/SplineSmooth/fieldIO.cc:81`).
+8. `nu_evaluate` (`nu_evaluate.in:46-80`): evaluate the `.imp` on the input grid, extend it
+   outside the mask (`correct_field`), clamp to `field_floor`, then
+   `output = input / field`.
+
+### Histogram sharpening — `legacy/N3/src/SharpenHist/sharpen_hist.cc:98-190`
+
+Given the masked histogram `X` of the corrected log volume (default 200 bins, auto range):
+
+- Pad to `padded_size = 2^(ceil(log2(nbins)) + 1)`, centred at `offset = (padded − n)/2`.
+- `slope = (max_bin − min_bin)/(n − 1)`; the Gaussian kernel width is `fwhm/slope` **in bin
+  units**. Kernel is unit-area, centred at index 0 and wrapped (`gaussian()` at `:199`).
+- `H = fft(gaussian)`; Wiener restoration filter `G = conj(H) / (conj(H)·H + noise)`
+  (`weiner()` at `:222`). `noise` is a bare additive constant, not scaled by signal power.
+- `f = max(ifft(fft(X_padded) · G), 0)` — the deconvolved intensity distribution.
+  With `-blur`/`$nodeblur_flag` the deconvolution is skipped and `f = X_padded`.
+- `moment[i] = (min_bin + (i − offset)·slope) · f[i]`
+- **Mapping** `U = ifft(fft(moment)·H) / ifft(fft(f)·H)` — i.e. `E[u | v]`, a Nadaraya–Watson
+  conditional expectation under the Gaussian kernel. Non-finite entries → 0.
+- Written as a lookup table over the normalized domain and applied with `minclookup
+  -continuous` (linear interpolation between table entries).
+
+### Histogram — `legacy/N3/src/VolumeHist/WHistogram.h:65-93`
+
+`-parzen`/`-window` does **not** mean a Parzen kernel density estimate: each sample is split
+linearly between the two nearest bin centres (mass `1−offset` / `offset`). Without it each
+sample increments a single bin. Samples outside the first/last half-bin are discarded.
+
+### Field smoothing — `legacy/N3/src/Splines/TBSpline.cc`
+
+Tensor product of **cubic B-splines** with uniform knot spacing `distance`, fit by normal
+equations with a bending-energy penalty (`fit()` at `:290`):
+
+```
+(AᵀA + λ · n_samples · J) c = Aᵀ f
+```
+
+`J` is the bending-energy tensor (`bendingEnergyTensor` at `:393`), `λ` is `-lambda`
+(default `1e-7` in the N3 protocol). Only voxels inside the mask contribute; `-subsample n`
+takes every n-th voxel. The spline **evaluates to exactly 0 outside its domain**; without
+`-full_support` the domain is shrunk to the mask bounding box.
+
+`-tp_spline` selects a thin-plate spline instead; `b_spline` is the default and what
+`nu_correct` uses.
+
+### Stopping rule
+
+`field_CV` (`nu_estimate_np_and_em.in:701`) is misnamed: it returns the **standard deviation**
+(not the coefficient of variation) of the voxelwise change in the log field inside the mask.
+Iteration stops when that is below `-stop`. `-iterations a b` / `-stop x y` define staged
+thresholds.
+
+## Default N3 protocol
+
+What `nu_correct` passes down with no options (`nu_estimate.in:418-438, :491, :519`):
+
+| Parameter | Default | Note |
+|---|---|---|
+| `-distance` | 200 mm | B-spline knot spacing; the dominant smoothness parameter |
+| `-fwhm` (sharpen) | 0.15 | Gaussian width in log-intensity units |
+| noise | 0.01 | Wiener constant |
+| `-bins` | 200 | histogram bins |
+| `-iterations` | 50 | (`-V0.9` protocol: `10 20`) |
+| `-stop` | 0.001 | |
+| `-shrink` | 4 | estimation-grid subsampling factor |
+| `-lambda` | 1e-7 | spline regularization |
+| `-spline_subsample` | 1 | |
+| flags | `-parzen -log -sharpen 0.15 0.01` | the EM/tissue-model path is dead code — it `die`s without `-sharpen` |
+
+## Running the legacy reference (ground truth)
+
+All N3 binaries and Perl drivers are installed under `/opt/minc/1.9.18.13/bin` and are on
+`PATH`: `nu_correct`, `nu_estimate`, `nu_estimate_np_and_em`, `nu_evaluate`, `sharpen_volume`,
+`sharpen_hist`, `volume_hist`, `spline_smooth`, `evaluate_field`, `correct_field`,
+`volume_stats`, plus MINC tools (`mincinfo`, `mincmath`, `minclookup`, `mincblur`,
+`mincresample`, `mincstats`). Model masks are in `/opt/minc/1.9.18.13/share/N3/`.
+
+Test data lives in `legacy/N3/testing/` (gzipped MINC, readable directly):
+`chunk.mnc.gz` + `chunk_mask.mnc.gz` (small, 91×52×50 — use for fast iteration),
+`brain.mnc.gz` + `brain_mask.mnc.gz`, `block.mnc.gz`, and `brain_nu_ref.mnc.gz`, the reference
+`nu_correct` output. `legacy/N3/testing/CMakeLists.txt` lists the exact legacy invocations,
+including the reference comparison via `compare_nu_result.pl` at tolerance `1e-4`.
+
+Isolating a single stage is the cheapest way to validate a PyTorch component, e.g.:
+
+```bash
+volume_hist -bins 200 -auto_range -mask chunk_mask.mnc.gz chunk.mnc.gz h.txt \
+    -clobber -text -select 1 -quiet -window     # -window = the Parzen variant
+sharpen_hist -clobber -fwhm 0.15 -noise 0.01 -quiet h.txt h.sharp
+```
+
+`h.txt` carries `# domain: <min_bin> <max_bin>` and two columns (bin centre, count);
+`h.sharp` is the two-column lookup table. Both are plain text, so they diff directly against
+tensors.
+
+## Gotchas when porting
+
+- Do the arithmetic in log space and keep the field there until the final `exp`. Ratios in
+  intensity space are differences in log space; the legacy code relies on this everywhere.
+- The FFT length is `2^(ceil(log2(nbins))+1)` — at 200 bins that is 512, not 256, and the
+  histogram sits centred at `offset`, not at index 0. Off-by-`offset` errors silently shift
+  the mapping.
+- The Gaussian kernel is built on the *bin* grid (`fwhm/slope`) and wraps around index 0.
+- Histogram range is recomputed per iteration (`-auto_range`), so the lookup domain moves
+  between iterations.
+- `minclookup -continuous` interpolates linearly between table entries and clamps outside the
+  domain; a `torch` port must match that, not nearest-neighbour.
+- The spline is zero outside its domain, and `nu_evaluate` therefore runs `correct_field` to
+  extend the field beyond the mask before dividing.
+- Estimation runs on the shrunk grid but the output field is evaluated at full resolution —
+  don't collapse those two grids into one.
+- `volume_stats -biModalT` (Otsu-style bimodal threshold) is what produces the automatic mask;
+  results depend on it when no mask is supplied.
+
+## Environment
+
+- Python 3.12 with `torch` 2.13 (CUDA build, GPU present and usable), `numpy`, `scipy`.
+  Check device availability at runtime rather than assuming CPU-only.
+- `minc2_simple` is installed: `minc2_file(path)`, `.setup_standard_order()`,
+  `.load_complete_volume(dtype)`, `.save_complete_volume()`, `.representation_dims()`,
+  world/voxel transforms. Full reference: `minc2-simple/USAGE.md`. Note that
+  `setup_standard_order()` reorders to `TIME → Z → Y → X → VEC` with positive steps, which is
+  what makes the array numpy/torch C-order compatible — the legacy MINC files here have
+  file order `xspace zspace yspace`.
+- Do not install packages; if something is missing, say so and stop.
