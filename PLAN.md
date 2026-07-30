@@ -89,7 +89,7 @@ Exit criterion: `pytest tests/ -k stage1` green, and the Python pipeline reprodu
 **Progress: Stage 2 complete.** `torch_n3/blocks/` is the port; `torch_n3/backends/legacy.py`
 is now only an oracle. `backends.resolve("torch"|"legacy")` switches between them and the
 pipeline runs on either, so every test below exists in both variants. Importing
-`torch_n3.pipeline` no longer pulls in the CFFI extension. 70 tests pass in ~12 s.
+`torch_n3.pipeline` no longer pulls in the CFFI extension. 78 tests pass in ~19 s.
 
 | Block | Module | Agreement with the legacy |
 |---|---|---|
@@ -125,6 +125,23 @@ reason: different reduction orders.
 Exit criterion (met): all blocks `torch`, the legacy CFFI extension no longer imported by the
 pipeline, and the end-to-end result still within the tolerance recorded for
 `brain_nu_ref.mnc.gz` — 3.0e-3, marginally closer than the legacy backend's 3.7e-3.
+
+### Recovering a planted field
+
+Because the amplification above caps what an output-vs-output comparison can prove,
+`tests/test_field_recovery.py` asks the question directly: plant a smooth field of known
+amplitude on `brain_nu_ref.mnc.gz`, write `brain_nu_artificial.mnc`, and have both
+implementations correct it.
+
+| Planted | Non-uniformity planted | left by `torch_n3` | left by `nu_correct` | fields differ by |
+|---|---|---|---|---|
+| 20% RF | 4.14% | 0.876% | 0.877% | 3.3e-5 RMS, 8.4e-4 max |
+| 40% RF | 8.28% | 0.999% | 1.000% | 7.3e-5 RMS, 1.4e-3 max |
+
+N3 leaves ~0.9% of the field behind whoever runs it, and the residual does not depend on the
+planted field's frequency content (checked at 0.6/0.9/1.4 rad across the volume), so it is
+N3's own accuracy floor rather than B-spline model mismatch. What the port can be held to is
+therefore agreement with the original about *which* field is there, and that is 1e-5.
 
 ## Stage 3 — make it a PyTorch program, not a transcription
 

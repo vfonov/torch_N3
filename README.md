@@ -194,7 +194,7 @@ copied or modified — and links against the EBTKS and LAPACK that ship with the
 installed MINC toolkit. Only the tests and `--backend legacy` need it.
 
 ```bash
-python3 -m pytest              # the whole suite, about 12 s
+python3 -m pytest              # the whole suite, about 19 s
 python3 -m pytest tests/test_spline.py         # one block
 python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
@@ -225,6 +225,25 @@ determined and any two solvers disagree about them; the fitted field, which is w
 gets used, is fine. And `correct_field` relaxes in raster order in `float`, which is
 inherently sequential; the port sweeps the two checkerboard colours in turn instead,
 the same iteration reordered so that it vectorises.
+
+### Does it actually remove a bias field?
+
+`tests/test_field_recovery.py` plants one and asks for it back. A smooth
+multiplicative field of a set amplitude goes onto `brain_nu_ref.mnc.gz` — which
+has already been through `nu_correct`, so it is close to uniform to begin with —
+the result is written out as `brain_nu_artificial.mnc`, and both implementations
+are asked to correct it.
+
+| Planted field | Non-uniformity planted | left by `torch_n3` | left by `nu_correct` | fields differ by |
+|---|---|---|---|---|
+| 20% (`exp(0.2)` peak-to-peak) | 4.14% | 0.876% | 0.877% | 3e-5 RMS |
+| 40% | 8.28% | 0.999% | 1.000% | 7e-5 RMS |
+
+Two things to read off that. N3 recovers most but not all of a field — about
+0.9% of non-uniformity survives here — and that is a property of the algorithm,
+not of this code: the original leaves the same amount. And the two
+implementations agree about *which* field is there to five decimal places, which
+is the comparison a port can actually be held to.
 
 End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
 `brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for

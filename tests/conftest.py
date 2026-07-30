@@ -22,7 +22,7 @@ MODEL_MASK = os.path.join("/opt/minc/1.9.18.13/share/N3",
                           "icbm_avg_152_t1_tal_nlin_symmetric_VI_mask.mnc.gz")
 
 
-def testing_file(name):
+def legacy_data(name):
     return os.path.join(TESTING, name)
 
 
@@ -47,23 +47,23 @@ def span(values):
 @pytest.fixture(scope="session")
 def chunk():
     """The small 91x52x50 volume -- fast enough for per-block tests."""
-    return load_volume(testing_file("chunk.mnc.gz"))
+    return load_volume(legacy_data("chunk.mnc.gz"))
 
 
 @pytest.fixture(scope="session")
 def chunk_mask():
-    return load_volume(testing_file("chunk_mask.mnc.gz"))
+    return load_volume(legacy_data("chunk_mask.mnc.gz"))
 
 
 @pytest.fixture(scope="session")
 def brain():
-    return load_volume(testing_file("brain.mnc.gz"))
+    return load_volume(legacy_data("brain.mnc.gz"))
 
 
 @pytest.fixture(scope="session")
 def brain_reference():
     """``nu_correct``'s own output, kept as the regression target."""
-    return load_volume(testing_file("brain_nu_ref.mnc.gz"))
+    return load_volume(legacy_data("brain_nu_ref.mnc.gz"))
 
 
 @pytest.fixture(scope="session")
