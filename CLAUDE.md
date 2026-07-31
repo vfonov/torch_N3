@@ -201,6 +201,37 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
 - **Extreme-value statistics over a whole volume** (`max |a - b|` across 240k voxels) are
   dominated by a handful of mask-edge voxels and are not worth a fixed bound. Compare RMS.
 
+### Published numbers no test checks
+
+Most measured numbers in the docs are reproduced by `python3 -m tests.margins`, so a stale
+one shows up as a mismatch against `PROBLEMS.md`. The **`--lambda` × `--distance` tables are
+the exception**, and they are the most cited numbers in the repository:
+
+| Where | What |
+|---|---|
+| `README.md`, "Does it actually remove a bias field?" | both tables, 20% and 40% planted |
+| `torch_n3/cli.py`, `SMOOTHNESS_NOTE` | the 20% table, shown by `--help` |
+| `tests/test_field_recovery.py` | asserts the `1e-7` row at every spacing (the recovery sweep), and `LAMBDAS = [1e-5, 1e-4]` at the *finest* spacing only — the `regularized` fixture fixes `distance = min(DISTANCES)` |
+
+That is 10 of the 24 published cells. The other **14 are asserted by nothing** — the whole
+`1e-6` row included, which is where the best cell at the default spacing lives. The two
+copies are kept in step by hand, and the prose conclusions drawn from them (which cell is
+best per column, the decade-per-halving rule, the asymmetry that justifies erring high) are
+checked by nobody. They are also *not* invariant: they run the pipeline for 30 iterations,
+which is well past the histogram knife-edge, so a change to any block — or to which LAPACK
+the shim links — can move them.
+
+Re-measure them, do not adjust them, and change both copies together. It is 24 cells, two
+`nu_estimate` calls each, about 15 s in total; drive it over `AMPLITUDES × DISTANCES ×
+(1e-7, 1e-6, 1e-5, 1e-4)` exactly as the `regularized` fixture does, and take
+`ratio.std(unbiased=False)` of the recovered field over the planted one, each divided by the
+same implementation's baseline on the untouched reference. Verified unchanged 2026-07-31,
+after the LAPACK swap.
+
+If you find yourself relying on a cell, the honest fix is to widen `LAMBDAS` and assert the
+shape being claimed — that each column has an interior minimum, and where — rather than to
+keep trusting a table by hand.
+
 ## Gotchas when porting
 
 - Do the arithmetic in log space and keep the field there until the final `exp`. Ratios in
