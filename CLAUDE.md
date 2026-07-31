@@ -28,7 +28,8 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
 | `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
-| `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. **No test runs an N3 program**: their answers are recorded in `tests/reference/legacy.npz` by `tests/regenerate_reference.py` (the only thing that shells out) and the inputs they were given live in `tests/inputs.py`, shared by both. Re-run the script and `git diff` should be empty. |
+| `tests/data/brain_nu_ref_legacy.mnc` | Not one of N3's files: this pipeline's own output on `brain.mnc` with the legacy blocks, under `inputs.PLATFORM_PROTOCOL`, checked in so another machine/BLAS/device can be held to it (`tests/test_reproducibility.py`). Written by the regeneration script. Regenerating churns MINC's `ident` header attribute; the voxel data is reproducible. |
+| `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. **No test runs an N3 program**: their answers are recorded in `tests/reference/legacy.npz` by `tests/regenerate_reference.py` (the only thing that shells out) and the inputs they were given live in `tests/inputs.py`, shared by both. Re-run the script and `git diff` should be empty (except for `brain_nu_ref_legacy.mnc`'s `ident` header). `test_reproducibility.py` holds every backend and device to a volume checked into the repo — the cross-platform canary. |
 
 ## The algorithm as the legacy code actually implements it
 
@@ -233,12 +234,28 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
   about the accuracy of the solve itself. Its *prolongation* between levels, on the other
   hand, is exactly reproducible and matters: after the last level (`inc == 2`) the odd voxels
   are never relaxed, only interpolated.
-- **The iteration amplifies.** Backends that agree to 1.4e-7 after one iteration disagree by
-  5e-4 after ten, and running the same code on a GPU moves the end-to-end result as much as
-  changing backend does. No end-to-end N3 comparison is meaningful past three digits; pin
-  blocks, not pipelines.
-- **The legacy's precision is not float.** Every intermediate passes between programs as a
-  MINC file, so it is rounded on the way. Worse, writing and reading disagree: `mincmath`
+- **The iteration amplifies.** Backends that agree on the field to 1.4e-7 after one iteration
+  disagree by 2.5e-4 after ten. Under the shipped protocol they land 1.1e-3 apart end to end,
+  and running the *same* backend on a GPU moves it slightly more (1.3e-3). No end-to-end N3
+  comparison is meaningful past three digits; pin blocks, not pipelines.
+- **The amplification starts at a discontinuity, not at float noise.** The auto histogram
+  range is taken from the data and then rounded to `%lf`'s six decimals, so a voxel on a bin
+  boundary can fall either side of it and a whole count moves between bins. On `brain.mnc`,
+  CPU and GPU agree to 3e-5 of a 16-bit storage level after one or two iterations; at three,
+  one whole count flips (out of the 3,724 samples the shrunken grid contributes) and they
+  end up 444 levels apart. This is why
+  `tests/test_reproducibility.py` pins two iterations — past that, an end-to-end golden
+  volume records which side of a rounding boundary one voxel landed on. Raising the count
+  makes that test louder, not stronger.
+- **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
+  script driving separate executables, which can only talk through files. The `legacy`
+  *backend* here is those same C++ routines called through the CFFI shim, on float64
+  buffers, in one process — no file, no rounding. So it is the original arithmetic without
+  the original's quantisation, and it does not reproduce the installed programs either
+  (3.7e-3 from `brain_nu_ref.mnc`, slightly worse than the port). Statements below about
+  rounding between stages are about the installed programs only.
+- **The installed N3's precision is not float.** Every intermediate passes between programs
+  as a MINC file, so it is rounded on the way. Worse, writing and reading disagree: `mincmath`
   writes each *slice* against its own `image-min`/`image-max`, while `volume_io` programs
   (`volume_hist`, `spline_smooth`) hand the reader a volume rescaled onto a *single* grid for
   the whole file. The level count depends on which file `mincmath` took its header from —

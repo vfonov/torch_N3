@@ -69,7 +69,7 @@ All of the protocol options mirror `nu_correct`'s and default to its values:
 | `--noise` | 0.01 | Wiener constant of the deconvolution. Raise it if the sharpening looks unstable. |
 | `--bins` | 200 | Histogram bins. |
 | `--shrink` | 4 | Estimation runs on a grid this many times coarser. The field is a spline, so the output is still full resolution. |
-| `--lambda` | 1e-7 | Bending-energy penalty on the spline fit. |
+| `--lambda` | 1e-7 | Bending-energy penalty on the spline fit. Moves *with* `--distance` — about a decade per halving. See [the trade-off](#does-it-actually-remove-a-bias-field). |
 | `--iterations` | 50 | Iteration budget, one number per stopping stage. |
 | `--stop` | 0.001 | Stop when the field moves less than this, one per stage. |
 | `--field-floor` | 0.1 | Smallest field value allowed, so the division stays sane. |
@@ -178,6 +178,16 @@ The legacy backend is deliberate: it makes the original code a numerical oracle,
 PyTorch block has something exact to be tested against. `torch_n3.backends.resolve` picks
 between the two and the pipeline runs on either — which is all `--backend legacy` does.
 
+It is *not* the installed `nu_correct`, and the difference matters when reading any
+number below. Original N3 is a Perl script driving a dozen separate executables, so
+every intermediate volume it computes goes out to a MINC file — 12-bit or 16-bit,
+rescaled slice by slice — and comes back rounded. The shim calls the same C++ routines
+directly, on `float64` arrays, in one process. So `--backend legacy` is the original
+arithmetic *without* the original's quantisation, which is why it does not reproduce
+`nu_correct` bit for bit either: it lands 3.7e-3 from `brain_nu_ref.mnc`, slightly
+further out than the PyTorch blocks. What it is for is comparing block against block
+with nothing rounded in between.
+
 ---
 
 ## Building and testing
@@ -194,19 +204,29 @@ copied or modified — and links against the EBTKS and LAPACK that ship with the
 installed MINC toolkit. Only the tests and `--backend legacy` need it.
 
 ```bash
-python3 -m pytest              # the whole suite, about 9 s
+python3 -m pytest              # the whole suite, about 22 s
 python3 -m pytest tests/test_spline.py         # one block
 python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
 
-The tests come in two kinds. The cases from `legacy/N3/testing/CMakeLists.txt` are
-re-expressed as comparisons: what the installed N3 program answered, what the Python
-answers, require agreement. The per-block tests (`test_histogram.py`,
-`test_sharpen.py`, `test_spline.py`, `test_field.py`) compare the PyTorch block
-against the same code compiled into the CFFI shim.
+The tests come in four kinds:
+
+- **Per block** (`test_histogram.py`, `test_sharpen.py`, `test_spline.py`,
+  `test_field.py`) — the PyTorch block against the same code compiled into the CFFI
+  shim. These are the tight ones, and the ones that pin the port.
+- **Against the programs** (`test_pipeline.py`, `test_minc_tools.py`, `test_volume.py`)
+  — the cases from `legacy/N3/testing/CMakeLists.txt`, re-expressed as comparisons with
+  what the installed N3 answered.
+- **Against a planted field** (`test_field_recovery.py`) — the question a user has,
+  rather than whether the port matches: given a known non-uniformity, is it recovered?
+- **Against ourselves** (`test_reproducibility.py`) — a checked-in volume every
+  backend and device has to land on. See [below](#will-it-give-the-same-answer-on-your-machine).
+
+`python3 -m tests.margins` prints where every one of those comparisons sits against its
+bound; [PROBLEMS.md](PROBLEMS.md) is that table plus what is wrong with it.
 
 No test runs an N3 program. Those programs are deterministic, so their answers were
-recorded once into `tests/reference/` (4.9 MB) and are read from there — which keeps
+recorded once into `tests/reference/` (9.4 MB) and are read from there — which keeps
 the suite fast, keeps it honest about whether a failure is yours or a different build
 of theirs, and lets it run wherever. `tests/inputs.py` holds the inputs they were
 given, so both sides build them the same way. To re-record:
@@ -216,23 +236,60 @@ python3 -m tests.regenerate_reference     # needs the MINC toolkit on PATH
 git diff --stat tests/reference           # empty if they still say the same thing
 ```
 
+(`tests/data/brain_nu_ref_legacy.mnc` is rewritten too, and will always show as
+changed: MINC stamps each file with the user, host and time that wrote it. Its voxel
+data is reproducible; those header bytes are not.)
+
 **The suite needs no MINC program at all.** The volumes it runs on are checked in
-as MINC2 under `tests/data/` — byte-for-byte the same images as `legacy/N3/testing/`,
-converted once, because `minc2_simple` opens MINC2 only. The one exception is
+as MINC2 under `tests/data/` (10 MB, two thirds of it the reproducibility reference)
+— byte-for-byte the same images as `legacy/N3/testing/`, converted once, because
+`minc2_simple` opens MINC2 only. The one exception is
 `test_gzipped_minc1_input_is_readable`, which is *about* the conversion path and
 skips without `mincconvert`.
 
+### Will it give the same answer on your machine?
+
+`tests/test_reproducibility.py` is there to say so. `tests/data/brain_nu_ref_legacy.mnc`
+is a volume checked into the repository — this pipeline's output on `brain.mnc`,
+with the original C++ blocks driving it, stored `float64` so that it records what
+was computed rather than what a 16-bit file could hold. Both backends, on every
+device available, have to land on it to within one 16-bit storage level, which is
+N3's own working precision: the legacy passes every intermediate volume to the
+next program through a file of that kind.
+
+| | difference from the reference | of one level |
+|---|---|---|
+| `legacy`, CPU | 0 — bit-identical, it wrote the file | 0.000% |
+| `torch`, CPU | 0.2079 | 1.157% |
+| `torch`, CUDA | 0.2079 | 1.157% |
+
+Almost all of that is the two block implementations disagreeing, not the
+platform: CPU and GPU differ from each other by 5.5e-4, 380 times less.
+
+It runs two iterations rather than the shipped fifty, and that is not laziness.
+N3's histogram range is taken from the data and then rounded to the six decimals
+its text interchange prints, so a voxel on a bin boundary can fall either side
+of it. After one or two iterations CPU and GPU agree to 3e-5 of a storage level;
+at three, one whole count moves between bins — out of the 3,724 samples the
+shrunken estimation grid contributes — and they finish 444 levels apart. Nobody's implementation can be pinned past that — see
+[Amplification](#how-close-is-it) below — so the test stops where the answer is
+still a continuous function of rounding error.
+
 ### How close is it?
 
-Block by block, against the original C++:
+Block by block, against the original C++. These are *measured* differences, not
+the bounds the tests assert — those are in the tests, and where each one sits
+against its bound is tabulated in [PROBLEMS.md](PROBLEMS.md).
 
 | Block | Agreement |
 |---|---|
-| histogram range, plain histogram, Otsu threshold, resampling | exact |
-| Parzen histogram | 5e-11 over 130k samples — summation order |
-| sharpened lookup table | 4e-13 |
-| continuous lookup, vs `minclookup` | 5e-14 |
-| B-spline fit, as a fitted field | 1e-6 relative |
+| histogram range, plain histogram, mask resampling | exact |
+| Parzen histogram | 5e-11 over 132k samples — summation order |
+| sharpened lookup table | 3e-14 |
+| continuous lookup, vs `minclookup` | 7e-15 |
+| Otsu threshold, vs `mincstats -biModalT` | 4e-5 on a value of 2.4e5 — all `mincstats` printed |
+| `shrink`, vs `mincresample` | 3e-2 on values of 8e5 — the 12-bit file it came back through |
+| B-spline fit, as a fitted field | 2e-7 relative |
 | field extension, vs `correct_field` | 5e-6 relative |
 
 The last two are loose for reasons that are not going away. The normal equations N3
@@ -278,19 +335,51 @@ following tissue contrast, and come back as field that was never there. At
 50 mm and the default `--lambda` the "corrected" volume is *further* from the
 truth than the uncorrected one — 1.10× the original deviation.
 
-Raising the penalty to match undoes that. Residual left, over the two knobs:
+Raising the penalty to match undoes that. Residual non-uniformity left behind,
+over the whole grid — **best in each column in bold**:
+
+*20% planted field (4.14% non-uniformity):*
 
 | `--lambda` | `--distance` 200 mm | 100 mm | 50 mm |
 |---|---|---|---|
 | 1e-7 (default) | 0.31% | 0.61% | 1.51% |
-| 1e-6 | 0.13% | 0.22% | 1.01% |
-| 1e-5 | 0.33% | 0.17% | 0.25% |
+| 1e-6 | **0.13%** | 0.22% | 1.01% |
+| 1e-5 | 0.33% | **0.17%** | **0.25%** |
 | 1e-4 | 0.85% | 0.54% | 0.35% |
 
-Roughly a decade of `--lambda` per halving of `--distance`. Worth noting that
-the shipped `1e-7` is not the best cell in that table for *this* planted field
-— but this field is smoother than most real ones, so don't read a
-recommendation into it.
+*40% planted field (8.28% non-uniformity):*
+
+| `--lambda` | `--distance` 200 mm | 100 mm | 50 mm |
+|---|---|---|---|
+| 1e-7 (default) | 0.58% | 1.00% | 1.96% |
+| 1e-6 | **0.27%** | 0.44% | 1.30% |
+| 1e-5 | 0.67% | **0.35%** | **0.48%** |
+| 1e-4 | 1.71% | 1.10% | 0.71% |
+
+The two amplitudes give the same picture, roughly doubled: which penalty suits a
+given spacing does not depend on how strong the field is, only on how much
+freedom the spline has. Read down a column and each one has a minimum — too
+little penalty and the fit chases tissue contrast, too much and it cannot follow
+the field. Those minima sit at `1e-6` for 200 mm and `1e-5` for both 100 mm and
+50 mm, identically at both amplitudes: a decade for the first halving of the
+spacing and rather less for the second. So **raise `--lambda` by about a decade
+each time you halve `--distance`** is the instinct to carry away, erring
+slightly high at the fine end — where it costs little, the 50 mm column being
+nearly flat between `1e-5` and `1e-4` and catastrophic at the default.
+
+The two knobs are one setting: `--distance` decides how many coefficients
+describe the field, `--lambda` how much bending is allowed between them.
+
+The 20% table is in `python3 -m torch_n3 --help` too, so it is to hand when the
+question comes up.
+
+Worth noting that the shipped `1e-7` is not the best cell in either table —
+`1e-6` at the default spacing halves the residual at both amplitudes. Don't
+read a recommendation into that. This is one synthetic field on one volume,
+built from three low-order harmonics, and it is smoother than a real coil
+profile; a field with more structure is exactly the case where the extra
+penalty would start to cost. What the tables are good for is the *shape* of
+the trade-off, not the numbers in them.
 
 End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
 `brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for
@@ -303,11 +392,12 @@ throughout, which is more accurate but not identical. Reproducing the reference 
 for voxel would mean modelling MINC's storage rather than N3; see `PLAN.md`.
 
 **Amplification.** N3's loop feeds its output back into itself, and it magnifies small
-differences: the PyTorch and C++ backends agree to 1.4e-7 after one iteration and to
-only 5e-4 after ten. So no end-to-end number here is meaningful past three digits —
-running the same code on a GPU moves it by as much (3.4e-3), because the reductions
-happen in a different order. That is worth knowing before reading too much into a
-comparison of two N3 outputs, whoever produced them.
+differences: the PyTorch and C++ backends agree on the field to 1.4e-7 after one
+iteration and to only 2.5e-4 after ten. So no end-to-end number here is meaningful past
+three digits. Under the shipped protocol the two backends land 1.1e-3 apart on this
+volume — and running the *same* backend on a GPU moves it slightly more than that
+(1.3e-3), because the reductions happen in a different order. That is worth knowing
+before reading too much into a comparison of two N3 outputs, whoever produced them.
 
 ## Requirements
 

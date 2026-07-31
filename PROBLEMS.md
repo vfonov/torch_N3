@@ -1,8 +1,13 @@
 # Known problems
 
 Weak spots in this repository's test suite, written down so they are visible
-rather than discovered. Audited 2026-07-31, at commit `dde3099`; §2, §5 and the
-worst entries of §1 and §3 fixed the same day.
+rather than discovered. Audited 2026-07-31; §2, §5, §7 and the worst entries of
+§1 and §3 were fixed the same day, and are kept here rather than deleted — a
+bound that had stopped asking a question is worth recording even once it does
+again.
+
+Every number below comes from `python3 -m tests.margins`, which prints the
+table at the bottom. Re-run it after changing a bound or a block.
 
 The rule these are measured against is in [CLAUDE.md](CLAUDE.md#test-tolerances):
 a threshold states what the code is *required* to do, and is not the measured
@@ -19,8 +24,8 @@ regression that stayed inside the envelope they were drawn around.
 
 | Where | Assertion | Now at |
 |---|---|---|
-| `test_pipeline.py` | `early < 1e-6`, `late > 100 * early` | ~14%, 1800× |
-| `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` | the `atol` constants | 0.1–70% |
+| `test_pipeline.py` | `early < 1e-6`, `late > 100 * early` | 14%, 1800× |
+| `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` | the `atol` constants | 0–50% |
 
 **Two entries removed 2026-07-31.** `residual < non_uniformity(planted) / 4`
 and `after < before / 3` were both fitted at the default 200 mm knot spacing,
@@ -146,39 +151,83 @@ directions. The tightest step is a 0.45% fall in energy against a 1e-9
 round-off allowance. It also catches a bug the old test could not: λ not being
 scaled by the sample count.
 
+## 6. Principled bounds with a great deal of headroom
+
+Not the same fault as §1 — these bounds are derived from something real, and
+would be the right answer if the code were as bad as they allow. But they are
+so far above what is measured that they would not notice a large regression.
+
+| Where | Bound is | At |
+|---|---|---|
+| `test_volume.py::test_shrink_matches_the_legacy_estimation_grid` | one 12-bit storage level (`span / 4095`) | 0.02% |
+| `test_reproducibility.py` | one 16-bit storage level (`span / 65535`) | 1.2% |
+
+Both are defensible: a value that came back through a file of that kind is not
+defined more finely than one level, whoever computed it. Neither has a tighter
+principled replacement — the alternative in each case is a number drawn around
+the measurement, which is what §1 is about. So they stay, and the honest use of
+them is to watch the *measured* column: the reproducibility rows have sat at
+0.208 since the file was recorded, and a change there means something moved
+whether or not the assertion fires.
+
+## 7. A relative bound where an absolute one was meant — fixed 2026-07-31
+
+`test_minc_tools.py::test_bimodal_threshold_matches_mincstats` compared our
+Otsu threshold against `mincstats -biModalT` with
+`abs(threshold - recorded) < 1e-3 * max(1.0, abs(recorded))`.
+
+The comment above it read "mincstats prints four decimals of a value in the
+hundreds of thousands" — which argues for an absolute `1e-4`. The code asserted
+a *relative* `1e-3`, and on a threshold of 238347 that permits a difference of
+238: two million times looser than the printed precision, and easily enough for
+the automatic mask to land on a different tissue boundary. The comment and the
+assertion had drifted apart, and the comment was the one that was right.
+
+Now `1e-4`, the last digit `mincstats` reports, at 36% of it. The same species
+of defect as §2, found the same way: by asking what each bound was derived
+from, rather than whether it passed.
+
 ---
 
 ## Where every comparison currently sits
 
-Regenerate with the script in the session log, or by hand; these are from
-2026-07-31.
+`python3 -m tests.margins` prints everything above the recovery sweep; these
+are from 2026-07-31. All differences are absolute except the `nu_correct` rows,
+which are relative RMS.
 
 ```
 comparison                                 measured    bound       of bound
-histogram parzen=True vs shim              4.5e-11     1.0e-09       4.5%
-histogram parzen=False vs shim             0.0e+00     1.0e-09       0.0%
-histogram vs volume_hist (counts)          4.9e-07     1.0e-06      49.5%   (was 2.0)
-bin centres vs volume_hist                 5.0e-07     1.0e-06      49.9%
-sharpen_lut vs shim                        3.2e-14     1.0e-11       0.3%
-sharpen_lut vs sharpen_hist                5.0e-07     1.0e-06      49.9%
-shim vs sharpen_hist (chunk)               7.0e-07     1.0e-06      69.9%
-apply_lut vs minclookup                    7.1e-15     1.0e-09       0.0%
-spline d=200 sub=1 vs shim                 9.6e-08     5.9e-07      16.2%
-spline d=200 sub=2 vs shim                 4.3e-10     6.2e-07       0.1%
-spline d=50  sub=1 vs shim                 1.3e-11     2.9e-07       0.0%
-correct_field vs shim                      4.3e-06     8.0e-05       5.4%
-correct_field vs binary                    4.3e-06     8.0e-05       5.4%
-_sharpen[torch]  vs sharpen_volume         2.5e-06     3.2e-05       7.7%
-_sharpen[legacy] vs sharpen_volume         2.5e-06     3.2e-05       7.7%
-_smooth[torch]   vs spline_smooth          2.3e-08     5.4e-06       0.4%
-_smooth[legacy]  vs spline_smooth          6.4e-09     5.4e-06       0.1%
-shrink vs mincresample                     3.1e-02     2.0e+02       0.0%
-nu_correct[torch]  chunk i1 s3             3.3e-05     1.0e-03       3.3%
-nu_correct[torch]  chunk i3 s4             7.8e-05     1.0e-03       7.8%
-nu_correct[legacy] chunk i1 s3             3.3e-05     1.0e-03       3.3%
-nu_correct[legacy] chunk i3 s4             1.5e-04     1.0e-03      15.3%
-nu_correct[torch]  vs brain_nu_ref         3.0e-03     5.0e-03      60.1%
-nu_correct[legacy] vs brain_nu_ref         3.7e-03     5.0e-03      74.0%   <- §3
+histogram parzen=True vs shim              4.52e-11    1e-09          4.5%
+histogram parzen=False vs shim             0           1e-09          0.0%
+histogram vs volume_hist (counts)          4.95e-07    1e-06         49.5%   (was 2.0, §2)
+bin centres vs volume_hist                 4.99e-07    1e-06         49.9%
+sharpen_lut deblur=False vs shim           3.2e-14     1e-11          0.3%
+sharpen_lut deblur=True vs shim            2.31e-14    1e-11          0.2%
+sharpen_lut vs shim (real histogram)       2.29e-13    1e-09          0.0%
+sharpen_lut vs sharpen_hist                4.99e-07    1e-06         49.9%
+apply_lut vs minclookup                    7.11e-15    1e-09          0.0%
+bimodal_threshold vs mincstats             3.56e-05    0.0001        35.6%   (was 238, §7)
+spline d=200 sub=1 vs shim                 9.63e-08    5.94e-07      16.2%
+spline d=200 sub=2 vs shim                 4.28e-10    6.21e-07       0.1%
+spline d=50  sub=1 vs shim                 1.27e-11    2.9e-07        0.0%
+correct_field vs shim                      4.27e-06    7.96e-05       5.4%
+correct_field vs binary                    4.27e-06    7.96e-05       5.4%
+shrink vs mincresample                     0.0312      204            0.0%   <- §6
+_sharpen[torch] vs sharpen_volume          2.47e-06    3.21e-05       7.7%
+_sharpen[legacy] vs sharpen_volume         2.47e-06    3.21e-05       7.7%
+_smooth[torch] vs spline_smooth            2.32e-08    5.4e-06         0.4%
+_smooth[legacy] vs spline_smooth           6.36e-09    5.4e-06         0.1%
+nu_correct[torch] chunk i1 s3              3.34e-05    0.001          3.3%
+nu_correct[torch] chunk i3 s4              7.82e-05    0.001          7.8%
+nu_correct[legacy] chunk i1 s3             3.34e-05    0.001          3.3%
+nu_correct[legacy] chunk i3 s4             0.000153    0.001         15.3%
+nu_correct[torch] vs brain_nu_ref          0.00301     0.005         60.1%
+nu_correct[legacy] vs brain_nu_ref         0.0037      0.005         74.0%   <- §3
+amplification, early (bound is a maximum)  1.41e-07    1e-06         14.1%   <- §1
+amplification, late / early (a minimum)    100         1.78e+03       5.6%   <- §1
+platform reference, torch/cpu              0.208       18             1.2%   <- §6
+platform reference, legacy/cpu             0           18             0.0%
+platform reference, torch/cuda             0.208       18             1.2%
 
 recovery sweep, as % of bound (fixed 30 iterations, no early stop)
   amp  dist | residual vs planted/2    | agreement vs 1e-3
@@ -204,8 +253,19 @@ documented elsewhere, and no tolerance can be tightened past them:
 - `correct_field` relaxes in raster order, which is inherently sequential; the
   port sweeps checkerboard colours instead. Both approximate the same Laplace
   solution, to ~5e-6.
-- N3's loop amplifies: implementations agreeing to 1.4e-7 after one iteration
-  disagree by 5e-4 after ten. No end-to-end N3 comparison means much past
-  three digits — including running the same code on a GPU.
-- The legacy passes every intermediate through a slice-scaled MINC file, so
-  the port cannot reach the legacy suite's own 1e-4. See `CLAUDE.md`.
+- N3's loop amplifies: implementations agreeing on the field to 1.4e-7 after
+  one iteration disagree by 2.5e-4 after ten, and by 1.1e-3 end to end under
+  the shipped protocol. No end-to-end N3 comparison means much past three
+  digits — running the same backend on a GPU moves it by 1.3e-3, slightly
+  more than changing backend does.
+- The *installed* N3 passes every intermediate between its programs as a
+  slice-scaled MINC file, so neither backend here can reach the legacy suite's
+  own 1e-4 — the legacy backend calls the same C++ in one process, on float64,
+  and is rounded nowhere. (It ends up 3.7e-3 from `brain_nu_ref.mnc`, slightly
+  further out than the port.) See `CLAUDE.md` and `torch_n3/backends/legacy.py`.
+- `test_reproducibility.py` pins two iterations rather than the shipped fifty. That is not
+  a weakened requirement but the largest one that is well posed: past two,
+  what moves the answer is a single histogram count crossing a bin boundary
+  (see `CLAUDE.md`), and CPU and GPU finish 444 storage levels apart. The
+  converged protocol is covered, three digits at a time, by
+  `test_pipeline.py::test_matches_the_legacy_reference_volume`.

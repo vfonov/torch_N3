@@ -9,6 +9,11 @@ implementation can supply them:
     :mod:`torch_n3.backends.legacy` -- the original N3 C++ through a CFFI
     shim.  Slower, needs the extension built, and exists so that every block
     of the port has something exact to be tested against.
+
+Neither is the installed ``nu_correct``.  Both run *this* pipeline, in one
+process, on ``float64`` arrays; the original passes its intermediates between
+programs as MINC files and is rounded at every step, which is why neither
+backend reproduces it exactly.  See :mod:`torch_n3.backends.legacy`.
 """
 
 

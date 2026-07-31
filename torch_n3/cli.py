@@ -37,13 +37,17 @@ how --distance and --lambda interact:
       1e-5                0.33%     0.17%     0.25%
       1e-4                0.85%     0.54%     0.35%
 
-  So: roughly a decade of --lambda per halving of --distance.  At 50 mm and
-  the default 1e-7 the correction leaves the volume further from the truth
-  than it started -- and the same spacing at 1e-4 is fine.
+  So: raise --lambda by about a decade each time you halve --distance, and
+  err high rather than low.  The best cell per column is 1e-6, 1e-5, 1e-5 --
+  a decade for the first halving and less for the second -- but the penalty
+  of overshooting is small and the penalty of leaving it alone is not.  At
+  50 mm and the default 1e-7 the correction leaves the volume further from
+  the truth than it started; the same spacing at 1e-4 is fine.
 
   Measured on one synthetic field (tests/test_field_recovery.py), which is
-  smoother than a real coil profile.  Read it as the shape of the trade-off,
-  not as a table to tune from.
+  smoother than a real coil profile.  A 40% field gives the same table
+  roughly doubled, with the same minima; both are in README.md.  Read them
+  as the shape of the trade-off, not as a table to tune from.
 """
 
 

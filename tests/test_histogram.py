@@ -50,7 +50,7 @@ def test_counts_match_the_legacy_histogram(chunk, chunk_mask, parzen):
     theirs = legacy.histogram(values[inside], 200, value_range, parzen)
 
     # Both add one sample at a time into the same bins; only the order of the
-    # additions differs, and 130k of them accumulate about that much rounding.
+    # additions differs, and 132k of them accumulate about that much rounding.
     assert_close(ours, theirs, atol=1e-9)
 
 

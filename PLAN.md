@@ -47,16 +47,18 @@ the corresponding lines of `legacy/N3/`.
 **Progress: Stage 1 complete.** `torch_n3/_legacy/` builds a CFFI extension over
 `Spline.cc`, `TBSpline.cc`, `DHistogram.cc`, `WHistogram.cc`, `sharpen_hist.cc` and
 `correctField.cc`, compiled straight from `legacy/N3/src`. `torch_n3/pipeline.py` is the N3
-loop over those blocks; `torch_n3/cli.py` is a `nu_correct`-style front end. 27 tests pass.
+loop over those blocks; `torch_n3/cli.py` is a `nu_correct`-style front end. 27 tests passed at that point.
 
 **Where the port stands numerically.** Every block matches its legacy counterpart to the
 precision of the file the legacy writes it into: histogram, sharpened lookup table,
 `minclookup`, `spline_smooth`, `evaluate_field`, `correct_field`, `mincresample`,
 `resample_labels`, `mincstats -biModalT`. End to end, `nu_correct` on `brain.mnc.gz` lands
-**2.9e-3 relative RMS** from `brain_nu_ref.mnc.gz`, not the `1e-4` the legacy suite asks for.
+**2.9e-3 relative RMS** from `brain_nu_ref.mnc.gz` (3.0e-3 after the Stage 2 port), not the
+`1e-4` the legacy suite asks for.
 
 That gap is storage, not algorithm. Legacy N3 is a Perl script shelling out to `mincmath` and
-friends, so every intermediate round-trips through a MINC file: 12-bit before the mask is
+friends — this is the installed N3, not the `legacy` backend, which passes float64 arrays
+in one process — so every intermediate round-trips through a MINC file: 12-bit before the mask is
 applied, 16-bit after, scaled slice by slice on write and rescaled onto a single global grid
 on read. The estimation is a feedback loop, so thirty iterations amplify that rounding. A
 faithful emulation was prototyped and abandoned: it reproduces individual stages exactly
@@ -89,12 +91,13 @@ Exit criterion: `pytest tests/ -k stage1` green, and the Python pipeline reprodu
 **Progress: Stage 2 complete.** `torch_n3/blocks/` is the port; `torch_n3/backends/legacy.py`
 is now only an oracle. `backends.resolve("torch"|"legacy")` switches between them and the
 pipeline runs on either, so every test below exists in both variants. Importing
-`torch_n3.pipeline` no longer pulls in the CFFI extension. 84 tests pass in ~9 s.
+`torch_n3.pipeline` no longer pulls in the CFFI extension. (124 tests pass in ~21 s as of
+2026-07-31; the count moved on in later work.)
 
 The volumes live in `tests/data/` as MINC2 — the same images, converted once, so that
 reading them needs no MINC program. The suite does not run the legacy programs either. They are deterministic, so
 `tests/regenerate_reference.py` ran them once and recorded the answers in
-`tests/reference/legacy.npz` (4.9 MB); `tests/inputs.py` holds the inputs, shared with
+`tests/reference/legacy.npz` (9.4 MB); `tests/inputs.py` holds the inputs, shared with
 the tests so that both sides ask the same question. Re-running the script when nothing
 has changed leaves `git diff` empty, which is the check that the recorded answers are
 still theirs.
@@ -103,13 +106,13 @@ still theirs.
 |---|---|---|
 | `histogram_range` | `blocks/histogram.py` | exact |
 | `histogram` (plain) | `blocks/histogram.py` | exact |
-| `histogram` (Parzen) | `blocks/histogram.py` | 5e-11 on 130k samples (summation order) |
-| `sharpen_lut` | `blocks/sharpen.py` | 4e-13 |
-| `apply_lut` | `minc_tools.py` | 5e-14 vs `minclookup` |
-| `bimodal_threshold` | `minc_tools.py` | exact |
-| `BSplineField` | `blocks/spline.py` | 1e-6 relative on the fitted field |
+| `histogram` (Parzen) | `blocks/histogram.py` | 5e-11 on 132k samples (summation order) |
+| `sharpen_lut` | `blocks/sharpen.py` | 3e-14 |
+| `apply_lut` | `minc_tools.py` | 7e-15 vs `minclookup` |
+| `bimodal_threshold` | `minc_tools.py` | 4e-5 on 2.4e5 — all `mincstats` printed |
+| `BSplineField` | `blocks/spline.py` | 2e-7 relative on the fitted field |
 | `correct_field` | `blocks/field.py` | 5e-6 relative |
-| `shrink` / resampling | `volume.py` | exact |
+| `shrink` / resampling | `volume.py` | label resampling exact; `shrink` to a 12-bit level |
 
 Notes on the two loose ones:
 
@@ -117,18 +120,19 @@ Notes on the two loose ones:
   default 200 mm spacing, where the knots are further apart than the volume is wide. The
   *coefficients* therefore agree to only ~1e-4 (and would with any two solvers; LU, Cholesky
   and the legacy's `dsysv` all differ by that much). The fitted field, which is what the
-  pipeline consumes, agrees to 1e-6 relative. Tests compare fields, not coefficients.
+  pipeline consumes, agrees to 2e-7 relative — the tests bound it at 1e-6 of its own span.
+  Tests compare fields, not coefficients.
 - **`correct_field` cannot be matched exactly by construction.** The legacy sweeps its SOR
   relaxation in raster order in `float`; the port sweeps the two checkerboard colours in turn,
   which is the same Gauss-Seidel iteration reordered so it vectorises. Both approximate the
   same Laplace solution, to about 5e-6 of each other.
 
 **The iteration amplifies.** N3 feeds its own output back in, so backends that agree to 1.4e-7
-after one iteration disagree by 5e-4 after thirty (`test_the_iteration_amplifies_small
+after one iteration disagree by 2.5e-4 after ten (`test_the_iteration_amplifies_small
 _differences`). This is a property of the algorithm, and it caps how tightly *any* end-to-end
-comparison can be pinned — including the storage-precision story below. Running on the GPU
-moves the answer by the same order (3.4e-3 vs 3.0e-3 against `brain_nu_ref`), for the same
-reason: different reduction orders.
+comparison can be pinned — including the storage-precision story below. Under the shipped
+protocol the two backends land 1.1e-3 apart, and running the same backend on the GPU moves
+the answer slightly more than that (1.3e-3), for the same reason: different reduction orders.
 
 Exit criterion (met): all blocks `torch`, the legacy CFFI extension no longer imported by the
 pipeline, and the end-to-end result still within the tolerance recorded for
@@ -139,8 +143,8 @@ pipeline, and the end-to-end result still within the tolerance recorded for
 Because the amplification above caps what an output-vs-output comparison can prove,
 `tests/test_field_recovery.py` asks the question directly: plant a smooth field of known
 amplitude on `brain_nu_ref.mnc.gz`, write `brain_nu_artificial.mnc`, and have each
-implementation correct it — the two backends always, the installed `nu_correct` when it is on
-`PATH` (`conftest.requires_program`).
+implementation correct it — the two backends live, and the installed `nu_correct` from the
+answers recorded in `tests/reference/`, so no program is run.
 
 | Planted field | Knot spacing | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
 |---|---|---|---|---|---|

@@ -10,8 +10,11 @@ spline's bending energy:
 ``A`` holds the basis functions at every masked voxel, ``J`` the bending
 energy of the basis (the integrated second derivatives), ``N`` the number of
 samples, and ``lambda`` is N3's ``-lambda``.  With the default 200 mm knot
-spacing there are only a few dozen coefficients, which is what makes the field
-smooth: it simply cannot represent anything sharper.
+spacing a whole head is described by 80 coefficients, which is most of what
+makes the field smooth: it simply cannot represent anything sharper.  The
+penalty is the rest, and the two have to be set together -- halving the
+spacing without raising ``lambda`` gives the fit enough freedom to start
+following tissue contrast instead.  See ``python3 -m torch_n3 --help``.
 
 The spline is defined on a box in *world* coordinates and evaluates to exactly
 zero outside it, so a field fitted on the coarse estimation grid can be

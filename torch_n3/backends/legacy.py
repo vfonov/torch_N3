@@ -9,6 +9,18 @@ pipeline (see :func:`torch_n3.backends.resolve`).
 Tensors in, tensors out; the conversion to and from ``numpy`` -- and to and
 from the CPU -- happens here, because the C code knows nothing about either.
 
+**No MINC file is involved.**  That is worth saying because the original N3 is
+a Perl script driving a dozen separate executables, which can only talk to each
+other through files, so every intermediate volume it computes is rounded to a
+12- or 16-bit MINC image on the way out and rescaled on the way back in.  None
+of that applies here: these functions are the same C++ *routines* called
+directly, on ``float64`` buffers, in one process.  So ``backend="legacy"``
+gives the original arithmetic without the original's quantisation, and does
+*not* reproduce the installed programs bit for bit -- on ``brain.mnc`` it lands
+3.7e-3 from ``brain_nu_ref.mnc``, slightly further out than the PyTorch blocks
+do.  What it is for is comparing block against block with nothing rounded in
+between.
+
 Build the extension first::
 
     python3 torch_n3/_legacy/build_legacy.py
