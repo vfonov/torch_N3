@@ -23,6 +23,12 @@ from torch_n3.backends import legacy
 from torch_n3.volume import Volume
 
 
+#: Slack for comparisons that hold exactly in exact arithmetic.  Not a
+#: tolerance on the result -- an allowance for the last bits of a float64
+#: solve, several orders below the differences it is applied to.
+ROUNDING = 1e-9
+
+
 def unit_grid(shape):
     """A 1 mm isotropic grid at the origin -- geometry only, no data."""
     return Volume(torch.zeros(shape), start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0))
@@ -88,20 +94,52 @@ def test_bending_energy_is_a_gram_matrix(size, order):
     assert not bool(energy[far].any())
 
 
-def test_more_regularization_means_a_flatter_field():
-    """What ``-lambda`` is for: it buys smoothness at the cost of fit."""
+def test_regularization_trades_bending_energy_for_fit():
+    """What ``-lambda`` is for, as the exact statement rather than a rule of thumb.
+
+    The fit minimises ``||Ac - f||^2 + lambda*N*c'Jc``.  Compare the objective
+    at two weights, each evaluated at the other's minimiser, and the cross
+    terms cancel to give: as ``lambda`` rises the bending energy ``c'Jc`` can
+    only fall and the residual can only rise.  That holds for every pair, with
+    no factor to choose and nothing to tune -- so it is checked at every step
+    of a sweep, in both directions.
+
+    ``c'Jc`` is the integrated squared curvature of the fitted field, which is
+    what "smoother" means here.
+
+    What this does *not* do is check that ``J`` is right.  The energy is
+    measured with the same matrix the fit penalises with, so the property
+    holds for any non-degenerate ``J``: mutating the first-derivative cross
+    terms to drop their factor of two leaves this test green (the parity test
+    against the shim catches it).  Zeroing ``J`` altogether, or dropping the
+    second-derivative terms, does fail here -- those make the sweep flat.
+    """
     shape = (24, 24, 24)
     x, _, _ = torch.meshgrid(*[torch.arange(s, dtype=torch.float64)
                                for s in shape], indexing="ij")
     wavy = torch.sin(x / 3.0)
-
     grid = unit_grid(shape)
-    curvature = []
-    for lam in (1e-9, 1e-1):
-        fitted = blocks.BSplineField(grid, 6.0, lam).fit(wavy).evaluate()
-        curvature.append(float(fitted.diff(n=2, dim=0).abs().mean()))
 
-    assert curvature[1] < curvature[0] / 10
+    energy, residual = [], []
+    for lam in [10.0 ** -power for power in range(9, 0, -2)]:
+        fitted = blocks.BSplineField(grid, 6.0, lam).fit(wavy)
+        penalty = blocks.spline.bending_energy_tensor(fitted.n)
+        coefficients = fitted.coefficients
+
+        energy.append(float(coefficients @ penalty @ coefficients))
+        # Every voxel is a sample here, so evaluating the spline on the grid
+        # is exactly ``Ac`` and this is the least-squares residual itself.
+        residual.append(float(((fitted.evaluate() - wavy) ** 2).sum()))
+
+    # Only floating point may break the ordering; the mathematics may not.
+    for weaker, stronger in zip(energy, energy[1:]):
+        assert stronger <= weaker * (1 + ROUNDING)
+    for weaker, stronger in zip(residual, residual[1:]):
+        assert stronger >= weaker * (1 - ROUNDING)
+
+    # ...and the sweep has to be wide enough for the trade to be visible.
+    assert energy[-1] < energy[0] / 100
+    assert residual[-1] > residual[0]
 
 
 def test_a_plane_is_fitted_exactly():

@@ -92,9 +92,19 @@ decision worth making deliberately.
   basis was written and then replaced, before it ever ran, by symmetry,
   positive-semidefiniteness and bandedness — because the legacy basis is
   unnormalised (its four cubics sum to 6, not 1) and the quadrature version
-  risked being either wrong or circular. `J` is therefore only pinned
-  indirectly, through the spline fits that use it. A correct quadrature check
-  would be worth having.
+  risked being either wrong or circular.
+
+  **`J`'s value is pinned only by the parity tests against the shim.** Mutation
+  testing on 2026-07-31 confirms it. Dropping the factor of two on the
+  first-derivative cross terms — a plausible porting slip — leaves every
+  property test in `test_spline.py` green, including the monotonicity one from
+  §5, because that measures the energy with the same `J` the fit penalises
+  with and so holds for any non-degenerate matrix. Only
+  `test_fit_matches_the_legacy_spline` catches it. Degenerate mutations (zero
+  `J`, or the second-derivative terms removed) are caught by both.
+
+  So if the legacy backend ever goes away, `J` loses its only real test. A
+  correct quadrature check would be worth having.
 
 ## 5. Inputs that were changed
 
@@ -111,10 +121,19 @@ they narrowed what is tested:
 
 Separately, `test_spline.py::test_more_regularization_means_a_flatter_field`
 had its **input** changed after a failure — `lam` went from `1e-3` to `1e-1`
-when the "10× flatter" assertion did not hold. The current form (`1e-9` vs
-`1e-1`, measured 69×) is a reasonable property test, but it was arrived at by
-turning a dial until the test went green, which is the same practice as moving
-a threshold.
+when the "10× flatter" assertion did not hold. Both the λ pair and the factor
+were free parameters, so moving one of them was the same act as moving the
+other; the pass carried no information that had not been engineered into it.
+
+**Fixed 2026-07-31**, by replacing the whole assertion rather than either
+number. `test_regularization_trades_bending_energy_for_fit` now checks the
+exact property of a penalised least-squares fit: as λ rises the bending energy
+`c'Jc` can only fall and the residual can only rise. That follows from
+comparing the objective at two weights, holds for every pair, and needs no
+factor at all — so it is checked at every step of a decade sweep, in both
+directions. The tightest step is a 0.45% fall in energy against a 1e-9
+round-off allowance. It also catches a bug the old test could not: λ not being
+scaled by the sample count.
 
 ---
 
