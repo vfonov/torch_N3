@@ -195,14 +195,14 @@ from, rather than whether it passed.
 EBTKS sources and links the *system* LAPACK/BLAS, where before it linked
 `libEBTKS.a`, which bundles its own f2c'd `dsysv`. Both solve the same
 near-singular normal equations (condition number ~`1e13`); neither is wrong.
-The blocks barely notice — the fitted spline field moves by `4.6e-12` relative
+The blocks barely notice — the fitted spline field moves by `3.1e-11` relative
 — but the iteration amplifies it, so two bounds had to move. Deliberately, and
 recorded here rather than quietly widened:
 
 | Where | Was | Now | Why |
 |---|---|---|---|
 | `test_pipeline.py::test_matches_the_legacy_reference_volume` | `5e-3` | `1e-2` | the legacy backend's distance from N3's shipped `brain_nu_ref.mnc` went 0.3701% → 0.5211%, past the old bound. One percent relative RMS is the new bound; the port sits at 0.3007%. |
-| `tests/inputs.py::PLATFORM_PROTOCOL` | 2 iterations | 1 iteration | at two, the histogram-bin knife-edge now falls *between* the backends: they land 1.17e-3 relative RMS apart, against 5.5e-8 at one. |
+| `tests/inputs.py::PLATFORM_PROTOCOL` | 2 iterations | 1 iteration | the histogram-bin knife-edge moved from the sixth iteration to the second, so at two the backends land 1.17e-3 relative RMS apart, against 5.5e-8 at one. |
 
 The second is the confound-removal `CLAUDE.md` asks for, not a loosened bound:
 at two iterations that test was measuring which side of a rounding boundary one
@@ -256,15 +256,17 @@ platform reference, torch/cpu              5.52e-08    1.53e-05       0.4%   <- 
 platform reference, legacy/cpu             0           1.53e-05       0.0%
 platform reference, torch/cuda             5.52e-08    1.53e-05       0.4%
 
-recovery sweep, as % of bound (fixed 30 iterations, no early stop)
+recovery sweep, as % of bound (fixed 30 iterations, no early stop).  The two
+columns involving `legacy` moved when the shim changed LAPACK (§8); `t-bin`,
+which involves neither, did not.
   amp  dist | residual vs planted/2    | agreement vs 1e-3
              torch  legacy  nu_correct | t-l    t-bin  l-bin | after/before
-  20%  200mm   15%    15%     15%      |  19%    19%     7%  |  0.245
-  20%  100mm   29%    29%     29%      |  36%    48%    22%  |  0.695
-  20%   50mm   73%    73%     73%      |  18%    43%    58%  |  1.101  <- §1, §3
-  40%  200mm   14%    14%     14%      |  13%    37%    26%  |  0.124
-  40%  100mm   24%    24%     24%      |  11%    22%    33%  |  0.354
-  40%   50mm   47%    47%     47%      |  30%    51%    35%  |  0.575
+  20%  200mm   15%    15%     15%      |  32%    19%    14%  |  0.245
+  20%  100mm   29%    29%     29%      |  27%    48%    26%  |  0.695
+  20%   50mm   73%    73%     73%      |  20%    43%    59%  |  1.101  <- §1, §3
+  40%  200mm   14%    14%     14%      |  45%    37%    10%  |  0.124
+  40%  100mm   24%    24%     24%      |  11%    22%    13%  |  0.354
+  40%   50mm   47%    47%     47%      |  33%    51%    34%  |  0.575
 ```
 
 ---

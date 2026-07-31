@@ -43,10 +43,12 @@ digits at a time, in
 ``test_pipeline.py::test_matches_the_legacy_reference_volume``.
 
 This said *two* until 2026-07-31, when the shim stopped linking EBTKS's
-bundled LAPACK: on the system LAPACK the bin-boundary flip moves one iteration
-earlier, so two is now past the knife-edge rather than short of it.  Which
-iteration it lands on is a property of the build, not of the algorithm --
-``README.md`` has the measurements, ``PROBLEMS.md`` §8 the reasoning.
+bundled LAPACK: that moved the bin-boundary flip from the sixth iteration to
+the second, so two is now past the knife-edge rather than short of it.  Which
+iteration it lands on is a property of the build, not of the algorithm -- CPU
+against GPU puts it on the third -- so one is the only count that is safe for
+every run this test covers.  ``README.md`` has the measurements,
+``PROBLEMS.md`` §8 the reasoning.
 
 **Do not raise the iteration count to make this a stronger test.**  It would
 not be stronger, only louder: past one iteration the thing that moves the

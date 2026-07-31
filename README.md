@@ -366,35 +366,49 @@ bundles its own f2c'd LAPACK. It now compiles vendored sources and links the
 **system** LAPACK/BLAS (OpenBLAS here), so that it needs nothing from the MINC
 toolkit. Same object files, same inputs; the only difference is which `dsysv`.
 
-At block level the swap is nothing:
+At block level the swap is nothing. Fitting the default 200 mm spline to a
+tilted plane on `chunk.mnc`, the two builds differ by:
 
-| | absolute | relative |
+| | largest | relative RMS |
 |---|---|---|
-| spline coefficients move by | 2.0e-08 | 2.7e-07 |
-| the fitted field moves by | 5.9e-11 | **4.6e-12** |
+| spline coefficients | 1.5e-07 | 2.9e-06 |
+| the fitted field | 2.4e-10 | **3.1e-11** |
 
-Four parts in `1e12`. Neither solver is wrong: at that conditioning the
+Three parts in `1e11`. Neither solver is wrong: at that conditioning the
 coefficients are not determined to better than `1e-4` by *any* solver, which is
 why this repository compares fitted fields and never coefficients.
 
-End to end, the same swap:
+End to end on `brain.mnc`, the same swap. `legacy` against `torch`, one row per
+iteration count, so that the loop can be watched doing its work:
 
 | | EBTKS's f2c'd LAPACK | system LAPACK |
 |---|---|---|
-| `legacy` vs N3's `brain_nu_ref.mnc` | 0.3701% | **0.5211%** |
-| `legacy` vs `torch`, 1 iteration | 5.5e-08 | 5.5e-08 |
-| `legacy` vs `torch`, 2 iterations | 5.5e-08 | **1.17e-3** |
-| `legacy` vs `torch`, 3 iterations | 1.17e-3 | 2.12e-3 |
+| `legacy` vs N3's `brain_nu_ref.mnc`, shipped protocol | 0.3701% | **0.5211%** |
+| `legacy` vs `torch`, 1 iteration | 5.49e-08 | 5.52e-08 |
+| `legacy` vs `torch`, 2 iterations | 5.55e-08 | **1.17e-3** |
+| `legacy` vs `torch`, 3 iterations | 5.65e-08 | 2.12e-3 |
+| `legacy` vs `torch`, 4 iterations | 5.73e-08 | 1.69e-3 |
+| `legacy` vs `torch`, 5 iterations | 5.82e-08 | 5.40e-4 |
+| `legacy` vs `torch`, 6 iterations | **8.37e-04** | 5.07e-4 |
 
-Read the last three rows downwards. The bin-boundary flip described above used
-to happen on the third iteration; on the system LAPACK it happens on the second.
-A perturbation of `4.6e-12` moved a discontinuity a whole iteration earlier, and
-with it the end-to-end answer by four orders of magnitude.
+Read each column downwards. Both hold agreement at `5.5e-08` and then lose it
+all at once — that is the bin-boundary flip, and it is a step, not a drift. What
+the swap changed is *when*: the sixth iteration on EBTKS's LAPACK, the second on
+the system one.
 
-So: which LAPACK you link is not an implementation detail of the oracle, and
-`4.6e-12` is not a small number once it goes round the loop. Two bounds moved as
-a result — deliberately, with the measurements written down — in
+So a perturbation of `3.1e-11` in the fitted field moved a discontinuity four
+iterations earlier, and with it the end-to-end answer by four orders of
+magnitude. Which LAPACK you link is not an implementation detail of the oracle.
+
+It also sets the ceiling on how far this test can be pushed: agreement survives
+only up to the flip, wherever it happens to fall for a given build, which is why
+`tests/test_reproducibility.py` pins one iteration and not more. Two bounds
+moved as a result — deliberately, with the measurements written down — in
 [PROBLEMS.md](PROBLEMS.md) §8.
+
+The same knife-edge shows up without changing LAPACK at all: the same `torch`
+code on a CPU and on a GPU agrees to `6.3e-11` after one iteration and `1.0e-10`
+after two, then parts company at `1.17e-3` on the third.
 
 ### Does it actually remove a bias field?
 

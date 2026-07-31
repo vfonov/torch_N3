@@ -250,8 +250,9 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
   `tests/test_reproducibility.py` pins one iteration — past that, an end-to-end golden
   volume records which side of a rounding boundary one voxel landed on. Raising the count
   makes that test louder, not stronger. Which iteration the flip lands on is not fixed
-  either: it moved from the third to the second when the shim switched to the system
-  LAPACK. See `README.md` on that.
+  either: it moved from the sixth to the second when the shim switched to the system
+  LAPACK, on a change of 3.1e-11 in the fitted field. See `README.md` on that. The same
+  step appears between CPU and GPU with no LAPACK change at all, on the third.
 - **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
   script driving separate executables, which can only talk through files. The `legacy`
   *backend* here is those same C++ routines called through the CFFI shim, on float64
