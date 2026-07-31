@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 
-from tests.conftest import assert_close, span
+from tests.conftest import assert_close, requires_compatible_scipy_sparse, span
 from torch_n3 import blocks
 from torch_n3.backends import legacy
 from torch_n3.blocks.spline import DIRECT_SOLVERS
@@ -250,6 +250,7 @@ def test_the_blocked_solver_reproduces_the_dense_one(chunk, bumpy):
         assert_close(banded, dense, atol=ROUNDING * span(dense))
 
 
+@requires_compatible_scipy_sparse()
 def test_the_sparse_solver_reports_that_it_cannot_converge(chunk, bumpy):
     """What ``"sparse"`` is, asserted rather than left as a footnote.
 
