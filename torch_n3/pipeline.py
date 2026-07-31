@@ -40,6 +40,10 @@ DEFAULTS = dict(
                         # lets the fit follow tissue contrast instead of the
                         # field -- see tests/test_field_recovery.py.
     subsample=1,        # use every n-th voxel when fitting the spline
+    solver="normal",    # how the spline fit is solved: "normal" is the
+                        # legacy's own penalised normal equations, "qr"
+                        # the better-conditioned stacked factorization of
+                        # the same problem (torch backend only)
     background=1.0,     # voxels at or below this are never part of the mask
     parzen=True,
     deblur=False,       # True reproduces `-blur`: skip the deconvolution
@@ -115,7 +119,8 @@ def nu_estimate(volume, mask=None, verbose=False, **options):
 
     # 7. Refit as a compact spline, which is what gets carried to full
     #    resolution (`compact_spline_volume`).
-    return backend.BSplineField(grid, opts["distance"], opts["lam"]).fit(
+    return backend.BSplineField(grid, opts["distance"], opts["lam"],
+                                solver=opts["solver"]).fit(
         field, inside, opts["subsample"])
 
 
@@ -183,7 +188,8 @@ def _smooth(values, inside, grid, opts):
     ``spline_smooth`` writes zeros outside the mask, and so do we.
     """
     backend = backends.resolve(opts["backend"])
-    spline = backend.BSplineField(grid, opts["distance"], opts["lam"])
+    spline = backend.BSplineField(grid, opts["distance"], opts["lam"],
+                                  solver=opts["solver"])
     spline.fit(values, inside, opts["subsample"])
     smoothed = spline.evaluate()
     return torch.where(inside, smoothed, torch.zeros_like(smoothed))

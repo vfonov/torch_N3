@@ -229,6 +229,17 @@ Re-measure them, do not adjust them, and change both copies together. It is 24 c
 same implementation's baseline on the untouched reference. Verified unchanged 2026-07-31,
 after the LAPACK swap.
 
+**Re-run 2026-07-31 under both spline solvers**, and they are steadier than the warning
+above implies. All 24 cells reproduce under `solver="normal"`; under `solver="qr"` the
+largest move in any cell is 3.2% relative (20%, 100 mm, `1e-6`: 0.2157% → 0.2226%), and 22
+of the 24 are unchanged at the two decimals both copies print — the exceptions are 40%/50 mm
+at `1e-7` (1.96% → 1.95%) and at `1e-5` (0.48% → 0.47%). Every conclusion drawn from them
+survives intact: the same interior minimum in each column (`1e-6` at 200 mm, `1e-5` at 100
+and 50 mm), identically at both amplitudes, the decade-per-halving rule, and the asymmetry
+at 50 mm. So the tables are measuring the `lambda`/`distance` trade-off rather than
+recording which side of the histogram knife-edge a voxel fell on — worth knowing, given
+that they run 30 iterations, well past it.
+
 If you find yourself relying on a cell, the honest fix is to widen `LAMBDAS` and assert the
 shape being claimed — that each column has an interior minimum, and where — rather than to
 keep trusting a table by hand.
@@ -263,6 +274,18 @@ keep trusting a table by hand.
   The coefficients are not determined to better than ~1e-4 by *any* solver (LU, Cholesky and
   the legacy's `dsysv` all differ by that much); the fitted field is determined to ~1e-6.
   Compare fields, never coefficients.
+- **…but the fit does not have to be posed that way.** `BSplineField(..., solver="qr")`
+  minimises the same objective through the stacked system `[A; sqrt(lambda N) D] c ~ [f; 0]`,
+  where `D'D = J`, and never forms `AtA`. Since the normal equations *are* that matrix's Gram
+  matrix, its condition number is their square root: 2.3e6 instead of 5.3e12 on `brain.mnc`'s
+  estimation grid, by construction rather than by luck. What that buys is reproducibility,
+  and it is worth knowing before chasing a cross-platform difference: the fitted field moves
+  3.0e-13 relative RMS between CPU and GPU instead of 2.5e-9, and the cliff below moves from the third iteration to the
+  seventh (CPU vs GPU) and from the second to the fourth (legacy vs torch). The cost is
+  holding `A` dense — 25 MB on `brain.mnc` at the default `-shrink 4`, 600 MB at `-shrink 1`
+  — and about 8% of the runtime. `solver="normal"` is still the **default** and is what every
+  recorded reference in `tests/` was produced with; the legacy backend has no other solver
+  and rejects the argument. See `PROBLEMS.md` §9 for what changing the default would cost.
 - **`correct_field` cannot be reproduced exactly.** Its SOR relaxation sweeps in raster order,
   which is inherently sequential; `blocks/field.py` sweeps the two checkerboard colours in
   turn, the same Gauss-Seidel iteration reordered. The two agree to ~5e-6 relative, which is
@@ -290,9 +313,25 @@ keep trusting a table by hand.
   actually resolved against. Run it before raising `PLATFORM_PROTOCOL`, before believing an
   end-to-end number on an unfamiliar machine, and after anything that touches the spline or
   the histogram. `N3_LAPACK_LIBS` / `N3_LAPACK_LIB_DIRS` rebuild the shim against a
-  different LAPACK if you want both columns; `README.md` has the recipes. Note that
-  `PLATFORM_PROTOCOL` is at 1 with **no margin** — the smallest cliff seen is 2 — so any
-  increase needs this run on every platform that matters, not just one.
+  different LAPACK if you want both columns; `README.md` has the recipes. `--solver qr`
+  reports the same sweep for the better-conditioned fit, which is where its cliffs above
+  were measured. Note that `PLATFORM_PROTOCOL` is at 1 with **no margin** — the smallest
+  cliff seen is 2 — so any increase needs this run on every platform that matters, not just
+  one. That floor is set by the *default* solver; under `qr` the smallest cliff measured
+  here is 4.
+- **Four solvers now, and only three of them work.** `blocks/spline.py` has `solver=` with
+  `normal` (the legacy's normal equations, the default and the reference), `qr` (dense
+  stacked least squares), `blocked` (the same stacked system folded in one band at a time)
+  and `sparse` (the same again through `scipy.sparse` + `lsqr`). `DIRECT_SOLVERS` is the
+  first three — parametrise anything asserting an exact fit over *that*, not over `SOLVERS`.
+  `blocked` exploits the fact that `A` is banded once its rows are sorted by first-axis
+  knot: a sample with corner `k` touches only columns `[k*n1*n2, (k+4)*n1*n2)`. It equals
+  `qr` to 4e-15 and shares its CPU/GPU reproducibility, but never holds `A` — at 12.5 mm
+  on `chunk.mnc` (3168 coefficients) it is 3.45 s and 1.55 GB against `qr`'s 12.72 s and
+  7.53 GB. At 200 mm there is one band and it *is* `qr` plus a sort, so there is nothing
+  to gain at the shipped spacing. `sparse` **does not converge** — LSQR is defeated by the
+  same conditioning the stacked form reduces, and stops at `istop=3`, 1.8e-3 from the
+  direct answer; it is kept as a recorded negative result, not as an option to use.
 - **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
   script driving separate executables, which can only talk through files. The `legacy`
   *backend* here is those same C++ routines called through the CFFI shim, on float64

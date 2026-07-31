@@ -174,8 +174,17 @@ class BSplineField:
     ``nu_evaluate``.
     """
 
-    def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None):
+    def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
+                 solver="normal"):
+        # The oracle has one solver: the normal equations, as TBSpline.cc
+        # forms them.  Asking it for the stacked QR would silently get the
+        # other answer, so say so instead.
+        if solver != "normal":
+            raise ValueError(
+                "the legacy backend only solves the normal equations; "
+                "solver=%r is implemented by the torch backend alone" % solver)
         self.grid = grid
+        self.solver = solver
         self.distance = float(distance)
         self.lam = float(lam)
         self.domain_world = (_domain_of(grid) if domain_world is None

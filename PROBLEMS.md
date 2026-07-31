@@ -214,6 +214,89 @@ The measured effect of the swap, end to end, is in
 
 ---
 
+## 9. The QR solver is not the default, so most of the suite still measures the ill-conditioned one — 2026-07-31
+
+§8 is a symptom, not the disease. The disease is that N3's spline fit is posed
+as normal equations conditioned around `1e13` at the shipped 200 mm knot
+spacing, which is what makes the last digits of the answer a property of the
+BLAS rather than of the code, and it is why `PLATFORM_PROTOCOL` sits at 1 with
+no margin.
+
+`blocks.spline` now has a second solver, `solver="qr"`, which fits the same
+penalised least squares through `[A; sqrt(lambda N) D] c ~ [f; 0]` instead.
+Its condition number is the square root of the other's — by construction, not
+by luck; the normal equations are that matrix's Gram matrix — and the measured
+consequences are large:
+
+| Measured on `brain.mnc` | `normal` | `qr` |
+|---|---|---|
+| condition number of the system solved, 200 mm | `5.3e12` | `2.3e6` |
+| spline field, CPU vs GPU, relative RMS | `2.5e-9` | `3.0e-13` |
+| end-to-end cliff, torch CPU vs CUDA | 3 iterations | 7 |
+| end-to-end cliff, legacy vs torch | 2 iterations | 4 |
+
+**`normal` is still the default**, so every recorded reference, the whole
+`nu_correct` half of the table above, `test_reproducibility.py`'s checked-in
+volume and the `--lambda` × `--distance` tables are all still measurements of
+the ill-conditioned solve. What the suite currently asserts about `qr` is only
+block-level: that it reproduces the C++ oracle to the same bound, that both
+solvers reach the same objective, that `D'D == J`, and the CPU/GPU bound above.
+
+Changing the default is a deliberate, separate decision with a real cost — it
+moves every end-to-end number in this file and needs
+`tests/data/brain_nu_ref_legacy.mnc` regenerated. It would also let
+`PLATFORM_PROTOCOL` rise off its floor for the first time, which is the
+argument for doing it. Until then, the two solvers' end-to-end outputs differ
+from each other at `1.2e-3` — the same order as switching LAPACK — so results
+are only comparable within one choice.
+
+**One item is off that bill.** The 24 `--lambda` × `--distance` cells were
+re-measured under both solvers on 2026-07-31 and would not need revising: 22
+are unchanged at the two decimals `README.md` and `cli.py` print, the largest
+move in any cell is 3.2% relative, and every conclusion the prose draws — the
+interior minimum in each column and where it sits, the decade-per-halving rule,
+the asymmetry at 50 mm — is identical. That is a mild surprise worth recording
+on its own, since those runs are 30 iterations deep, well past the knife-edge
+that makes end-to-end volumes incomparable; whatever the tables are measuring,
+it is not rounding. See CLAUDE.md, "Published numbers no test checks".
+
+---
+
+## 10. A solver that ships without converging — 2026-07-31
+
+`solver="sparse"` holds §9's stacked system in `scipy.sparse` and solves it with
+`lsqr`. It does not reach an answer, and it is in the tree as a recorded
+negative result rather than as an option anyone should select.
+
+The constraint that produces it: the stacked system is rectangular, and
+`scipy.sparse.linalg` has no direct rectangular solver — no sparse QR — so the
+only thing available is an iterative method, whose convergence is governed by
+the condition number the stacked form was chosen to *reduce*. At 200 mm LSQR
+stops after ~2,950 iterations with `istop=3`, "condition number exceeds
+`conlim`", 18 s in and **1.8e-3** from the direct answer. That is a larger error
+than the gap between this port and the original C++. Raising `iter_lim` from
+20,000 to 200,000 changes neither the iteration count nor the answer.
+
+What this costs the suite:
+
+- It is excluded from every assertion of an exact fit. `DIRECT_SOLVERS`
+  (`normal`, `qr`, `blocked`) is what those are parametrised over;
+  `SOLVERS` includes `sparse` and is only for the CLI's choices.
+- **The exclusion is not a widened bound.** `sparse` was run against the
+  existing `1e-6 * span` parity bound and failed it by three orders. Nothing
+  was loosened to accommodate it; it is held to a different assertion because
+  it is a different kind of solver.
+- What *is* asserted about it is that it reports non-convergence
+  (`test_the_sparse_solver_reports_that_it_cannot_converge`). If a
+  preconditioner ever makes it converge, that test is what will say so.
+
+`solver="blocked"` is the answer to the problem `sparse` was reaching for —
+avoiding the dense design matrix — and it reaches it exactly, by ordering rather
+than by iteration. Use that.
+
+---
+
+
 ## Where every comparison currently sits
 
 `python3 -m tests.margins` prints everything above the recovery sweep; these
@@ -234,9 +317,16 @@ sharpen_lut vs shim (real histogram)       2.29e-13    1e-09          0.0%
 sharpen_lut vs sharpen_hist                4.99e-07    1e-06         49.9%
 apply_lut vs minclookup                    7.11e-15    1e-09          0.0%
 bimodal_threshold vs mincstats             3.56e-05    0.0001        35.6%   (was 238, §7)
-spline d=200 sub=1 vs shim                 9.64e-08    5.94e-07      16.2%
-spline d=200 sub=2 vs shim                 1.69e-10    6.21e-07       0.0%
-spline d=50  sub=1 vs shim                 1.28e-11    2.9e-07        0.0%
+spline[normal] d=200 sub=1 vs shim         9.64e-08    5.94e-07      16.2%
+spline[qr] d=200 sub=1 vs shim             7.49e-08    5.94e-07      12.6%
+spline[blocked] d=200 sub=1 vs shim        7.49e-08    5.94e-07      12.6%
+spline[normal] d=200 sub=2 vs shim         1.69e-10    6.21e-07       0.0%
+spline[qr] d=200 sub=2 vs shim             1.52e-08    6.21e-07       2.5%
+spline[blocked] d=200 sub=2 vs shim        1.52e-08    6.21e-07       2.5%
+spline[normal] d=50  sub=1 vs shim         1.28e-11    2.9e-07        0.0%
+spline[qr] d=50  sub=1 vs shim             2.24e-12    2.9e-07        0.0%
+spline[blocked] d=50  sub=1 vs shim        2.24e-12    2.9e-07        0.0%
+spline[qr] d=200 cpu vs cuda               1.18e-12    5.94e-12      19.8%   <- §9
 correct_field vs shim                      4.27e-06    7.96e-05       5.4%
 correct_field vs binary                    4.27e-06    7.96e-05       5.4%
 shrink vs mincresample                     0.0312      204            0.0%   <- §6

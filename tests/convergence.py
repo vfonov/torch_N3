@@ -29,6 +29,23 @@ iteration to the second because a fitted field moved by ``3.1e-11``.  The same
 shape appears between a CPU and a GPU running identical code, with the cliff on
 the third.
 
+**The solver moves it too.**  ``--solver qr`` fits the spline through the
+stacked least-squares system rather than the normal equations, which are
+conditioned around ``1e13`` at the shipped knot spacing; the same fit comes out
+of a system conditioned around ``1e6``.  Measured here on ``brain.mnc``, with
+the system LAPACK in the shim:
+
+    cliff at             normal      qr
+    torch cpu vs cuda       3         7
+    legacy vs torch         2         4
+
+and the pre-cliff agreement between CPU and GPU tightens from ``6.3e-11`` to
+``1.5e-13``.  Note the second row: the QR tracks the *C++ oracle* for longer
+than the port's own normal equations do, even though the oracle solves the
+normal equations itself -- being the more accurate solve is worth more here
+than matching the other implementation's formulation.  Neither row is a
+property of the code alone; re-measure both columns on any new platform.
+
 **Reading the output.**  The number to report is the *cliff*: the first
 iteration count at which agreement is lost.  The pre-cliff values are not
 interesting beyond being small, and the post-cliff ones are not comparable
@@ -54,6 +71,7 @@ import sys
 import torch
 
 from tests.conftest import DATA, MODEL_MASK, relative_rms
+from torch_n3.blocks.spline import SOLVERS
 from torch_n3.pipeline import nu_correct
 from torch_n3.volume import load_volume
 
@@ -70,13 +88,16 @@ def main(argv=None):
     mask = load_volume(MODEL_MASK if options.volume == "brain"
                        else os.path.join(DATA, options.volume + "_mask.mnc"))
 
-    print(_provenance())
+    print(_provenance(options.solver))
     print()
 
-    runs = [("legacy vs torch", _pair("torch", "cpu", "legacy", "cpu"))]
+    solver = options.solver
+    runs = [("legacy vs torch",
+             _pair("torch", "cpu", solver, "legacy", "cpu", "normal"))]
     if options.device != "cpu":
         runs.append(("torch cpu vs " + options.device,
-                     _pair("torch", "cpu", "torch", options.device)))
+                     _pair("torch", "cpu", solver,
+                           "torch", options.device, solver)))
 
     counts = list(range(1, options.max_iterations + 1))
     print("%-22s %s" % ("relative RMS", "".join("%11d" % n for n in counts)))
@@ -90,14 +111,14 @@ def main(argv=None):
           % _platform_iterations())
 
 
-def _pair(backend_a, device_a, backend_b, device_b):
+def _pair(backend_a, device_a, solver_a, backend_b, device_b, solver_b):
     """A function of ``(volume, mask, iterations)`` comparing two runs."""
     def compare(volume, mask, iterations):
         protocol = dict(iterations=(iterations,), stop=(0.0,))
         a = nu_correct(volume.to(device_a), mask=mask.to(device_a),
-                       backend=backend_a, **protocol).data.cpu()
+                       backend=backend_a, solver=solver_a, **protocol).data.cpu()
         b = nu_correct(volume.to(device_b), mask=mask.to(device_b),
-                       backend=backend_b, **protocol).data.cpu()
+                       backend=backend_b, solver=solver_b, **protocol).data.cpu()
         return relative_rms(a, b)
     return compare
 
@@ -119,12 +140,14 @@ def _platform_iterations():
     return PLATFORM_PROTOCOL["iterations"][0]
 
 
-def _provenance():
+def _provenance(solver):
     """Everything needed to make a reported table reproducible."""
     lines = ["platform:  %s, python %s, torch %s"
              % (platform.platform(), platform.python_version(),
                 torch.__version__)]
     lines.append("shim links: %s" % (_linked_libraries() or "unknown"))
+    lines.append("solver:    %s (torch runs; the legacy backend is always "
+                 "'normal')" % solver)
     if torch.cuda.is_available():
         lines.append("cuda:      %s" % torch.cuda.get_device_name(0))
     return "\n".join(lines)
@@ -174,6 +197,10 @@ def _parse(argv):
     parser.add_argument("--device", default="cpu",
                         help="also compare torch on cpu against this device, "
                              "e.g. cuda (default: cpu, meaning don't)")
+    parser.add_argument("--solver", default="normal", choices=SOLVERS,
+                        help="which spline solver the torch runs use; the "
+                             "legacy backend always has 'normal' (default: "
+                             "normal, the shipped one)")
     return parser.parse_args(argv)
 
 

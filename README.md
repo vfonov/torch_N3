@@ -75,6 +75,7 @@ All of the protocol options mirror `nu_correct`'s and default to its values:
 | `--field-floor` | 0.1 | Smallest field value allowed, so the division stays sane. |
 | `--device` | cpu | Any torch device, e.g. `cuda`. See [Why end-to-end numbers stop at three digits](#why-end-to-end-numbers-stop-at-three-digits) first. |
 | `--backend` | torch | `legacy` runs the original C++ for every block instead. |
+| `--solver` | normal | How the spline fit is solved. `qr` fits the same spline through a far better-conditioned system and is much more reproducible across machines; `blocked` gives the same answer without holding the design matrix, which is what to use at a fine `--distance`. (`sparse` does not converge — see below.) See [Two ways to solve the same fit](#two-ways-to-solve-the-same-fit). |
 
 Staged stopping works as in N3 — `--iterations 10 20 --stop 0.001 0.005` means "stop
 at 0.001, but after iteration 10 accept 0.005 as well".
@@ -490,6 +491,103 @@ reporting rather than working around: it would mean the flip is being triggered
 by something at the *first* pass, which nothing here has seen and which the
 block-level tests should have caught.
 
+
+### Two ways to solve the same fit
+
+Everything above is downstream of one decision N3 made in 1998: it fits the
+spline by forming the normal equations.
+
+```
+(AtA + lambda N J) c = At f
+```
+
+`A` holds the basis functions at every masked voxel. Squaring it squares the
+condition number, and at the shipped 200 mm knot spacing — where the knots are
+further apart than the head is wide — that lands at ~`1e13`. A system that
+ill-conditioned does not have a wrong answer; it has an answer whose last digits
+belong to whichever BLAS computed it. That is the whole mechanism behind the
+LAPACK story above, and behind a CPU and a GPU running identical code diverging.
+
+The same fit can be posed without ever squaring `A`. Stack the penalty
+underneath the data and solve one least-squares problem:
+
+```
+[      A       ]         [ f ]
+[              ] c   ~   [   ] ,     where  D'D = J
+[ sqrt(lam N) D]         [ 0 ]
+```
+
+Its normal equations are the ones above, term for term — same minimiser, same
+objective, not an approximation — but the matrix being factorised is `A` itself,
+so the condition number is the square root: ~`1e6`. `--solver qr` selects it.
+
+Measured on `brain.mnc`, on the 24×28×24 grid `--shrink 4` leaves — 3,724
+samples and 80 coefficients, which is the fit N3 actually performs:
+
+| | `--solver normal` | `--solver qr` |
+|---|---|---|
+| condition number of the system solved | 5.3e12 | 2.3e6 |
+| fitted field, CPU vs GPU, relative RMS | 2.5e-9 | 3.0e-13 |
+| iterations before CPU and GPU diverge | 3 | 7 |
+| iterations before `legacy` and `torch` diverge | 2 | 4 |
+| 10 iterations, CPU | 0.38 s | 0.41 s |
+| peak RSS, `--shrink 1` | 1.0 GB | 1.3 GB |
+
+The third row is the one that matters: the cliff is where an end-to-end
+comparison stops measuring the code and starts measuring which side of a
+rounding boundary one voxel fell on. The fourth is the surprise — the QR tracks
+the *C++ oracle* longer than the port's own normal equations do, even though the
+oracle solves the normal equations itself. Being the more accurate solve turns
+out to be worth more than matching the other implementation's formulation.
+
+The cost is that `A` is held dense rather than only `AtA`, which is the last two
+rows. `python3 -m tests.convergence --solver qr` measures the cliffs on your
+machine.
+
+#### Getting the same answer without holding `A`
+
+`--solver blocked` is the same stacked system reached a band at a time. Sort the
+rows by which first-axis knot they belong to and `A` becomes banded: a sample
+whose corner is `k` touches only columns `[k·n₁n₂, (k+4)·n₁n₂)`. So the rows can
+be folded into a running `R` one window at a time, and `A` never exists. It is
+the same factorization in a different order, so it gives `qr`'s answer — they
+agree to 4e-15, which is rounding — and it inherits the conditioning and the
+CPU/GPU reproducibility exactly (1.23e-13 against 1.27e-13).
+
+What it buys is the resource cost, and only at fine spacings, where the dense
+stack stops fitting. On `chunk.mnc`:
+
+| `--distance` | coefficients | window | `qr` | `blocked` | `normal` |
+|---|---|---|---|---|---|
+| 200 mm | 64 | 64 | 0.12 s | 0.18 s | 0.05 s |
+| 50 mm | 245 | 140 | 0.37 s | 0.29 s | 0.13 s |
+| 12.5 mm | 3168 | 792 | 12.72 s | **3.45 s** | 8.84 s |
+| 12.5 mm, peak RSS | | | 7.53 GB | **1.55 GB** | 1.09 GB |
+
+At 200 mm there is one group and `blocked` *is* `qr`, plus the cost of a sort —
+so at the shipped spacing there is no reason to prefer it. Below 50 mm there is
+every reason: at 12.5 mm it is 3.7× faster than `qr` on a fifth of the memory,
+and faster than the normal equations too.
+
+#### What did not work
+
+`--solver sparse` holds the same stacked system in `scipy.sparse` and hands it
+to `lsqr`. **It does not converge, and should not be used for results.** The
+reason is structural rather than a matter of tuning: a rectangular system rules
+out every direct sparse solver in `scipy.sparse.linalg` — there is no sparse QR
+there — which leaves iterative methods, and LSQR's convergence is governed by
+the very condition number the stacked form exists to reduce. At 200 mm it stops
+after ~2,950 iterations reporting `istop=3` ("condition number exceeds
+`conlim`"), 18 s in and 1.8e-3 away from the direct answer — a larger error than
+the gap between this port and the original C++. Raising the iteration limit
+changes nothing; it is not stopping early. `BSplineField.solve_info` reports
+what LSQR said. It is kept because the measurement is worth having, and because
+`blocked` is the answer to the problem it was reaching for.
+
+**`normal` is the default**, and every recorded reference in `tests/` was
+produced with it. Changing that is a deliberate decision with a real bill
+attached — it moves every end-to-end number in this file — and
+[PROBLEMS.md](PROBLEMS.md) §9 is where the case for and against is kept.
 
 ### Does it actually remove a bias field?
 

@@ -11,6 +11,7 @@ field back to the legacy tools.
 import argparse
 import sys
 
+from torch_n3.blocks.spline import SOLVERS
 from torch_n3.pipeline import DEFAULTS, evaluate_field, nu_estimate, nu_evaluate
 from torch_n3.volume import load_volume, save_volume
 
@@ -101,6 +102,16 @@ def build_parser():
                         default=DEFAULTS["backend"],
                         help="which implementation of the blocks to run "
                              "(default: %(default)s)")
+    parser.add_argument("--solver", choices=SOLVERS, default=DEFAULTS["solver"],
+                        help="how to solve the spline fit: 'normal' is the "
+                             "legacy's penalised normal equations, 'qr' the "
+                             "same fit through a better-conditioned stacked "
+                             "factorization, which is far less sensitive to "
+                             "the machine's BLAS, and 'blocked' the same "
+                             "answer as 'qr' without holding the design "
+                             "matrix -- use it at a fine --distance. "
+                             "('sparse' does not converge; see PROBLEMS.md.) "
+                             "torch backend only (default: %(default)s)")
     parser.add_argument("--device", help="run on this torch device, e.g. cuda")
     parser.add_argument("--verbose", action="store_true",
                         help="report the field change at every iteration")
@@ -122,7 +133,7 @@ def main(argv=None):
                         distance=args.distance, fwhm=args.fwhm, noise=args.noise,
                         bins=args.bins, shrink=args.shrink, lam=args.lam,
                         iterations=tuple(args.iterations), stop=tuple(args.stop),
-                        backend=args.backend)
+                        backend=args.backend, solver=args.solver)
 
     corrected = nu_evaluate(volume, field, mask=evaluation_mask,
                             field_floor=args.field_floor, backend=args.backend)

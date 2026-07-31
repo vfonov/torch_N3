@@ -25,6 +25,7 @@ from tests.inputs import PLATFORM_PROTOCOL
 from tests.regenerate_reference import PLATFORM_REFERENCE
 from torch_n3 import blocks
 from torch_n3.backends import legacy
+from torch_n3.blocks.spline import DIRECT_SOLVERS
 from torch_n3.minc_tools import apply_lut, bimodal_threshold
 from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, evaluate_field,
                                nu_correct, nu_estimate)
@@ -118,12 +119,31 @@ def block_rows(recorded):
                         + 0.01 * torch.randn(chunk.shape, dtype=torch.float64),
                         torch.zeros_like(z))
     for distance, subsample in [(200.0, 1), (200.0, 2), (50.0, 1)]:
-        ours = blocks.BSplineField(chunk, distance, 1e-7).fit(
-            bumpy, inside, subsample).evaluate()
         theirs = legacy.BSplineField(chunk, distance, 1e-7).fit(
             bumpy, inside, subsample).evaluate()
-        rows.append(("spline d=%-3g sub=%d vs shim" % (distance, subsample),
-                     _worst(ours, theirs), 1e-6 * span(ours)))
+        for solver in DIRECT_SOLVERS:
+            ours = blocks.BSplineField(chunk, distance, 1e-7,
+                                       solver=solver).fit(
+                bumpy, inside, subsample).evaluate()
+            rows.append(("spline[%s] d=%-3g sub=%d vs shim"
+                         % (solver, distance, subsample),
+                         _worst(ours, theirs), 1e-6 * span(ours)))
+
+    # test_the_qr_fit_is_the_same_on_the_gpu, which only runs where there is
+    # one.  Only the QR row appears: the normal equations are not held to this
+    # bound and never were -- failing it by five orders is the reason the other
+    # solver exists -- and a row here means an assertion somewhere.
+    # `tests/convergence.py` is where both are measured side by side.
+    if torch.cuda.is_available():
+        def fitted(grid, data, mask):
+            return blocks.BSplineField(grid, 200.0, 1e-7, solver="qr").fit(
+                data, mask).evaluate()
+
+        here = fitted(chunk, bumpy, inside)
+        there = fitted(chunk.like(chunk.data.cuda()), bumpy.cuda(),
+                       inside.cuda()).cpu()
+        rows.append(("spline[qr] d=200 cpu vs cuda",
+                     _worst(here, there), 1e-11 * span(here)))
 
     # test_field.py
     plane = inputs.tilted_plane(chunk, inside)
