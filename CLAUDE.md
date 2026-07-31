@@ -149,6 +149,34 @@ sharpen_hist -clobber -fwhm 0.15 -noise 0.01 -quiet h.txt h.sharp
 `h.sharp` is the two-column lookup table. Both are plain text, so they diff directly against
 tensors.
 
+## Test tolerances
+
+**Never widen a tolerance to make a test pass.** A threshold states what the code is required
+to do; moving it after the fact turns the test into a record of what the code happens to do,
+and destroys the only evidence that something changed. The same applies to quietly changing a
+test's inputs until it goes green.
+
+When an assertion fails, the options are, in order: find the defect; or find the confound and
+remove *that* (a comparison between two implementations that stopped at different iterations
+is not measuring what it claims to, and controlling the iteration count is a fix — loosening
+the bound is not); or, if the requirement was genuinely wrong, change it deliberately, in its
+own commit, with the measurement and the reasoning written down.
+
+Thresholds here should be round numbers chosen from something real — the 16-bit quantum of the
+MINC file a legacy program wrote (`span(reference) / 65535`), the six decimals `%lf` prints
+(`1e-6`), a single shared constant for cross-implementation agreement — and not the measured
+difference plus a margin. If a bound cannot be justified without running the code first, prefer
+asserting the property that motivated it.
+
+Two known-brittle comparisons, so nobody reaches for the threshold when they fail:
+
+- **The stopping rule quantises everything downstream.** Iteration stops at `change < 0.001`;
+  two implementations whose per-iteration change differs in the fifth decimal can land on
+  either side of that and run a different number of iterations, which moves the output by far
+  more than any block-level difference. Check the iteration count first (`verbose=True`).
+- **Extreme-value statistics over a whole volume** (`max |a - b|` across 240k voxels) are
+  dominated by a handful of mask-edge voxels and are not worth a fixed bound. Compare RMS.
+
 ## Gotchas when porting
 
 - Do the arithmetic in log space and keep the field there until the final `exp`. Ratios in

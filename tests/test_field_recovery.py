@@ -44,6 +44,13 @@ BACKENDS = ["torch", "legacy"]
 #: The installed program, which shares no code with either of them.
 BINARY = "nu_correct"
 
+#: How closely two implementations must agree on the field they recovered,
+#: as a relative RMS difference over the mask.  One number for every pairing,
+#: fixed in advance: it is what is being *required*, not what was measured.
+#: If it fails, see the note on tolerances in CLAUDE.md -- the first thing to
+#: check is whether the two ran the same number of iterations.
+AGREEMENT = 1e-3
+
 HAVE_BINARY = program_available(BINARY)
 needs_the_binary = requires_program(BINARY)
 
@@ -105,6 +112,17 @@ class Recovery:
     def residual(self, source):
         """How much non-uniformity ``source`` failed to take out."""
         return float(self.unexplained(source).std(unbiased=False))
+
+    def disagreement(self, one, other):
+        """How far apart two implementations' recovered fields are.
+
+        Relative RMS over the mask.  Deliberately not the largest single
+        difference: that is an extreme-value statistic over a quarter of a
+        million voxels, dominated by a few on the edge of the mask, and no
+        fixed bound on it would mean much.
+        """
+        difference = self.unexplained(one) - self.unexplained(other)
+        return float((difference ** 2).mean().sqrt())
 
 
 def _run_the_binary(workspace, volume_path, mask_path, name):
@@ -196,19 +214,18 @@ def test_the_planted_field_is_recovered(recovery, backend):
 def test_the_two_backends_recover_the_same_field(recovery):
     """The comparison that is always available: same pipeline, other blocks.
 
-    Loose, and deliberately so.  The blocks themselves agree to between 1e-13
-    and 1e-6 (see ``test_histogram.py`` and friends), but N3's loop feeds its
-    own output back in and magnifies that; what is being checked here is that
-    the two arrive at the same field, not that they arrive by the same route.
+    The blocks themselves agree to between 1e-13 and 1e-6 (``test_histogram.py``
+    and friends); this asks whether that survives the loop, which feeds its own
+    output back in.
+
+    Mostly it does, but the margin here is thin and the reason is worth
+    knowing: at 40% the two stop at different iterations, because the rule is
+    ``change < 0.001`` and one reaches 0.000975 where the other is still at
+    0.001011.  A whole extra field update moves the answer far more than any
+    block difference does.  If this fails, check the iteration counts before
+    anything else.
     """
-    ours = recovery.unexplained("torch")
-    theirs = recovery.unexplained("legacy")
-
-    assert recovery.residual("torch") < 1.25 * recovery.residual("legacy")
-
-    difference = ours - theirs
-    assert float((difference ** 2).mean().sqrt()) < 2e-3
-    assert float(difference.abs().max()) < 1e-2
+    assert recovery.disagreement("torch", "legacy") < AGREEMENT
 
 
 @needs_the_binary
@@ -220,11 +237,7 @@ def test_it_recovers_as_much_as_the_installed_nu_correct(recovery, backend):
     it, so what an implementation can be held to is not an absolute residual
     but whether it agrees with the original about which field is there.
     """
-    assert recovery.residual(backend) < 1.1 * recovery.residual(BINARY)
-
-    difference = recovery.unexplained(backend) - recovery.unexplained(BINARY)
-    assert float((difference ** 2).mean().sqrt()) < 1e-3
-    assert float(difference.abs().max()) < 8e-3
+    assert recovery.disagreement(backend, BINARY) < AGREEMENT
 
 
 def test_the_correction_restores_the_reference_volume(recovery):
