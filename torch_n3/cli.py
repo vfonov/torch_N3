@@ -39,10 +39,10 @@ how --distance and --lambda interact:
 
   So: raise --lambda by about a decade each time you halve --distance, and
   err high rather than low.  The best cell per column is 1e-6, 1e-5, 1e-5 --
-  a decade for the first halving and less for the second -- but the penalty
-  of overshooting is small and the penalty of leaving it alone is not.  At
-  50 mm and the default 1e-7 the correction leaves the volume further from
-  the truth than it started; the same spacing at 1e-4 is fine.
+  one decade for the first halving and none for the second -- so that rule
+  overshoots at 50 mm on purpose.  It is the right way to be wrong: there,
+  1e-4 costs 0.10 points against the best cell, while the default 1e-7 costs
+  1.26 and leaves the volume further from the truth than it started.
 
   Measured on one synthetic field (tests/test_field_recovery.py), which is
   smoother than a real coil profile.  A 40% field gives the same table

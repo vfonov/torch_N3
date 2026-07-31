@@ -73,7 +73,7 @@ All of the protocol options mirror `nu_correct`'s and default to its values:
 | `--iterations` | 50 | Iteration budget, one number per stopping stage. |
 | `--stop` | 0.001 | Stop when the field moves less than this, one per stage. |
 | `--field-floor` | 0.1 | Smallest field value allowed, so the division stays sane. |
-| `--device` | cpu | Any torch device, e.g. `cuda`. See [How close is it?](#how-close-is-it) first. |
+| `--device` | cpu | Any torch device, e.g. `cuda`. See [Why end-to-end numbers stop at three digits](#why-end-to-end-numbers-stop-at-three-digits) first. |
 | `--backend` | torch | `legacy` runs the original C++ for every block instead. |
 
 Staged stopping works as in N3 — `--iterations 10 20 --stop 0.001 0.005` means "stop
@@ -184,9 +184,9 @@ every intermediate volume it computes goes out to a MINC file — 12-bit or 16-b
 rescaled slice by slice — and comes back rounded. The shim calls the same C++ routines
 directly, on `float64` arrays, in one process. So `--backend legacy` is the original
 arithmetic *without* the original's quantisation, which is why it does not reproduce
-`nu_correct` bit for bit either: it lands 3.7e-3 from `brain_nu_ref.mnc`, slightly
-further out than the PyTorch blocks. What it is for is comparing block against block
-with nothing rounded in between.
+`nu_correct` bit for bit either: it lands 5.2e-3 relative RMS from
+`brain_nu_ref.mnc`, *further* out than the PyTorch blocks at 3.0e-3. What it is for
+is comparing block against block with nothing rounded in between.
 
 ---
 
@@ -212,7 +212,7 @@ byte-identical while needing no libminc2. Only the tests and `--backend legacy` 
 any of this.
 
 ```bash
-python3 -m pytest              # the whole suite, about 22 s
+python3 -m pytest              # the whole suite, about 26 s
 python3 -m pytest tests/test_spline.py         # one block
 python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
@@ -287,44 +287,8 @@ of it. After one iteration the backends agree to 5.5e-08 relative RMS; at two,
 one whole count moves between bins — out of the 3,724 samples the shrunken
 estimation grid contributes — and they finish 1.17e-3 apart, four orders of
 magnitude worse. Nobody's implementation can be pinned past that — see
-[Amplification](#how-close-is-it) below — so the test stops where the answer is
+[Amplification](#why-end-to-end-numbers-stop-at-three-digits) below — so the test stops where the answer is
 still a continuous function of rounding error.
-
-### Which LAPACK the legacy backend links
-
-The spline fit solves normal equations with a condition number around `1e13`,
-and it reaches LAPACK's `dsysv` to do it. Which `dsysv` turns out to matter more
-than it should.
-
-The shim used to link `libEBTKS.a`, which bundles its own f2c'd LAPACK; it now
-compiles vendored sources and links the **system** LAPACK/BLAS (OpenBLAS here),
-so that it builds against nothing from the MINC toolkit. Measured on the same
-object files, changing only which `dsysv` is linked:
-
-| | EBTKS's bundled f2c'd LAPACK | system LAPACK (OpenBLAS) |
-|---|---|---|
-| spline coefficients | — | 2.0e-08 apart (rel. 2.7e-07) |
-| fitted spline field | — | 5.9e-11 apart (rel. 4.6e-12) |
-| `legacy` vs N3's `brain_nu_ref.mnc` | 0.3701% | **0.5211%** |
-| `legacy` vs `torch`, 1 iteration | 5.5e-08 | 5.5e-08 |
-| `legacy` vs `torch`, 2 iterations | 5.5e-08 | **1.17e-3** |
-| `legacy` vs `torch`, 3 iterations | 1.17e-3 | 2.12e-3 |
-
-Neither solver is wrong — at that conditioning the coefficients are not
-determined to better than `1e-4` by *any* solver, which is why this repository
-compares fitted fields and never coefficients. The fitted field moves by four
-parts in `1e12`, which is nothing.
-
-What is worth knowing is the last three rows: that `4.6e-12` is enough to move
-the histogram knife-edge a whole iteration earlier. The bin-boundary flip that
-used to happen at the third iteration now happens at the second. It is the
-clearest demonstration in this repository of the point made under
-[Amplification](#how-close-is-it) — end to end, N3 is not a continuous function
-of its own rounding error, and no end-to-end comparison is meaningful past three
-digits.
-
-Two bounds moved as a result, deliberately; both are recorded in
-[PROBLEMS.md](PROBLEMS.md) §8.
 
 ### How close is it?
 
@@ -351,6 +315,87 @@ gets used, is fine. And `correct_field` relaxes in raster order in `float`, whic
 inherently sequential; the port sweeps the two checkerboard colours in turn instead,
 the same iteration reordered so that it vectorises.
 
+### Why end-to-end numbers stop at three digits
+
+The blocks above agree to between six and fifteen digits. Run the whole pipeline
+and that collapses to three:
+
+| End to end, on `brain.mnc`, shipped protocol | relative RMS |
+|---|---|
+| `torch` vs N3's `brain_nu_ref.mnc` | 3.01e-3 |
+| `legacy` vs N3's `brain_nu_ref.mnc` | 5.21e-3 |
+| `torch` vs `legacy` | 3.1e-3 |
+| `torch` on CPU vs the same code on a GPU | 1.3e-3 |
+
+The legacy suite asks for 1e-4. Nothing here reaches it, and the last row is the
+tell: that is one implementation disagreeing with *itself* over nothing but the
+order of a few reductions. Two things are going on, and neither is an error in
+the port.
+
+**Quantisation.** Legacy N3 is a Perl script driving a dozen separate programs,
+so every intermediate volume goes out to a MINC file and comes back rounded:
+12 bits before the mask is applied, 16 after, scaled slice by slice on write and
+rescaled onto a single global grid on read — the two do not even agree with each
+other. Every iteration goes through that, and the reference volume was built
+through all of them. `torch_n3` keeps float64 from end to end, which is more accurate
+and therefore *not the same*. Reproducing `brain_nu_ref.mnc` voxel for voxel
+would mean modelling MINC's storage rather than N3; see `PLAN.md`.
+
+This cuts both ways, and it is why `--backend legacy` does not reach 1e-4
+either: it is the original arithmetic with the original's rounding removed.
+
+**Amplification.** N3's loop feeds its output back into itself, so whatever
+survives gets multiplied. The two backends agree on the field to **1.4e-7** after
+one iteration and to **9.6e-4** after ten — a factor of 6,900.
+
+Worse, the growth does not start from float noise. The histogram range is taken
+from the data and then rounded to the six decimals N3's text interchange prints,
+so a voxel sitting on a bin boundary can fall either side of it and a whole count
+moves between bins. That is a genuine discontinuity in the middle of the loop:
+past it, an end-to-end comparison is recording which side of a rounding boundary
+one voxel landed on. The next section is that effect caught in the act.
+
+### Which LAPACK the legacy backend links
+
+The clearest demonstration of all that, and a cautionary tale.
+
+The spline fit solves normal equations with a condition number around `1e13` —
+at the default 200 mm the knots are further apart than the volume is wide — and
+it calls LAPACK's `dsysv` to do it. The shim used to link `libEBTKS.a`, which
+bundles its own f2c'd LAPACK. It now compiles vendored sources and links the
+**system** LAPACK/BLAS (OpenBLAS here), so that it needs nothing from the MINC
+toolkit. Same object files, same inputs; the only difference is which `dsysv`.
+
+At block level the swap is nothing:
+
+| | absolute | relative |
+|---|---|---|
+| spline coefficients move by | 2.0e-08 | 2.7e-07 |
+| the fitted field moves by | 5.9e-11 | **4.6e-12** |
+
+Four parts in `1e12`. Neither solver is wrong: at that conditioning the
+coefficients are not determined to better than `1e-4` by *any* solver, which is
+why this repository compares fitted fields and never coefficients.
+
+End to end, the same swap:
+
+| | EBTKS's f2c'd LAPACK | system LAPACK |
+|---|---|---|
+| `legacy` vs N3's `brain_nu_ref.mnc` | 0.3701% | **0.5211%** |
+| `legacy` vs `torch`, 1 iteration | 5.5e-08 | 5.5e-08 |
+| `legacy` vs `torch`, 2 iterations | 5.5e-08 | **1.17e-3** |
+| `legacy` vs `torch`, 3 iterations | 1.17e-3 | 2.12e-3 |
+
+Read the last three rows downwards. The bin-boundary flip described above used
+to happen on the third iteration; on the system LAPACK it happens on the second.
+A perturbation of `4.6e-12` moved a discontinuity a whole iteration earlier, and
+with it the end-to-end answer by four orders of magnitude.
+
+So: which LAPACK you link is not an implementation detail of the oracle, and
+`4.6e-12` is not a small number once it goes round the loop. Two bounds moved as
+a result — deliberately, with the measurements written down — in
+[PROBLEMS.md](PROBLEMS.md) §8.
+
 ### Does it actually remove a bias field?
 
 `tests/test_field_recovery.py` plants one and asks for it back. A smooth
@@ -364,15 +409,16 @@ blocks, the same pipeline driving the original C++ blocks, and the installed
 | Planted field | Knot spacing | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
 |---|---|---|---|---|---|
 | 20% (`exp(0.2)` peak-to-peak) | 200 mm (default) | 4.14% | 0.31% | 0.31% | 0.31% |
-| | 100 mm | | 0.61% | 0.60% | 0.60% |
-| | 50 mm | | 1.51% | 1.53% | 1.51% |
-| 40% | 200 mm (default) | 8.28% | 0.58% | 0.62% | 0.58% |
-| | 100 mm | | 1.00% | 0.98% | 0.99% |
-| | 50 mm | | 1.96% | 1.96% | 1.94% |
+| | 100 mm | | 0.61% | 0.61% | 0.61% |
+| | 50 mm | | 1.51% | 1.52% | 1.51% |
+| 40% | 200 mm (default) | 8.28% | 0.58% | 0.58% | 0.58% |
+| | 100 mm | | 1.00% | 1.00% | 1.00% |
+| | 50 mm | | 1.96% | 1.96% | 1.95% |
 
 Three things to read off that. All three implementations agree about *which*
-field is there, everywhere in the sweep, to between 7e-5 and 5.8e-4 RMS — the
-comparison an implementation can actually be held to.
+field is there, everywhere in the sweep, to between 1.0e-4 and 5.9e-4 relative
+RMS — the comparison an implementation can actually be held to, and the reason
+this sweep is worth more than any single end-to-end number.
 
 N3 recovers most but not all of a field, and how much depends almost entirely
 on `--distance`: at the shipped 200 mm it leaves about 7% of what was planted,
@@ -411,15 +457,21 @@ The two amplitudes give the same picture, roughly doubled: which penalty suits a
 given spacing does not depend on how strong the field is, only on how much
 freedom the spline has. Read down a column and each one has a minimum — too
 little penalty and the fit chases tissue contrast, too much and it cannot follow
-the field. Those minima sit at `1e-6` for 200 mm and `1e-5` for both 100 mm and
-50 mm, identically at both amplitudes: a decade for the first halving of the
-spacing and rather less for the second. So **raise `--lambda` by about a decade
-each time you halve `--distance`** is the instinct to carry away, erring
-slightly high at the fine end — where it costs little, the 50 mm column being
-nearly flat between `1e-5` and `1e-4` and catastrophic at the default.
+the field. The minima sit at `1e-6` for 200 mm and `1e-5` for both 100 mm and
+50 mm, identically at both amplitudes.
+
+So the optimum moves one decade for the first halving of the spacing and does
+not move at all for the second. **Raise `--lambda` by about a decade each time
+you halve `--distance`** is still the rule to carry away, but it is a rule that
+deliberately overshoots at 50 mm — which is the right way to be wrong here. The
+two columns are not symmetric about their minima: at 50 mm, `1e-4` costs 0.10
+points against the best cell while the default `1e-7` costs 1.26, so erring an
+order high is cheap and erring low is not.
 
 The two knobs are one setting: `--distance` decides how many coefficients
-describe the field, `--lambda` how much bending is allowed between them.
+describe the field, `--lambda` how much bending is allowed between them. Neither
+means much without the other, which is the whole point of sweeping them
+together rather than one at a time.
 
 The 20% table is in `python3 -m torch_n3 --help` too, so it is to hand when the
 question comes up.
@@ -431,24 +483,6 @@ built from three low-order harmonics, and it is smoother than a real coil
 profile; a field with more structure is exactly the case where the extra
 penalty would start to cost. What the tables are good for is the *shape* of
 the trade-off, not the numbers in them.
-
-End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
-`brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for
-that, and neither is an error in the port.
-
-**Storage.** Legacy N3 passes every intermediate volume between programs as a MINC
-file: 12-bit before the mask is applied and 16-bit after, scaled slice by slice on
-write and rescaled onto a single global grid on read. `torch_n3` keeps float64
-throughout, which is more accurate but not identical. Reproducing the reference voxel
-for voxel would mean modelling MINC's storage rather than N3; see `PLAN.md`.
-
-**Amplification.** N3's loop feeds its output back into itself, and it magnifies small
-differences: the PyTorch and C++ backends agree on the field to 1.4e-7 after one
-iteration and to only 2.5e-4 after ten. So no end-to-end number here is meaningful past
-three digits. Under the shipped protocol the two backends land 1.1e-3 apart on this
-volume — and running the *same* backend on a GPU moves it slightly more than that
-(1.3e-3), because the reductions happen in a different order. That is worth knowing
-before reading too much into a comparison of two N3 outputs, whoever produced them.
 
 ## Requirements
 
