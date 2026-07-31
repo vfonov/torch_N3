@@ -50,17 +50,28 @@ against GPU puts it on the third -- so one is the only count that is safe for
 every run this test covers.  ``README.md`` has the measurements,
 ``PROBLEMS.md`` §8 the reasoning.
 
-**Do not raise the iteration count to make this a stronger test.**  It would
-not be stronger, only louder: past one iteration the thing that moves the
-answer is which side of a rounding boundary one voxel landed on.
+**The converged run is here too, and it is a different kind of evidence.**
+``brain_nu_ref_legacy_30.mnc`` is the same volume at thirty iterations, and it
+exists because one iteration does not exercise convergence, the stopping rule,
+or thirty trips round a loop that feeds its own output back in.  It is recorded
+the same way and held to the same bound, ``1/65535``.
+
+Measured against each recorded volume, as relative RMS:
+
+    iterations    torch/cpu    legacy/cpu    torch/cuda    bound
+    1             5.5e-08      0             5.5e-08       1.53e-05
+    30            1.9e-03      0             2.5e-03       1.53e-05
+
+At one iteration both torch runs are inside the bound by a factor of 277.  At
+thirty they are over it by factors of 121 and 166, on identical code.
 """
 
 import pytest
 import torch
 
 from tests.conftest import assert_close, legacy_data, relative_rms
-from tests.inputs import PLATFORM_PROTOCOL
-from tests.regenerate_reference import PLATFORM_REFERENCE
+from tests.inputs import CONVERGED_PROTOCOL, PLATFORM_PROTOCOL
+from tests.regenerate_reference import CONVERGED_REFERENCE, PLATFORM_REFERENCE
 from torch_n3.pipeline import nu_correct
 from torch_n3.volume import load_volume
 
@@ -71,16 +82,35 @@ if torch.cuda.is_available():
     RUNS.append(("torch", "cuda"))
 
 
+#: The two recorded runs: the protocol each was made with, the volume it went
+#: to, and the bound a rerun is held to.  Both are ``1/65535``, N3's own
+#: working precision -- the legacy passes every intermediate through a 16-bit
+#: MINC file, so agreement finer than that is not something the algorithm
+#: defines, whoever implements it.
+PROTOCOLS = [
+    ("one", PLATFORM_PROTOCOL, PLATFORM_REFERENCE, 1 / 65535),
+    ("converged", CONVERGED_PROTOCOL, CONVERGED_REFERENCE, 1 / 65535),
+]
+
+
 @pytest.fixture(scope="module")
 def platform_reference():
     """The recorded volume, as it comes back off disk."""
     return load_volume(legacy_data(PLATFORM_REFERENCE))
 
 
-def corrected_brain(brain, model_mask, backend, device):
-    """``nu_correct`` under the recorded protocol, on one backend and device."""
+@pytest.fixture(scope="module")
+def recorded_volumes():
+    """Both recorded volumes, keyed by the name :data:`PROTOCOLS` gives them."""
+    return {name: load_volume(legacy_data(path)).data
+            for name, _, path, _ in PROTOCOLS}
+
+
+def corrected_brain(brain, model_mask, backend, device,
+                    protocol=PLATFORM_PROTOCOL):
+    """``nu_correct`` under a recorded protocol, on one backend and device."""
     result = nu_correct(brain.to(device), mask=model_mask.to(device),
-                        backend=backend, **PLATFORM_PROTOCOL)
+                        backend=backend, **protocol)
     return result.data.cpu()
 
 
@@ -129,6 +159,50 @@ def test_reproduces_the_recorded_volume(brain, model_mask, platform_reference,
     assert relative_rms(result, reference) < 1 / 65535
 
 
+@pytest.mark.parametrize("backend,device", RUNS)
+def test_reproduces_the_recorded_converged_volume(brain, model_mask,
+                                                  recorded_volumes, backend,
+                                                  device):
+    """The same question after thirty iterations, at the same bound.
+
+    One iteration leaves the loop untested: no convergence, no stopping rule,
+    and no chance for a difference to be fed back in and grown.  This runs the
+    protocol out to thirty and holds the answer to ``1/65535``, exactly as the
+    one-iteration test does.
+
+    Where each run currently sits, as relative RMS:
+
+        legacy, cpu     0            bit-identical -- it wrote the file
+        torch,  cpu     1.855e-03    121x the bound
+        torch,  cuda    2.540e-03    166x the bound
+
+    The two torch runs do not meet it, and this test fails for them.  The same
+    code is inside the bound by a factor of 277 at one iteration; see
+    ``python3 -m tests.convergence`` for where agreement is lost on this build,
+    and ``PROBLEMS.md`` §11 for the record.
+    """
+    result = corrected_brain(brain, model_mask, backend, device,
+                             CONVERGED_PROTOCOL)
+
+    assert relative_rms(result, recorded_volumes["converged"]) < 1 / 65535
+
+
+@pytest.mark.parametrize("name,protocol,path,bound", PROTOCOLS)
+def test_the_two_recorded_runs_are_not_the_same_volume(recorded_volumes, name,
+                                                       protocol, path, bound):
+    """Guard against the pair silently becoming one file twice over.
+
+    They are produced by the same function from the same input and differ only
+    in the iteration count, so a mistake in wiring the protocols through would
+    leave two identical volumes and two tests that agree for the wrong reason.
+    Thirty iterations move the answer a great deal -- 45% relative RMS from
+    one -- so simply requiring them to differ is enough to catch it.
+    """
+    other = "converged" if name == "one" else "one"
+
+    assert not torch.equal(recorded_volumes[name], recorded_volumes[other])
+
+
 def test_the_reference_is_on_the_grid_it_was_made_from(brain,
                                                        platform_reference):
     """A volume the geometry did not survive is not a reference for anything."""
@@ -138,17 +212,26 @@ def test_the_reference_is_on_the_grid_it_was_made_from(brain,
     assert_close(platform_reference.dir_cos, brain.dir_cos)
 
 
+@pytest.mark.parametrize("name,protocol,path,bound", PROTOCOLS)
 @pytest.mark.parametrize("backend,device", RUNS)
 def test_running_it_twice_gives_the_same_bits(brain, model_mask, backend,
-                                              device):
+                                              device, name, protocol, path,
+                                              bound):
     """The precondition for any of the above to mean anything.
 
     A recorded volume is only a reference if the thing that produced it is
     deterministic.  This is the strongest statement in the suite -- bit
     equality, no tolerance at all -- and it is affordable because it asks
     nothing of the platform except that it do the same thing twice.
+
+    Asked at both iteration counts, and the converged one is the version that
+    earns its keep: the knife-edge above makes the loop *sensitive*, not
+    random, and thirty trips through it is where any genuine non-determinism
+    -- an unordered reduction, a race in a GPU kernel -- would be amplified
+    into view rather than staying inside the last bits.  Unlike every other
+    comparison in this module, this one keeps full strength at thirty.
     """
-    once = corrected_brain(brain, model_mask, backend, device)
-    twice = corrected_brain(brain, model_mask, backend, device)
+    once = corrected_brain(brain, model_mask, backend, device, protocol)
+    twice = corrected_brain(brain, model_mask, backend, device, protocol)
 
     assert torch.equal(once, twice)

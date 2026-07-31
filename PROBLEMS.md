@@ -296,6 +296,51 @@ than by iteration. Use that.
 
 ---
 
+## 11. The converged reproducibility test currently fails — 2026-07-31
+
+`tests/data/brain_nu_ref_legacy_30.mnc` was added so that
+`test_reproducibility.py` covers a converged run and not only the single
+iteration it has always pinned. One iteration exercises every stage but never
+the loop: no convergence, no stopping rule, and no opportunity for a difference
+to be fed back in and grown.
+
+It is held to `1/65535`, the same bound as its one-iteration twin. **Two of the
+three runs do not meet it**, and `test_reproduces_the_recorded_converged_volume`
+fails for them:
+
+| run | 1 iteration | 30 iterations | bound |
+|---|---|---|---|
+| `legacy`, cpu | 0 | 0 | 1.53e-5 |
+| `torch`, cpu | 5.52e-08 | **1.855e-03** | 1.53e-5 — over by 121× |
+| `torch`, cuda | 5.52e-08 | **2.540e-03** | 1.53e-5 — over by 166× |
+
+The same code is inside the bound by a factor of 277 at one iteration. The
+difference between the columns is the histogram knife-edge described in §8: past
+it, an end-to-end volume records which side of a rounding boundary one voxel
+fell on. `legacy/cpu` passes only because it wrote the file.
+
+This is recorded rather than resolved. The bound was set deliberately, not
+fitted, and the failure is the measurement it produces. Three ways it could go,
+none taken here:
+
+- accept a looser bound for the converged run (`1e-2`, the whole-pipeline bound
+  `test_pipeline.py` already uses) and label it a coarse regression net;
+- record one volume per `(backend, device)` so each is compared against its own
+  build rather than against the legacy's;
+- drop the converged volume comparison and keep only
+  `test_running_it_twice_gives_the_same_bits` at thirty, which passes.
+
+The two volumes are 45% apart in relative RMS, and
+`test_the_two_recorded_runs_are_not_the_same_volume` asserts they differ, so a
+mis-wired protocol cannot leave two identical files and two tests agreeing for
+the wrong reason.
+
+`test_running_it_twice_gives_the_same_bits` runs at both counts and passes at
+both. It is the one comparison here that keeps full strength at thirty: bit
+equality asks nothing of the platform, and thirty trips round a sensitive loop
+is where real non-determinism would surface rather than hide in the last bits.
+
+---
 
 ## Where every comparison currently sits
 
@@ -345,6 +390,9 @@ amplification, late / early (a minimum)    100         6.91e+03       1.4%   <- 
 platform reference, torch/cpu              5.52e-08    1.53e-05       0.4%   <- §6
 platform reference, legacy/cpu             0           1.53e-05       0.0%
 platform reference, torch/cuda             5.52e-08    1.53e-05       0.4%
+converged reference, torch/cpu             0.00185     1.53e-05   12153.7%   <- §11, FAILS
+converged reference, legacy/cpu            0           1.53e-05       0.0%
+converged reference, torch/cuda            0.00254     1.53e-05   16642.3%   <- §11, FAILS
 
 recovery sweep, as % of bound (fixed 30 iterations, no early stop).  The two
 columns involving `legacy` moved when the shim changed LAPACK (§8); `t-bin`,

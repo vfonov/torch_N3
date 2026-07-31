@@ -61,6 +61,12 @@ TWO_TISSUE_RANGE = (4.0, 6.0)
 #: volume, written where the other test data lives.
 PLATFORM_REFERENCE = "brain_nu_ref_legacy.mnc"
 
+#: Its converged twin, thirty iterations rather than one.  Same provenance and
+#: same storage; a different protocol, and a much coarser bound, because past
+#: the histogram knife-edge no two builds agree on a converged run to better
+#: than about a part in a thousand.  See ``tests/test_reproducibility.py``.
+CONVERGED_REFERENCE = "brain_nu_ref_legacy_30.mnc"
+
 
 def main():
     missing = [p for p in PROGRAMS if shutil.which(p) is None]
@@ -253,32 +259,43 @@ def recovery_cases(workspace, arrays, scalars):
 
 
 def platform_reference_case(workspace, arrays, scalars):
-    """The volume every machine has to land on (``test_reproducibility``).
+    """The volumes every machine has to land on (``test_reproducibility``).
 
-    The odd one out here: not the answer of an installed program, but *this*
+    The odd ones out here: not the answer of an installed program, but *this*
     pipeline running the original C++ blocks, written out so that another
-    machine, another BLAS, another ``torch`` or a GPU can be held to it.  It
-    goes to ``tests/data/`` as a MINC file rather than into the archive
-    because that is what it is -- a volume, which any MINC tool can open and
+    machine, another BLAS, another ``torch`` or a GPU can be held to them.
+    They go to ``tests/data/`` as MINC files rather than into the archive
+    because that is what they are -- volumes, which any MINC tool can open and
     any other implementation can be compared against.
 
+    Two of them, at one iteration and at thirty.  They are held to very
+    different bounds and they are not the same kind of evidence: the first is
+    a canary, still short of the histogram knife-edge, and the second is a
+    coarse regression net past it.  ``tests/test_reproducibility.py`` sets out
+    which is which.
+
     ``float64``, unlike every other volume here.  N3's own files are 16-bit,
-    but this one is not a record of what N3 wrote: it is a record of what this
-    pipeline computed, and rounding it to 16 bits would put an error orders of
-    magnitude larger than the thing the test measures between the reference and
-    the run being checked against it.  It costs 6.7 MB, and the numbers the
-    test reports are then the implementation's own.
+    but these are not a record of what N3 wrote: they record what this
+    pipeline computed, and rounding them to 16 bits would put an error orders
+    of magnitude larger than the thing the tests measure between the reference
+    and the run being checked against it.  They cost 6.7 MB each, and the
+    numbers the tests report are then the implementation's own.
+
+    Neither uses ``workspace`` or the archive -- both arguments are here only
+    so that ``main`` can call every case the same way -- so this one can be
+    re-run on its own when only the volumes need rebuilding.
     """
     brain = load_volume(legacy_data("brain.mnc"))
     model_mask = load_volume(MODEL_MASK)
 
-    corrected = nu_correct(brain, mask=model_mask, backend="legacy",
-                           **inputs.PLATFORM_PROTOCOL)
-
-    path = legacy_data(PLATFORM_REFERENCE)
-    save_volume(path, corrected, like=legacy_data("brain.mnc"),
-                store_dtype="float64")
-    print("wrote %s" % path)
+    for name, protocol in ((PLATFORM_REFERENCE, inputs.PLATFORM_PROTOCOL),
+                           (CONVERGED_REFERENCE, inputs.CONVERGED_PROTOCOL)):
+        corrected = nu_correct(brain, mask=model_mask, backend="legacy",
+                               **protocol)
+        path = legacy_data(name)
+        save_volume(path, corrected, like=legacy_data("brain.mnc"),
+                    store_dtype="float64")
+        print("wrote %s" % path)
 
 
 # ------------------------------------------------------------------- the tools

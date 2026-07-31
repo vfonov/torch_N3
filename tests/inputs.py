@@ -24,6 +24,14 @@ from torch_n3.volume import load_volume, save_volume
 #: after that, and why this used to say two.
 PLATFORM_PROTOCOL = dict(iterations=(1,), stop=(0.0,))
 
+#: The protocol ``tests/data/brain_nu_ref_legacy_30.mnc`` was produced with:
+#: thirty iterations, again with the early stop disabled so that every run
+#: does the same work.  This one is *past* the knife-edge by design -- it is
+#: the converged pipeline, and no two builds agree on it to better than about
+#: a part in a thousand.  It is a coarse regression net, not a canary; the
+#: bound it is held to says so.  See ``tests/test_reproducibility.py``.
+CONVERGED_PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+
 
 def as_stored(directory, name, volume, like):
     """``volume`` after a round trip through a 16-bit MINC file.

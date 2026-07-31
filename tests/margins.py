@@ -21,8 +21,9 @@ import torch
 
 from tests import inputs, reference
 from tests.conftest import DATA, MODEL_MASK, relative_rms, span
-from tests.inputs import PLATFORM_PROTOCOL
-from tests.regenerate_reference import PLATFORM_REFERENCE
+from tests.inputs import CONVERGED_PROTOCOL, PLATFORM_PROTOCOL
+from tests.regenerate_reference import (CONVERGED_REFERENCE,
+                                        PLATFORM_REFERENCE)
 from torch_n3 import blocks
 from torch_n3.backends import legacy
 from torch_n3.blocks.spline import DIRECT_SOLVERS
@@ -224,19 +225,25 @@ def platform_rows(recorded):
     """``test_reproducibility``: every backend and device, against the file."""
     brain = load_volume(DATA + "/brain.mnc")
     model_mask = load_volume(MODEL_MASK)
-    reference_volume = load_volume(DATA + "/" + PLATFORM_REFERENCE).data
-
     runs = [("torch", "cpu"), ("legacy", "cpu")]
     if torch.cuda.is_available():
         runs.append(("torch", "cuda"))
 
+    # Both recorded runs, at the same bound.
+    recordings = [("platform reference", PLATFORM_PROTOCOL,
+                   PLATFORM_REFERENCE, 1 / 65535),
+                  ("converged reference", CONVERGED_PROTOCOL,
+                   CONVERGED_REFERENCE, 1 / 65535)]
+
     rows = []
-    for backend, device in runs:
-        result = nu_correct(brain.to(device), mask=model_mask.to(device),
-                            backend=backend, **PLATFORM_PROTOCOL)
-        rows.append(("platform reference, %s/%s" % (backend, device),
-                     relative_rms(result.data.cpu(), reference_volume),
-                     1 / 65535))
+    for label, protocol, path, bound in recordings:
+        reference_volume = load_volume(DATA + "/" + path).data
+        for backend, device in runs:
+            result = nu_correct(brain.to(device), mask=model_mask.to(device),
+                                backend=backend, **protocol)
+            rows.append(("%s, %s/%s" % (label, backend, device),
+                         relative_rms(result.data.cpu(), reference_volume),
+                         bound))
     return rows
 
 
