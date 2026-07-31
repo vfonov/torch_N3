@@ -3,6 +3,9 @@ __pycache__
 *.mnc
 *.mnc.gz
 
+# ...except the test volumes, which are checked in (see tests/data/README.md)
+!/tests/data/*.mnc
+
 # Vendored dependencies, each with its own git repository
 /legacy/
 /minc2-simple/

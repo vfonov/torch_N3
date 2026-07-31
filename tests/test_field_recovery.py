@@ -120,7 +120,7 @@ def baseline(legacy_output, tmp_path_factory, brain_reference, model_mask):
     """
     inside = model_mask.resample_like(brain_reference).data != 0
     volume = as_stored(tmp_path_factory.mktemp("baseline"), "reference.mnc",
-                       brain_reference, legacy_data("brain_nu_ref.mnc.gz"))
+                       brain_reference, legacy_data("brain_nu_ref.mnc"))
 
     fields = {backend: _estimate(volume, model_mask, backend, inside)
               for backend in BACKENDS}
@@ -142,7 +142,7 @@ def recovery(request, legacy_output, tmp_path_factory, brain_reference,
     volume = as_stored(tmp_path_factory.mktemp("recovery"),
                        "brain_nu_artificial.mnc",
                        brain_reference.like(brain_reference.data * planted),
-                       legacy_data("brain_nu_ref.mnc.gz"))
+                       legacy_data("brain_nu_ref.mnc"))
 
     recovered = {backend: _estimate(volume, model_mask, backend, inside)
                  for backend in BACKENDS}

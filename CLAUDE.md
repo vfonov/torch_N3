@@ -26,6 +26,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
 | `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
+| `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. **No test runs an N3 program**: their answers are recorded in `tests/reference/legacy.npz` by `tests/regenerate_reference.py` (the only thing that shells out) and the inputs they were given live in `tests/inputs.py`, shared by both. Re-run the script and `git diff` should be empty. |
 
 ## The algorithm as the legacy code actually implements it
@@ -131,7 +132,8 @@ All N3 binaries and Perl drivers are installed under `/opt/minc/1.9.18.13/bin` a
 `volume_stats`, plus MINC tools (`mincinfo`, `mincmath`, `minclookup`, `mincblur`,
 `mincresample`, `mincstats`). Model masks are in `/opt/minc/1.9.18.13/share/N3/`.
 
-Test data lives in `legacy/N3/testing/` (gzipped MINC, readable directly):
+Test data lives in `legacy/N3/testing/` (gzipped MINC1 — `minc2_simple` cannot open it; the
+suite uses MINC2 copies in `tests/data/`, see its README):
 `chunk.mnc.gz` + `chunk_mask.mnc.gz` (small, 91×52×50 — use for fast iteration),
 `brain.mnc.gz` + `brain_mask.mnc.gz`, `block.mnc.gz`, and `brain_nu_ref.mnc.gz`, the reference
 `nu_correct` output. `legacy/N3/testing/CMakeLists.txt` lists the exact legacy invocations,
@@ -254,7 +256,8 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
 
 - It reads **MINC2 (HDF5) only**. Everything in `legacy/N3/testing/` is MINC1 *and* gzipped,
   so it must go through `mincconvert -2` first — `torch_n3.volume.load_volume` does this
-  transparently.
+  transparently. The tests do not rely on that: they read MINC2 copies from `tests/data/`,
+  which is why the suite needs no MINC program at all.
 - `representation_dims()` and `store_dims()` list dimensions **fastest-varying first**, the
   reverse of the numpy axes. `.shape` is likewise reversed relative to `.data.shape`.
 - `voxel_to_world()` takes indices in *storage* order, not standard order. Don't mix it with

@@ -216,9 +216,11 @@ python3 -m tests.regenerate_reference     # needs the MINC toolkit on PATH
 git diff --stat tests/reference           # empty if they still say the same thing
 ```
 
-The only MINC program the suite itself needs is `mincconvert`, because the volumes in
-`legacy/N3/testing/` are gzipped MINC1. Without it the tests that need those volumes
-skip rather than fail.
+**The suite needs no MINC program at all.** The volumes it runs on are checked in
+as MINC2 under `tests/data/` — byte-for-byte the same images as `legacy/N3/testing/`,
+converted once, because `minc2_simple` opens MINC2 only. The one exception is
+`test_gzipped_minc1_input_is_readable`, which is *about* the conversion path and
+skips without `mincconvert`.
 
 ### How close is it?
 
@@ -281,6 +283,9 @@ comparison of two N3 outputs, whoever produced them.
 
 ## Requirements
 
-Python 3.12, `numpy`, `cffi`, `minc2_simple`, and the MINC toolkit on `PATH` (for
-`mincconvert`, and for the legacy programs the tests compare against). All already
-installed here — nothing needs fetching.
+Python 3.12, `torch`, `numpy`, `cffi` and `minc2_simple`.
+
+The MINC toolkit is *not* needed to run `torch_n3` or its tests. It is needed to read
+gzipped or MINC1 input (`load_volume` shells out to `mincconvert`), to re-record the
+reference answers, and to run the legacy backend's comparisons. All already installed
+here — nothing needs fetching.

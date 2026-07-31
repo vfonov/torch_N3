@@ -91,7 +91,8 @@ is now only an oracle. `backends.resolve("torch"|"legacy")` switches between the
 pipeline runs on either, so every test below exists in both variants. Importing
 `torch_n3.pipeline` no longer pulls in the CFFI extension. 84 tests pass in ~9 s.
 
-The suite does not run the legacy programs either. They are deterministic, so
+The volumes live in `tests/data/` as MINC2 — the same images, converted once, so that
+reading them needs no MINC program. The suite does not run the legacy programs either. They are deterministic, so
 `tests/regenerate_reference.py` ran them once and recorded the answers in
 `tests/reference/legacy.npz` (4.9 MB); `tests/inputs.py` holds the inputs, shared with
 the tests so that both sides ask the same question. Re-running the script when nothing

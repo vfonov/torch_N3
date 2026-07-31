@@ -64,8 +64,8 @@ def main():
 
 def histogram_cases(workspace, arrays, scalars):
     """``volume_hist`` and ``sharpen_hist``."""
-    chunk = load_volume(legacy_data("chunk.mnc.gz"))
-    mask = load_volume(legacy_data("chunk_mask.mnc.gz"))
+    chunk = load_volume(legacy_data("chunk.mnc"))
+    mask = load_volume(legacy_data("chunk_mask.mnc"))
 
     source = workspace.write("chunk.mnc", chunk)
     masked = workspace.write("chunk_mask.mnc", mask, store_dtype="int16")
@@ -93,8 +93,8 @@ def histogram_cases(workspace, arrays, scalars):
 
 def lookup_cases(workspace, arrays, scalars):
     """``minclookup -continuous`` and ``mincstats -biModalT``."""
-    chunk = load_volume(legacy_data("chunk.mnc.gz"))
-    mask = load_volume(legacy_data("chunk_mask.mnc.gz"))
+    chunk = load_volume(legacy_data("chunk.mnc"))
+    mask = load_volume(legacy_data("chunk_mask.mnc"))
 
     # A few thousand real intensities, laid out as a volume so that minclookup
     # will accept them.  The table is recorded alongside, so the test does not
@@ -118,7 +118,7 @@ def lookup_cases(workspace, arrays, scalars):
 
 def resampling_cases(workspace, arrays, scalars):
     """``mincresample -nearest_neighbour`` and ``resample_labels``."""
-    chunk = load_volume(legacy_data("chunk.mnc.gz"))
+    chunk = load_volume(legacy_data("chunk.mnc"))
     model_mask = load_volume(MODEL_MASK)
 
     shrunk = chunk.shrink(3)
@@ -143,8 +143,8 @@ def resampling_cases(workspace, arrays, scalars):
 
 def pipeline_cases(workspace, arrays, scalars):
     """One stage at a time, and then ``nu_correct`` itself."""
-    chunk = load_volume(legacy_data("chunk.mnc.gz"))
-    chunk_mask = load_volume(legacy_data("chunk_mask.mnc.gz"))
+    chunk = load_volume(legacy_data("chunk.mnc"))
+    chunk_mask = load_volume(legacy_data("chunk_mask.mnc"))
     values, inside = inputs.masked_log(chunk, chunk_mask)
 
     mask = workspace.write("mask.mnc", chunk.like(inside.to(torch.float64)),
@@ -194,7 +194,7 @@ def recovery_cases(workspace, arrays, scalars):
     ``test_field_recovery`` compares fields over the model mask and nowhere
     else, so only those voxels are recorded -- a quarter of the volume.
     """
-    brain = load_volume(legacy_data("brain_nu_ref.mnc.gz"))
+    brain = load_volume(legacy_data("brain_nu_ref.mnc"))
     model_mask = load_volume(MODEL_MASK)
     inside = model_mask.resample_like(brain).data != 0
 
@@ -209,7 +209,7 @@ def recovery_cases(workspace, arrays, scalars):
     for name, data in volumes.items():
         stored = inputs.as_stored(workspace.path, "%s.mnc" % name,
                                   brain.like(data),
-                                  legacy_data("brain_nu_ref.mnc.gz"))
+                                  legacy_data("brain_nu_ref.mnc"))
         path = workspace.at("%s.mnc" % name)
         workspace.run("nu_correct", "-clobber", "-quiet", "-mapping_dir",
                       workspace.at(""), "-mask", mask, path,

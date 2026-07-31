@@ -3,7 +3,8 @@
 import numpy as np
 import torch
 
-from tests.conftest import assert_close, requires_program, span
+from tests.conftest import (assert_close, original_data, requires_program,
+                            span)
 from torch_n3.volume import Volume, load_volume, save_volume
 
 
@@ -75,7 +76,13 @@ def test_resample_like_fills_outside_with_zero():
 
 @requires_program("mincconvert")
 def test_gzipped_minc1_input_is_readable():
-    """The test data is MINC1 and gzipped; minc2_simple reads neither directly."""
-    volume = load_volume("legacy/N3/testing/block.mnc.gz")
+    """`load_volume` converts MINC1 and gzip on the fly; minc2_simple reads neither.
+
+    The volumes this suite uses were converted once into ``tests/data/`` so
+    that nothing has to, but the conversion path is a feature of the library
+    and this is what still exercises it -- on a file the tests do not
+    otherwise need.
+    """
+    volume = load_volume(original_data("block.mnc.gz"))
 
     assert volume.data.numel() > 0
