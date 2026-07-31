@@ -26,6 +26,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
 | `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
+| `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. **No test runs an N3 program**: their answers are recorded in `tests/reference/legacy.npz` by `tests/regenerate_reference.py` (the only thing that shells out) and the inputs they were given live in `tests/inputs.py`, shared by both. Re-run the script and `git diff` should be empty. |
 
@@ -163,6 +164,12 @@ One trap: a program that was handed a *file* saw its contents quantised, and mod
 `inputs.as_stored()` instead, which both the script and the test call.
 
 ## Test tolerances
+
+Known weak spots in the current suite — thresholds that were fitted to the measurement,
+one that is far too loose, three that are tight enough to flake, and the assertions that
+were dropped rather than satisfied — are listed in **[PROBLEMS.md](PROBLEMS.md)**, with
+where every comparison currently sits against its bound. Read it before adjusting a
+tolerance, and add to it rather than quietly fixing a bound.
 
 **Never widen a tolerance to make a test pass.** A threshold states what the code is required
 to do; moving it after the fact turns the test into a record of what the code happens to do,
