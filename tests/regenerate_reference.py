@@ -4,8 +4,14 @@
 
 Needs the MINC toolkit and the N3 programs on ``PATH``; nothing else in the
 suite does.  The programs are deterministic, so running this again when
-nothing has changed leaves ``git diff`` empty -- which is the check that the
-recorded answers are still their answers.
+nothing has changed leaves ``git diff tests/reference`` empty -- which is the
+check that the recorded answers are still their answers.
+
+The one file that will always show as changed is
+``tests/data/brain_nu_ref_legacy.mnc``: MINC stamps every file it writes with
+an ``ident`` attribute holding the user, host, time and pid.  Its voxel data is
+reproducible; those few header bytes are not.  Check the data, or restore the
+file, rather than committing the churn.
 
 Every case here is the input side of one test.  If you add a comparison
 against a legacy program, add the case here and read it back through the
@@ -24,6 +30,7 @@ import torch
 from tests import inputs, reference
 from tests.conftest import MODEL_MASK, legacy_data
 from torch_n3 import blocks
+from torch_n3.pipeline import nu_correct
 from torch_n3.volume import Volume, load_volume, save_volume
 
 #: Everything this script needs to be able to run.
@@ -50,6 +57,10 @@ ITERATIONS = 30
 #: The domain of the synthetic histogram ``test_sharpen`` works on.
 TWO_TISSUE_RANGE = (4.0, 6.0)
 
+#: The one output of this script that is not an array in the archive: a whole
+#: volume, written where the other test data lives.
+PLATFORM_REFERENCE = "brain_nu_ref_legacy.mnc"
+
 
 def main():
     missing = [p for p in PROGRAMS if shutil.which(p) is None]
@@ -61,7 +72,7 @@ def main():
     arrays, scalars = {}, {}
 
     for case in (histogram_cases, lookup_cases, resampling_cases,
-                 pipeline_cases, recovery_cases):
+                 pipeline_cases, recovery_cases, platform_reference_case):
         case(workspace, arrays, scalars)
 
     reference.save(arrays, scalars, produced_by=_versions())
@@ -239,6 +250,35 @@ def recovery_cases(workspace, arrays, scalars):
             field = stored.data / load_volume(output).data
             arrays["nu_correct.%s_field_d%d" % (name, distance)] = \
                 reference.as_volume(field[inside])
+
+
+def platform_reference_case(workspace, arrays, scalars):
+    """The volume every machine has to land on (``test_reproducibility``).
+
+    The odd one out here: not the answer of an installed program, but *this*
+    pipeline running the original C++ blocks, written out so that another
+    machine, another BLAS, another ``torch`` or a GPU can be held to it.  It
+    goes to ``tests/data/`` as a MINC file rather than into the archive
+    because that is what it is -- a volume, which any MINC tool can open and
+    any other implementation can be compared against.
+
+    ``float64``, unlike every other volume here.  N3's own files are 16-bit,
+    but this one is not a record of what N3 wrote: it is a record of what this
+    pipeline computed, and rounding it to a storage level would put an error
+    forty times larger than the thing the test measures between the reference
+    and the run being checked against it.  It costs 6.7 MB, and the numbers
+    the test reports are then the implementation's own.
+    """
+    brain = load_volume(legacy_data("brain.mnc"))
+    model_mask = load_volume(MODEL_MASK)
+
+    corrected = nu_correct(brain, mask=model_mask, backend="legacy",
+                           **inputs.PLATFORM_PROTOCOL)
+
+    path = legacy_data(PLATFORM_REFERENCE)
+    save_volume(path, corrected, like=legacy_data("brain.mnc"),
+                store_dtype="float64")
+    print("wrote %s" % path)
 
 
 # ------------------------------------------------------------------- the tools

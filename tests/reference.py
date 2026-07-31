@@ -12,10 +12,16 @@ programs still say what they said, ``git diff`` is empty.
 
 Whole volumes are stored as ``float32``: they came out of 16-bit MINC files in
 the first place, and 1e-7 relative is a hundred times finer than the tightest
-volume tolerance in the suite (``span / 65535``).  The small arrays -- lookup
-tables, histograms, the values probed through ``minclookup`` -- are kept at
-``float64``, because those comparisons are held to 1e-6 and 1e-9 and cost
-nothing to store exactly.  :func:`as_volume` marks the former.
+tolerance anything here is compared against (``span / 65535``).  The small
+arrays -- lookup tables, histograms, the values probed through ``minclookup``
+-- are kept at ``float64``, because those comparisons are held to 1e-6 and
+1e-9 and cost nothing to store exactly.  :func:`as_volume` marks the former.
+
+``tests/data/brain_nu_ref_legacy.mnc`` is deliberately not in here.  It is not
+an answer of the legacy programs but of this pipeline, it is compared against
+far more tightly than anything above, and it is a volume -- so it lives in
+``tests/data/`` as a ``float64`` MINC file that any tool can open.  See
+:func:`tests.regenerate_reference.platform_reference_case`.
 """
 
 import json

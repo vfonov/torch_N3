@@ -15,6 +15,23 @@ on `PATH`; doing it once means none of them do.
 | `brain_nu_ref.mnc` | `legacy/N3/testing/` — `nu_correct`'s own output, the regression target |
 | `icbm_avg_152_t1_tal_nlin_symmetric_VI_mask.mnc` | `/opt/minc/*/share/N3/` — the average brain mask `-auto_mask` reaches for |
 
+`brain_nu_ref_legacy.mnc` is the exception: it is not one of N3's files but one
+of ours, written by `tests/regenerate_reference.py`. It is what this pipeline
+produces on `brain.mnc` with the original C++ blocks driving it, under the
+fixed protocol in `tests/inputs.py`, and it exists so that another machine,
+another BLAS or a GPU can be held to it — see `tests/test_reproducibility.py`.
+
+It is the one volume here stored `float64` rather than 16-bit, and the only
+reason for its 6.7 MB. Everything else in this directory is a record of what
+some N3 program *wrote*, at the precision it wrote it; this is a record of what
+the pipeline *computed*. One 16-bit level is forty times the difference the
+test measures, so rounding would have meant comparing against the rounding.
+
+Regenerating it rewrites MINC's `ident` attribute (user, host, timestamp, pid),
+so `git diff` reports the file as changed even when nothing about the image
+did. The voxel data is reproducible; those few header bytes are not. Compare
+the data, or `git checkout` the file, rather than committing a header churn.
+
 To reproduce, with the MINC toolkit on `PATH`:
 
 ```bash

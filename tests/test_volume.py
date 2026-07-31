@@ -16,10 +16,18 @@ def test_load_puts_the_volume_in_standard_order(chunk):
 
 
 def test_save_then_load_round_trips(tmp_path, chunk):
+    """``float64`` storage has to be the identity, not merely close.
+
+    Asserted as bit equality because something now depends on it:
+    ``tests/data/brain_nu_ref_legacy.mnc`` is stored this way precisely so
+    that the reference records what the pipeline computed, and a round trip
+    that lost even a few bits would put an error into every comparison in
+    ``test_reproducibility.py``.
+    """
     save_volume(str(tmp_path / "copy.mnc"), chunk, store_dtype="float64")
     again = load_volume(str(tmp_path / "copy.mnc"))
 
-    assert_close(again.data, chunk.data, atol=1e-9)
+    assert torch.equal(again.data, chunk.data)
     np.testing.assert_allclose(again.step, chunk.step)
     np.testing.assert_allclose(again.start, chunk.start)
 

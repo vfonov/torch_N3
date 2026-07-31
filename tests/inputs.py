@@ -16,6 +16,14 @@ import torch
 
 from torch_n3.volume import load_volume, save_volume
 
+#: The protocol ``tests/data/brain_nu_ref_legacy.mnc`` was produced with, and
+#: the only one it means anything at.  Two iterations with the early stop
+#: disabled: far enough in to have exercised every stage of the pipeline
+#: twice, and short of the point where the answer stops being a continuous
+#: function of rounding error.  ``tests/test_reproducibility.py`` explains
+#: what happens at three.
+PLATFORM_PROTOCOL = dict(iterations=(2,), stop=(0.0,))
+
 
 def as_stored(directory, name, volume, like):
     """``volume`` after a round trip through a 16-bit MINC file.
