@@ -34,6 +34,19 @@ PROGRAMS = ["volume_hist", "sharpen_hist", "sharpen_volume", "spline_smooth",
 #: The two planted-field amplitudes ``test_field_recovery`` uses.
 AMPLITUDES = [0.2, 0.4]
 
+#: The knot spacings it runs each of them at.  200 mm is the shipped default;
+#: the other two give the spline three and five times as many coefficients,
+#: which is the parameter most likely to expose a fault in the B-spline block.
+DISTANCES = [200.0, 100.0, 50.0]
+
+#: Every implementation is run for this many iterations with the early stop
+#: disabled, so that they all do the same work.  Left to its own devices N3
+#: stops at ``change < 0.001``, and implementations whose per-iteration change
+#: differs in the fifth decimal land on either side of that and run a
+#: different number of iterations -- which moves the answer far more than any
+#: block-level difference does.  30 is past where every case here converges.
+ITERATIONS = 30
+
 #: The domain of the synthetic histogram ``test_sharpen`` works on.
 TWO_TISSUE_RANGE = (4.0, 6.0)
 
@@ -189,10 +202,13 @@ def pipeline_cases(workspace, arrays, scalars):
 
 
 def recovery_cases(workspace, arrays, scalars):
-    """``nu_correct`` on the planted-field volumes, inside the mask only.
+    """``nu_correct`` on the planted-field volumes, at each knot spacing.
 
     ``test_field_recovery`` compares fields over the model mask and nowhere
-    else, so only those voxels are recorded -- a quarter of the volume.
+    else, so only those voxels are recorded -- a quarter of the volume.  The
+    untouched reference is run too, at every spacing, because what N3 finds in
+    it is the baseline the planted runs are measured against and it depends on
+    the spacing like everything else.
     """
     brain = load_volume(legacy_data("brain_nu_ref.mnc"))
     model_mask = load_volume(MODEL_MASK)
@@ -211,14 +227,18 @@ def recovery_cases(workspace, arrays, scalars):
                                   brain.like(data),
                                   legacy_data("brain_nu_ref.mnc"))
         path = workspace.at("%s.mnc" % name)
-        workspace.run("nu_correct", "-clobber", "-quiet", "-mapping_dir",
-                      workspace.at(""), "-mask", mask, path,
-                      workspace.at("nu_%s.mnc" % name))
-        # The field it divided out.  Derived from the *stored* volume, which
-        # is what the test rebuilds, so quantisation sits on the same side of
-        # the comparison in both places.
-        field = stored.data / workspace.read("nu_%s.mnc" % name).data
-        arrays["nu_correct.%s_field" % name] = reference.as_volume(field[inside])
+        for distance in DISTANCES:
+            output = workspace.at("nu_%s_%d.mnc" % (name, distance))
+            workspace.run("nu_correct", "-clobber", "-quiet", "-mapping_dir",
+                          workspace.at(""), "-distance", distance,
+                          "-iterations", ITERATIONS, "-stop", 0.0,
+                          "-mask", mask, path, output)
+            # The field it divided out.  Derived from the *stored* volume,
+            # which is what the test rebuilds, so quantisation sits on the
+            # same side of the comparison in both places.
+            field = stored.data / load_volume(output).data
+            arrays["nu_correct.%s_field_d%d" % (name, distance)] = \
+                reference.as_volume(field[inside])
 
 
 # ------------------------------------------------------------------- the tools

@@ -246,23 +246,37 @@ the same iteration reordered so that it vectorises.
 ### Does it actually remove a bias field?
 
 `tests/test_field_recovery.py` plants one and asks for it back. A smooth
-multiplicative field of a set amplitude goes onto `brain_nu_ref.mnc.gz` — which
+multiplicative field of a set amplitude goes onto `brain_nu_ref.mnc` — which
 has already been through `nu_correct`, so it is close to uniform to begin with —
-the result is written out as `brain_nu_artificial.mnc`, and every implementation
-available is asked to correct it: the PyTorch blocks, the same pipeline driving
-the original C++ blocks, and the installed `nu_correct` itself if it is on
-`PATH` (those cases skip if it is not).
+the result is written out as `brain_nu_artificial.mnc`, and three
+implementations are asked to correct it at three knot spacings: the PyTorch
+blocks, the same pipeline driving the original C++ blocks, and the installed
+`nu_correct`, whose answers are recorded rather than recomputed.
 
-| Planted field | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
-|---|---|---|---|---|
-| 20% (`exp(0.2)` peak-to-peak) | 4.14% | 0.876% | 0.876% | 0.878% |
-| 40% | 8.28% | 0.999% | 1.068% | 1.000% |
+| Planted field | Knot spacing | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
+|---|---|---|---|---|---|
+| 20% (`exp(0.2)` peak-to-peak) | 200 mm (default) | 4.14% | 0.31% | 0.31% | 0.31% |
+| | 100 mm | | 0.61% | 0.60% | 0.60% |
+| | 50 mm | | 1.51% | 1.53% | 1.51% |
+| 40% | 200 mm (default) | 8.28% | 0.58% | 0.62% | 0.58% |
+| | 100 mm | | 1.00% | 0.98% | 0.99% |
+| | 50 mm | | 1.96% | 1.96% | 1.94% |
 
-Two things to read off that. N3 recovers most but not all of a field — about
-0.9% of non-uniformity survives here — and that is a property of the algorithm,
-not of this code: the original leaves the same amount. And all three agree about
-*which* field is there to between 2e-5 and 9e-4 RMS, which is the comparison an
-implementation can actually be held to.
+Three things to read off that. All three implementations agree about *which*
+field is there, everywhere in the sweep, to between 7e-5 and 5.8e-4 RMS — the
+comparison an implementation can actually be held to.
+
+N3 recovers most but not all of a field, and how much depends almost entirely
+on `--distance`: at the shipped 200 mm it leaves about 7% of what was planted,
+at 50 mm about a third of it.
+
+And a **stiffer spline recovers a smooth field better**, which is worth knowing
+before reaching for a smaller `--distance`. A bias field is smooth, so the
+default already has enough freedom to represent one; extra coefficients get
+spent following tissue contrast instead, and come back as field that was never
+there. At 50 mm on this data the "corrected" volume is *further* from the truth
+than the uncorrected one — 1.10× the original deviation. That is why 200 mm is
+the default.
 
 End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
 `brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for

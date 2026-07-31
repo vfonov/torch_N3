@@ -142,15 +142,24 @@ amplitude on `brain_nu_ref.mnc.gz`, write `brain_nu_artificial.mnc`, and have ea
 implementation correct it — the two backends always, the installed `nu_correct` when it is on
 `PATH` (`conftest.requires_program`).
 
-| Planted | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
-|---|---|---|---|---|
-| 20% RF | 4.14% | 0.876% | 0.876% | 0.878% |
-| 40% RF | 8.28% | 0.999% | 1.068% | 1.000% |
+| Planted field | Knot spacing | Non-uniformity planted | left by `torch` | by `legacy` | by `nu_correct` |
+|---|---|---|---|---|---|
+| 20% (`exp(0.2)` peak-to-peak) | 200 mm (default) | 4.14% | 0.31% | 0.31% | 0.31% |
+| | 100 mm | | 0.61% | 0.60% | 0.60% |
+| | 50 mm | | 1.51% | 1.53% | 1.51% |
+| 40% | 200 mm (default) | 8.28% | 0.58% | 0.62% | 0.58% |
+| | 100 mm | | 1.00% | 0.98% | 0.99% |
+| | 50 mm | | 1.96% | 1.96% | 1.94% |
 
-Pairwise agreement on the recovered field: torch/legacy 2.4e-5 RMS at 20% but 8.9e-4 at 40%
-(amplification again — at 40% the legacy backend's trajectory diverges, and the port lands
-*closer* to the binary than the C++ blocks driving the same pipeline do); torch/`nu_correct`
-5e-5 and 1e-4.
+Every run uses a fixed 30 iterations with the early stop disabled, because otherwise the
+implementations land on opposite sides of `change < 0.001` and run different numbers of
+iterations — which moved the answer several times more than any block difference did. With
+that controlled, pairwise agreement is 7e-5 to 5.8e-4 RMS across the whole sweep.
+
+The sweep also shows that recovery *degrades* as the spline gains freedom: a bias field is
+smooth, so the default 200 mm already represents one, and the extra coefficients go into
+following anatomy. At 50 mm the corrected volume is further from the truth than the
+uncorrected one.
 
 N3 leaves ~0.9% of the field behind whoever runs it, and the residual does not depend on the
 planted field's frequency content (checked at 0.6/0.9/1.4 rad across the volume), so it is
