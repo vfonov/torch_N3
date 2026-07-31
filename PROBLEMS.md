@@ -82,8 +82,10 @@ up to 8×, and the bound that had been at 87% is now at 36% with nothing above
 58% anywhere in the sweep. The bound itself never moved.
 
 The remaining 73% entry is different in kind: the bound is a stated floor
-(`planted / 2`), and 50 mm on a 180 mm volume is N3 asked to do something it
-is not suited to. It is information, not a fitted margin.
+(`planted / 2`), and 50 mm at the default `-lambda` is N3 asked to do
+something it is not set up for — raising the penalty a couple of decades drops
+that cell from 73% to 17% of the bound. It is information, not a fitted
+margin.
 
 ## 4. Assertions dropped rather than made to pass
 

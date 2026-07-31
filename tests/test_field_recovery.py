@@ -54,6 +54,7 @@ AMPLITUDES = [0.2, 0.4]
 #: coefficients (80, 150, 392 on this volume).
 DISTANCES = [200.0, 100.0, 50.0]
 DEFAULT_DISTANCE = 200.0
+DEFAULT_LAMBDA = 1e-7
 
 #: The two block implementations, both driving the same pipeline.
 BACKENDS = ["torch", "legacy"]
@@ -64,6 +65,10 @@ BINARY = "nu_correct"
 #: Iterations every implementation runs, with the early stop disabled, so
 #: that they all do the same work.  See the module docstring.
 PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+
+#: Bending-energy weights for the trade-off test below.  ``1e-7`` is the
+#: shipped default; the others are what a 50 mm spline needs to behave.
+LAMBDAS = [1e-5, 1e-4]
 
 #: How closely two implementations must agree on the field they recovered,
 #: as a relative RMS difference over the mask.  One number for every pairing,
@@ -208,6 +213,38 @@ def recovery(request, recoveries):
     return recoveries[request.param]
 
 
+@pytest.fixture(scope="module")
+def regularized(tmp_path_factory, brain_reference, model_mask):
+    """Residual left at the *finest* spacing, as the penalty is raised.
+
+    Torch backend only: this is a claim about what N3 does, not about who
+    implements it, and the parity of the two backends is established by the
+    sweep above.
+    """
+    inside = model_mask.resample_like(brain_reference).data != 0
+    directory = tmp_path_factory.mktemp("regularized")
+    reference = as_stored(directory, "reference.mnc", brain_reference,
+                          legacy_data("brain_nu_ref.mnc"))
+    distance = min(DISTANCES)
+    left = {}
+
+    for log_range in AMPLITUDES:
+        planted = synthetic_bias_field(brain_reference, inside, log_range)
+        volume = as_stored(directory, "artificial_%d.mnc" % (log_range * 100),
+                           brain_reference.like(brain_reference.data * planted),
+                           legacy_data("brain_nu_ref.mnc"))
+        for lam in [DEFAULT_LAMBDA] + LAMBDAS:
+            settings = dict(distance=distance, lam=lam, **PROTOCOL)
+            base = nu_estimate(reference, mask=model_mask,
+                               **settings).evaluate_on(reference)[inside]
+            got = nu_estimate(volume, mask=model_mask,
+                              **settings).evaluate_on(volume)[inside]
+            ratio = got / base / planted[inside]
+            ratio = ratio / ratio.mean()
+            left[(log_range, lam)] = float(ratio.std(unbiased=False))
+    return left
+
+
 def _estimate(volume, mask, backend, distance, inside):
     """The field ``backend`` finds in ``volume``, inside the mask."""
     field = nu_estimate(volume, mask=mask, backend=backend, distance=distance,
@@ -262,13 +299,19 @@ def test_it_recovers_as_much_as_nu_correct_did(recovery, backend):
 
 @pytest.mark.parametrize("backend", BACKENDS + [BINARY])
 def test_a_stiffer_spline_recovers_a_smooth_field_better(recoveries, backend):
-    """Freedom the field does not need is spent on anatomy instead.
+    """At the default regularization, freedom the field does not need hurts.
 
     The planted field is smooth by construction, as a real one is, so the
     stiffest spline in the sweep is already able to represent it.  Giving the
     fit more coefficients cannot help it and does measurably hurt: the extra
     degrees of freedom go into following tissue contrast, which comes back as
     field that was never planted.
+
+    **At the default lambda.**  This is not a property of B-splines, it is a
+    property of leaving ``-lambda`` at ``1e-7`` while ``-distance`` shrinks;
+    the next test shows the same fit recovering once the penalty is raised to
+    match.  The whole sweep here is run at the default because that is what a
+    user gets.
 
     Stated as a bare ordering between the ends of the sweep -- no factor to
     choose.  It is not monotone at every step and is not asserted to be.
@@ -277,6 +320,33 @@ def test_a_stiffer_spline_recovers_a_smooth_field_better(recoveries, backend):
         stiffest = recoveries[(log_range, max(DISTANCES))].residual(backend)
         floppiest = recoveries[(log_range, min(DISTANCES))].residual(backend)
         assert stiffest < floppiest
+
+
+@pytest.mark.parametrize("log_range", AMPLITUDES)
+@pytest.mark.parametrize("lam", LAMBDAS)
+def test_more_regularization_recovers_what_a_finer_spline_lost(
+        regularized, log_range, lam):
+    """The two knobs trade off, so the loss above is not the spline's fault.
+
+    ``-distance`` sets how many coefficients the field is described by;
+    ``-lambda`` sets how much bending they are allowed between them.  Halve
+    the spacing without touching the penalty and the extra freedom goes into
+    anatomy -- but raise the penalty to match and the fit recovers.  Roughly a
+    decade of lambda per halving of distance, on this data:
+
+    ========  ==========  =========  =========
+    residual  d = 200 mm  d = 100 mm  d = 50 mm
+    ========  ==========  =========  =========
+    1e-7        0.0031      0.0061     0.0151
+    1e-6        0.0013      0.0022     0.0101
+    1e-5        0.0033      0.0017     0.0025
+    1e-4        0.0085      0.0054     0.0035
+    ========  ==========  =========  =========
+
+    Asserted as a bare ordering, at the finest spacing, for every weight
+    above the default -- not for one hand-picked value.
+    """
+    assert regularized[(log_range, lam)] < regularized[(log_range, DEFAULT_LAMBDA)]
 
 
 @pytest.mark.parametrize("log_range", AMPLITUDES)
@@ -304,15 +374,15 @@ def test_the_correction_restores_the_reference_volume(recoveries, log_range):
 def test_too_fine_a_spline_undoes_the_correction(recoveries, log_range):
     """The same thing the residual says, in voxels rather than field.
 
-    At the finest spacing in the sweep the correction leaves the volume
-    *further* from the truth than the planted field left it -- 1.10x the
-    original deviation at 20%.  N3 removes the field and puts back anatomy it
-    mistook for one.
+    At the finest spacing in the sweep, and the default ``-lambda``, the
+    correction leaves the volume *further* from the truth than the planted
+    field left it -- 1.10x the original deviation at 20%.  N3 removes the
+    field and puts back anatomy it mistook for one.
 
-    That is not a defect in this port; it is why ``-distance`` is the knob
-    N3 documents most carefully, and why 200 mm is the shipped default.  It is
+    That is not a defect in this port; it is why ``-distance`` is the knob N3
+    documents most carefully, and why 200 mm is the shipped default.  It is
     asserted here as a bare ordering so that the sweep records the cost rather
-    than averaging over it.
+    than averaging over it -- and it is recoverable, which is the next test.
     """
     at_default = recoveries[(log_range, DEFAULT_DISTANCE)]
     at_finest = recoveries[(log_range, min(DISTANCES))]

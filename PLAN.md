@@ -156,10 +156,12 @@ implementations land on opposite sides of `change < 0.001` and run different num
 iterations — which moved the answer several times more than any block difference did. With
 that controlled, pairwise agreement is 7e-5 to 5.8e-4 RMS across the whole sweep.
 
-The sweep also shows that recovery *degrades* as the spline gains freedom: a bias field is
-smooth, so the default 200 mm already represents one, and the extra coefficients go into
-following anatomy. At 50 mm the corrected volume is further from the truth than the
-uncorrected one.
+The sweep also shows that recovery degrades as the spline gains freedom *at fixed `-lambda`*:
+a bias field is smooth, so the default 200 mm already represents one, and the extra
+coefficients go into following anatomy. At 50 mm the corrected volume is further from the
+truth than the uncorrected one. Raising `-lambda` by about a decade per halving of `-distance`
+recovers it — the two knobs set the same thing between them, and
+`test_more_regularization_recovers_what_a_finer_spline_lost` pins that.
 
 N3 leaves ~0.9% of the field behind whoever runs it, and the residual does not depend on the
 planted field's frequency content (checked at 0.6/0.9/1.4 rad across the volume), so it is

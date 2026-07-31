@@ -270,13 +270,27 @@ N3 recovers most but not all of a field, and how much depends almost entirely
 on `--distance`: at the shipped 200 mm it leaves about 7% of what was planted,
 at 50 mm about a third of it.
 
-And a **stiffer spline recovers a smooth field better**, which is worth knowing
-before reaching for a smaller `--distance`. A bias field is smooth, so the
-default already has enough freedom to represent one; extra coefficients get
-spent following tissue contrast instead, and come back as field that was never
-there. At 50 mm on this data the "corrected" volume is *further* from the truth
-than the uncorrected one — 1.10× the original deviation. That is why 200 mm is
-the default.
+And **`--distance` and `--lambda` have to move together**, which is worth
+knowing before reaching for a smaller `--distance` on its own. A bias field is
+smooth, so the default spacing already has enough freedom to represent one;
+halving it without touching the penalty means the extra coefficients get spent
+following tissue contrast, and come back as field that was never there. At
+50 mm and the default `--lambda` the "corrected" volume is *further* from the
+truth than the uncorrected one — 1.10× the original deviation.
+
+Raising the penalty to match undoes that. Residual left, over the two knobs:
+
+| `--lambda` | `--distance` 200 mm | 100 mm | 50 mm |
+|---|---|---|---|
+| 1e-7 (default) | 0.31% | 0.61% | 1.51% |
+| 1e-6 | 0.13% | 0.22% | 1.01% |
+| 1e-5 | 0.33% | 0.17% | 0.25% |
+| 1e-4 | 0.85% | 0.54% | 0.35% |
+
+Roughly a decade of `--lambda` per halving of `--distance`. Worth noting that
+the shipped `1e-7` is not the best cell in that table for *this* planted field
+— but this field is smoother than most real ones, so don't read a
+recommendation into it.
 
 End to end, correcting `brain.mnc.gz` lands **3.0e-3 relative RMS** from
 `brain_nu_ref.mnc.gz`, where the legacy suite asks for 1e-4. Two things account for
