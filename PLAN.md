@@ -112,7 +112,7 @@ still theirs.
 | `bimodal_threshold` | `minc_tools.py` | 4e-5 on 2.4e5 — all `mincstats` printed |
 | `BSplineField` | `blocks/spline.py` | 2e-7 relative on the fitted field |
 | `correct_field` | `blocks/field.py` | 5e-6 relative |
-| `shrink` / resampling | `volume.py` | label resampling exact; `shrink` to a 12-bit level |
+| `shrink` / resampling | `volume.py` | label resampling exact; `shrink` to one part in 4095 |
 
 Notes on the two loose ones:
 

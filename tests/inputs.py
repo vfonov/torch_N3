@@ -17,12 +17,12 @@ import torch
 from torch_n3.volume import load_volume, save_volume
 
 #: The protocol ``tests/data/brain_nu_ref_legacy.mnc`` was produced with, and
-#: the only one it means anything at.  Two iterations with the early stop
-#: disabled: far enough in to have exercised every stage of the pipeline
-#: twice, and short of the point where the answer stops being a continuous
-#: function of rounding error.  ``tests/test_reproducibility.py`` explains
-#: what happens at three.
-PLATFORM_PROTOCOL = dict(iterations=(2,), stop=(0.0,))
+#: the only one it means anything at.  One iteration with the early stop
+#: disabled: every stage of the pipeline runs, and the whole of
+#: ``nu_evaluate``, while the answer is still a continuous function of
+#: rounding error.  ``tests/test_reproducibility.py`` explains what happens
+#: after that, and why this used to say two.
+PLATFORM_PROTOCOL = dict(iterations=(1,), stop=(0.0,))
 
 
 def as_stored(directory, name, volume, like):
@@ -31,7 +31,7 @@ def as_stored(directory, name, volume, like):
     ``nu_correct`` was handed a file, not an array, so it saw its contents
     quantised.  The regeneration script and the tests both come through here,
     which is the only way to be sure they are looking at the same numbers --
-    modelling MINC's scaling in Python instead gets it wrong by a whole level.
+    modelling MINC's scaling in Python instead gets it wrong by a whole step.
     """
     path = os.path.join(str(directory), name)
     save_volume(path, volume, like=like, store_dtype="int16")

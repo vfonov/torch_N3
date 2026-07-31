@@ -264,10 +264,10 @@ def platform_reference_case(workspace, arrays, scalars):
 
     ``float64``, unlike every other volume here.  N3's own files are 16-bit,
     but this one is not a record of what N3 wrote: it is a record of what this
-    pipeline computed, and rounding it to a storage level would put an error
-    forty times larger than the thing the test measures between the reference
-    and the run being checked against it.  It costs 6.7 MB, and the numbers
-    the test reports are then the implementation's own.
+    pipeline computed, and rounding it to 16 bits would put an error orders of
+    magnitude larger than the thing the test measures between the reference and
+    the run being checked against it.  It costs 6.7 MB, and the numbers the
+    test reports are then the implementation's own.
     """
     brain = load_volume(legacy_data("brain.mnc"))
     model_mask = load_volume(MODEL_MASK)

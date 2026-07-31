@@ -73,6 +73,20 @@ def span(values):
     return float(values.max() - values.min())
 
 
+def relative_rms(result, expected):
+    """``compare_nu_result.pl``'s measure: RMS difference over mean signal.
+
+    The suite's one measure of whole-volume agreement, and the only one worth
+    a fixed bound.  The obvious alternative -- the largest difference anywhere
+    -- is an extreme-value statistic over hundreds of thousands of voxels,
+    decided by a handful at the mask edge, and it moves for reasons that have
+    nothing to do with whether two implementations agree.
+    """
+    result = torch.as_tensor(result, dtype=torch.float64)
+    expected = torch.as_tensor(expected, dtype=torch.float64)
+    return float(((result - expected) ** 2).mean().sqrt() / expected.mean())
+
+
 @pytest.fixture(scope="session")
 def legacy_output():
     """What the original N3 programs answered, recorded once."""

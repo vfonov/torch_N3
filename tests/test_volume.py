@@ -48,7 +48,7 @@ def test_shrink_matches_the_legacy_estimation_grid(legacy_output, chunk):
     np.testing.assert_allclose(
         shrunk.start, legacy_output.scalar("mincresample.chunk_shrink3_start"))
     # mincresample stores its result in the input's 12-bit type, so it can be
-    # half a level off; the voxels it picked are what matters.
+    # half a quantisation step off; the voxels it picked are what matters.
     assert_close(shrunk.data, recorded, atol=span(recorded) / 4095)
 
 

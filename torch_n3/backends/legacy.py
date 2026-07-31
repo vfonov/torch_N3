@@ -141,7 +141,7 @@ def correct_field(field, mask, step):
     The spline that N3 fits is exactly zero outside its domain, so before
     dividing, ``nu_evaluate`` runs ``correct_field``: a multigrid Gauss-Seidel
     solve of Laplace's equation that grows the masked field outward smoothly
-    (``legacy/N3/src/CorrectField/correctField.cc``).  Returns a new array.
+    (``torch_n3/_legacy/n3/CorrectField/correctField.cc``).  Returns a new array.
     """
     out = _as_double_array(field)
     flags = _as_mask_array(mask)

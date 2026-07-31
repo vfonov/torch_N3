@@ -26,6 +26,9 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
 | `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
+| `torch_n3/_legacy/n3/` | The N3 sources the shim compiles, vendored byte for byte from `legacy/N3/src` (see its `README.md`) so the legacy backend builds without an N3 checkout. **Do not modify** — they are the oracle. Everything below still cites `legacy/N3/src` as the *source of truth*; for the files listed there, the two are the same bytes. |
+| `torch_n3/_legacy/ebtks/` | Likewise EBTKS, vendored from `legacy/EBTKS`: all headers, seven `.cc` files, no `clapack/`. The build links the **system** LAPACK/BLAS instead — the one thing the extension still needs from outside. What that swap costs is measured in `README.md`; it is not nothing. |
+| `torch_n3/_legacy/compat/` | Stand-ins for `<volume_io.h>`, `<time_stamp.h>` and `<ParseArgv.h>`, placed first on the include path so that `correctField.cc` and `args.cc` compile **unmodified** without libminc2. `smooth()` does its whole solve on flat `float`/`char` arrays; volume_io was only ever the marshalling at its edges. |
 | `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/data/brain_nu_ref_legacy.mnc` | Not one of N3's files: this pipeline's own output on `brain.mnc` with the legacy blocks, under `inputs.PLATFORM_PROTOCOL`, checked in so another machine/BLAS/device can be held to it (`tests/test_reproducibility.py`). Written by the regeneration script. Regenerating churns MINC's `ident` header attribute; the voxel data is reproducible. |
@@ -161,7 +164,7 @@ volumes at `float32`, small arrays at `float64`, and record only what the assert
 (the recovery test keeps the masked quarter of the volume, not all of it).
 
 One trap: a program that was handed a *file* saw its contents quantised, and modelling MINC's
-16-bit scaling in Python gets it wrong by a whole level. Round-trip through
+16-bit scaling in Python gets it wrong by a whole quantisation step. Round-trip through
 `inputs.as_stored()` instead, which both the script and the test call.
 
 ## Test tolerances
@@ -241,12 +244,14 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
 - **The amplification starts at a discontinuity, not at float noise.** The auto histogram
   range is taken from the data and then rounded to `%lf`'s six decimals, so a voxel on a bin
   boundary can fall either side of it and a whole count moves between bins. On `brain.mnc`,
-  CPU and GPU agree to 3e-5 of a 16-bit storage level after one or two iterations; at three,
-  one whole count flips (out of the 3,724 samples the shrunken grid contributes) and they
-  end up 444 levels apart. This is why
-  `tests/test_reproducibility.py` pins two iterations — past that, an end-to-end golden
+  the backends agree to 5.5e-8 relative RMS after one iteration; at two, one whole count
+  flips (out of the 3,724 samples the shrunken grid contributes) and they end up 1.17e-3
+  apart — four orders of magnitude worse. This is why
+  `tests/test_reproducibility.py` pins one iteration — past that, an end-to-end golden
   volume records which side of a rounding boundary one voxel landed on. Raising the count
-  makes that test louder, not stronger.
+  makes that test louder, not stronger. Which iteration the flip lands on is not fixed
+  either: it moved from the third to the second when the shim switched to the system
+  LAPACK. See `README.md` on that.
 - **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
   script driving separate executables, which can only talk through files. The `legacy`
   *backend* here is those same C++ routines called through the CFFI shim, on float64
@@ -258,7 +263,7 @@ Two known-brittle comparisons, so nobody reaches for the threshold when they fai
   as a MINC file, so it is rounded on the way. Worse, writing and reading disagree: `mincmath`
   writes each *slice* against its own `image-min`/`image-max`, while `volume_io` programs
   (`volume_hist`, `spline_smooth`) hand the reader a volume rescaled onto a *single* grid for
-  the whole file. The level count depends on which file `mincmath` took its header from —
+  the whole file. How many distinct values survive depends on which file `mincmath` took its header from —
   the input's `valid_range` (4096 for the 12-bit test data) before the mask is applied, and
   the full 16 bits after, because the driver builds the mask with `-short -signed`. This is
   why a float64 port cannot reproduce `brain_nu_ref.mnc.gz` to the legacy suite's `1e-4`;

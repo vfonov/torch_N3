@@ -171,7 +171,7 @@ Read `torch_n3/pipeline.py` alongside `legacy/N3/src/NUcorrect/nu_estimate_np_an
 | `torch_n3/volume.py` | MINC I/O, geometry, shrinking and resampling. |
 | `torch_n3/minc_tools.py` | The two MINC utilities on the critical path: continuous lookup, and the Otsu threshold. |
 | `torch_n3/backends/legacy.py` | The same blocks, as the original C++. |
-| `torch_n3/_legacy/` | The CFFI shim that compiles those blocks out of `legacy/N3/src`. |
+| `torch_n3/_legacy/` | The CFFI shim, plus the N3 (`n3/`) and EBTKS (`ebtks/`) sources it compiles. |
 | `torch_n3/cli.py` | The command line. |
 
 The legacy backend is deliberate: it makes the original code a numerical oracle, so each
@@ -199,9 +199,17 @@ python3 torch_n3/_legacy/build_legacy.py
 ```
 
 It compiles `Spline.cc`, `TBSpline.cc`, `DHistogram.cc`, `WHistogram.cc`,
-`sharpen_hist.cc` and `correctField.cc` straight out of `legacy/N3/src` — nothing is
-copied or modified — and links against the EBTKS and LAPACK that ship with the
-installed MINC toolkit. Only the tests and `--backend legacy` need it.
+`sharpen_hist.cc` and `correctField.cc` from `torch_n3/_legacy/n3/`, and the seven
+EBTKS sources they need from `torch_n3/_legacy/ebtks/`. Both trees are vendored byte
+for byte — out of `legacy/N3/src` and `legacy/EBTKS` — unmodified and checked in, so
+the extension builds with no MINC toolkit and no N3 or EBTKS checkout.
+
+The only thing it links from outside is **LAPACK and BLAS**, and that choice is not
+free: see [Which LAPACK](#which-lapack-the-legacy-backend-links). `volume_io`,
+`time_stamp` and `ParseArgv` are supplied by small stand-ins in
+`torch_n3/_legacy/compat/`, which is what lets `correctField.cc` and `args.cc` stay
+byte-identical while needing no libminc2. Only the tests and `--backend legacy` need
+any of this.
 
 ```bash
 python3 -m pytest              # the whole suite, about 22 s
@@ -253,27 +261,70 @@ skips without `mincconvert`.
 is a volume checked into the repository — this pipeline's output on `brain.mnc`,
 with the original C++ blocks driving it, stored `float64` so that it records what
 was computed rather than what a 16-bit file could hold. Both backends, on every
-device available, have to land on it to within one 16-bit storage level, which is
-N3's own working precision: the legacy passes every intermediate volume to the
-next program through a file of that kind.
+device available, have to land on it to within one part in 65535 of relative RMS,
+which is N3's own working precision: the legacy passes every intermediate volume
+to the next program through a 16-bit file.
 
-| | difference from the reference | of one level |
+Relative RMS throughout — RMS difference over mean signal, which is the measure
+`compare_nu_result.pl` uses. Not the largest difference anywhere: over 900k
+voxels that is decided by a handful at the mask edge and says nothing about the
+volume.
+
+| | relative RMS from the reference | of the bound |
 |---|---|---|
-| `legacy`, CPU | 0 — bit-identical, it wrote the file | 0.000% |
-| `torch`, CPU | 0.2079 | 1.157% |
-| `torch`, CUDA | 0.2079 | 1.157% |
+| `legacy`, CPU | 0 — bit-identical, it wrote the file | 0.0% |
+| `torch`, CPU | 5.52e-08 | 0.4% |
+| `torch`, CUDA | 5.52e-08 | 0.4% |
 
 Almost all of that is the two block implementations disagreeing, not the
-platform: CPU and GPU differ from each other by 5.5e-4, 380 times less.
+platform: CPU and GPU differ from each other by far less than either differs
+from the legacy.
 
-It runs two iterations rather than the shipped fifty, and that is not laziness.
+It runs one iteration rather than the shipped fifty, and that is not laziness.
 N3's histogram range is taken from the data and then rounded to the six decimals
 its text interchange prints, so a voxel on a bin boundary can fall either side
-of it. After one or two iterations CPU and GPU agree to 3e-5 of a storage level;
-at three, one whole count moves between bins — out of the 3,724 samples the
-shrunken estimation grid contributes — and they finish 444 levels apart. Nobody's implementation can be pinned past that — see
+of it. After one iteration the backends agree to 5.5e-08 relative RMS; at two,
+one whole count moves between bins — out of the 3,724 samples the shrunken
+estimation grid contributes — and they finish 1.17e-3 apart, four orders of
+magnitude worse. Nobody's implementation can be pinned past that — see
 [Amplification](#how-close-is-it) below — so the test stops where the answer is
 still a continuous function of rounding error.
+
+### Which LAPACK the legacy backend links
+
+The spline fit solves normal equations with a condition number around `1e13`,
+and it reaches LAPACK's `dsysv` to do it. Which `dsysv` turns out to matter more
+than it should.
+
+The shim used to link `libEBTKS.a`, which bundles its own f2c'd LAPACK; it now
+compiles vendored sources and links the **system** LAPACK/BLAS (OpenBLAS here),
+so that it builds against nothing from the MINC toolkit. Measured on the same
+object files, changing only which `dsysv` is linked:
+
+| | EBTKS's bundled f2c'd LAPACK | system LAPACK (OpenBLAS) |
+|---|---|---|
+| spline coefficients | — | 2.0e-08 apart (rel. 2.7e-07) |
+| fitted spline field | — | 5.9e-11 apart (rel. 4.6e-12) |
+| `legacy` vs N3's `brain_nu_ref.mnc` | 0.3701% | **0.5211%** |
+| `legacy` vs `torch`, 1 iteration | 5.5e-08 | 5.5e-08 |
+| `legacy` vs `torch`, 2 iterations | 5.5e-08 | **1.17e-3** |
+| `legacy` vs `torch`, 3 iterations | 1.17e-3 | 2.12e-3 |
+
+Neither solver is wrong — at that conditioning the coefficients are not
+determined to better than `1e-4` by *any* solver, which is why this repository
+compares fitted fields and never coefficients. The fitted field moves by four
+parts in `1e12`, which is nothing.
+
+What is worth knowing is the last three rows: that `4.6e-12` is enough to move
+the histogram knife-edge a whole iteration earlier. The bin-boundary flip that
+used to happen at the third iteration now happens at the second. It is the
+clearest demonstration in this repository of the point made under
+[Amplification](#how-close-is-it) — end to end, N3 is not a continuous function
+of its own rounding error, and no end-to-end comparison is meaningful past three
+digits.
+
+Two bounds moved as a result, deliberately; both are recorded in
+[PROBLEMS.md](PROBLEMS.md) §8.
 
 ### How close is it?
 

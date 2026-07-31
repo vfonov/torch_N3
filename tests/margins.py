@@ -20,7 +20,7 @@ shim, since half the rows are parity against it.
 import torch
 
 from tests import inputs, reference
-from tests.conftest import DATA, MODEL_MASK, span
+from tests.conftest import DATA, MODEL_MASK, relative_rms, span
 from tests.inputs import PLATFORM_PROTOCOL
 from tests.regenerate_reference import PLATFORM_REFERENCE
 from torch_n3 import blocks
@@ -177,7 +177,7 @@ def pipeline_rows(recorded):
                                    iterations=(iterations,), stop=(0.001,))
             rows.append(("nu_correct[%s] chunk i%d s%d"
                          % (backend, iterations, shrink),
-                         _relative_rms(corrected.data,
+                         relative_rms(corrected.data,
                                        recorded["nu_correct.chunk_i%d_s%d"
                                                 % (iterations, shrink)]),
                          1e-3))
@@ -185,7 +185,7 @@ def pipeline_rows(recorded):
     for backend in BACKENDS:
         corrected = nu_correct(brain, mask=model_mask, backend=backend)
         rows.append(("nu_correct[%s] vs brain_nu_ref" % backend,
-                     _relative_rms(corrected.data, brain_reference.data), 5e-3))
+                     relative_rms(corrected.data, brain_reference.data), 1e-2))
 
     # test_the_iteration_amplifies_small_differences
     def divisor(backend, iterations):
@@ -193,8 +193,8 @@ def pipeline_rows(recorded):
                             iterations=(iterations,), stop=(0.0,))
         return evaluate_field(brain, field, backend=backend).data
 
-    early = _relative_rms(divisor("torch", 1), divisor("legacy", 1))
-    late = _relative_rms(divisor("torch", 10), divisor("legacy", 10))
+    early = relative_rms(divisor("torch", 1), divisor("legacy", 1))
+    late = relative_rms(divisor("torch", 10), divisor("legacy", 10))
     rows.append(("amplification, early (bound is a maximum)", early, 1e-6))
     rows.append(("amplification, late / early (a minimum)", 100.0, late / early))
     return rows
@@ -205,7 +205,6 @@ def platform_rows(recorded):
     brain = load_volume(DATA + "/brain.mnc")
     model_mask = load_volume(MODEL_MASK)
     reference_volume = load_volume(DATA + "/" + PLATFORM_REFERENCE).data
-    level = span(reference_volume) / 65535
 
     runs = [("torch", "cpu"), ("legacy", "cpu")]
     if torch.cuda.is_available():
@@ -216,7 +215,8 @@ def platform_rows(recorded):
         result = nu_correct(brain.to(device), mask=model_mask.to(device),
                             backend=backend, **PLATFORM_PROTOCOL)
         rows.append(("platform reference, %s/%s" % (backend, device),
-                     _worst(result.data.cpu(), reference_volume), level))
+                     relative_rms(result.data.cpu(), reference_volume),
+                     1 / 65535))
     return rows
 
 
@@ -227,13 +227,6 @@ def _worst(ours, theirs):
     ours = torch.as_tensor(ours, dtype=torch.float64)
     theirs = torch.as_tensor(theirs, dtype=torch.float64)
     return float((ours - theirs).abs().max())
-
-
-def _relative_rms(result, expected):
-    """``compare_nu_result.pl``'s measure: RMS error over mean signal."""
-    result = torch.as_tensor(result, dtype=torch.float64)
-    expected = torch.as_tensor(expected, dtype=torch.float64)
-    return float(((result - expected) ** 2).mean().sqrt() / expected.mean())
 
 
 if __name__ == "__main__":

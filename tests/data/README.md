@@ -24,8 +24,9 @@ another BLAS or a GPU can be held to it — see `tests/test_reproducibility.py`.
 It is the one volume here stored `float64` rather than 16-bit, and the only
 reason for its 6.7 MB. Everything else in this directory is a record of what
 some N3 program *wrote*, at the precision it wrote it; this is a record of what
-the pipeline *computed*. One 16-bit level is forty times the difference the
-test measures, so rounding would have meant comparing against the rounding.
+the pipeline *computed*. Rounding to 16 bits would put in an error orders of
+magnitude above the difference the test measures, so it would have meant
+comparing against the rounding.
 
 Regenerating it rewrites MINC's `ident` attribute (user, host, timestamp, pid),
 so `git diff` reports the file as changed even when nothing about the image
