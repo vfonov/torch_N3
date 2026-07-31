@@ -4,9 +4,19 @@ Run directly to (re)build in place::
 
     python3 torch_n3/_legacy/build_legacy.py
 
-The extension compiles legacy N3 sources straight out of ``legacy/N3/src`` --
-they are never copied or modified -- and links against the EBTKS library and
-LAPACK that ship with the installed MINC toolkit.
+The extension compiles the sources vendored under ``n3/`` and ``ebtks/`` --
+byte-for-byte copies of the files from ``legacy/N3/src`` and ``legacy/EBTKS``
+that are actually needed, see the ``README.md`` in each -- and links nothing
+but the system LAPACK/BLAS.  No MINC toolkit, no libminc2, no libEBTKS, and
+neither original checkout is required.
+
+``compat/`` supplies the three MINC headers the legacy sources include
+(``volume_io.h``, ``time_stamp.h``, ``ParseArgv.h``) so that they can stay
+unmodified without libminc2 behind them.
+
+The LAPACK is the one real choice here: EBTKS bundles its own f2c'd copy and
+this used to link it.  The swap is measured in the top-level ``README.md``;
+it moves the end-to-end result by more than the blocks do.
 """
 
 import os
@@ -16,22 +26,29 @@ import sys
 import cffi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))
-N3_SRC = os.path.join(ROOT, "legacy", "N3", "src")
+N3_SRC = os.path.join(HERE, "n3")
 BUILD_DIR = os.path.join(HERE, "build")
 
-# Where EBTKS headers/libs live.  MINC_TOOLKIT is set in this environment;
-# fall back to the usual install location.
-TOOLKIT = os.environ.get("MINC_TOOLKIT", "/opt/minc/1.9.18.13")
-
-# N3 normally generates config.h with autoconf/cmake.  The legacy sources need
-# only these two symbols, so we generate a minimal one rather than configuring
-# the whole legacy build.
+# N3 and EBTKS both generate config.h with autoconf/cmake.  Between them the
+# vendored sources read only these, so we generate one rather than configuring
+# either legacy build.  Everything named here is unconditional on Linux.
 CONFIG_H = """\
 #ifndef N3_SHIM_CONFIG_H
 #define N3_SHIM_CONFIG_H
 #define HAVE_ISFINITE 1
 #define HAVE_FLOAT_H 1
+#define HAVE_MKSTEMP 1
+#define HAVE_DIRENT_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_MALLOC_H 1
+#define HAVE_MEMORY_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_STRINGS_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_WAIT_H 1
+#define HAVE_UNISTD_H 1
 #endif
 """
 
@@ -53,6 +70,21 @@ void set_program_name(char *name);
 #endif
 #endif
 """
+
+EBTKS = os.path.join(HERE, "ebtks")
+
+# EBTKS's own build compiles these plus a bundled f2c'd LAPACK; we link the
+# system LAPACK/BLAS instead, so `clapack/` is not vendored.  Pruned to what
+# the extension actually pulls in -- see ebtks/README.md.
+EBTKS_SOURCES = [
+    os.path.join(EBTKS, "src", "FileIO.cc"),
+    os.path.join(EBTKS, "src", "MString.cc"),
+    os.path.join(EBTKS, "src", "OrderedCltn.cc"),
+    os.path.join(EBTKS, "src", "Path.cc"),
+    os.path.join(EBTKS, "templates", "Matrix.cc"),
+    os.path.join(EBTKS, "templates", "MatrixSupport.cc"),
+    os.path.join(EBTKS, "templates", "ValueMap.cc"),
+]
 
 LEGACY_SOURCES = [
     os.path.join(N3_SRC, "Splines", "Spline.cc"),
@@ -94,18 +126,21 @@ def build(verbose=True):
         # match the definitions in n3_shim.cc.
         'extern "C" {\n#include "n3_shim.h"\n}\n',
         source_extension=".cc",
-        sources=SHIM_SOURCES + LEGACY_SOURCES,
+        sources=SHIM_SOURCES + LEGACY_SOURCES + EBTKS_SOURCES,
         include_dirs=[
             HERE,
             generated,
+            # Ahead of everything else: these shadow <volume_io.h>,
+            # <time_stamp.h> and <ParseArgv.h> so no MINC library is needed.
+            os.path.join(HERE, "compat"),
+            os.path.join(EBTKS, "include"),
+            os.path.join(EBTKS, "templates"),
             os.path.join(N3_SRC, "Splines"),
             os.path.join(N3_SRC, "VolumeHist"),
             os.path.join(N3_SRC, "SharpenHist"),
             os.path.join(N3_SRC, "CorrectField"),
-            os.path.join(TOOLKIT, "include"),
         ],
-        library_dirs=[os.path.join(TOOLKIT, "lib")],
-        libraries=["EBTKS", "minc2", "lapack", "blas"],
+        libraries=["lapack", "blas"],
         define_macros=[
             ("HAVE_CONFIG_H", "1"),
             ("USE_COMPMAT", "1"),
