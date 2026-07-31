@@ -37,13 +37,20 @@ def test_apply_lut_clamps_outside_the_domain():
 
 
 def test_bimodal_threshold_matches_mincstats(legacy_output, chunk):
-    """`nu_evaluate`'s automatic mask comes from `mincstats -biModalT`."""
+    """`nu_evaluate`'s automatic mask comes from `mincstats -biModalT`.
+
+    The bound is the last digit ``mincstats`` printed: it reports four
+    decimals, so ``1e-4`` is the finest agreement it can be asked for.  (This
+    was a *relative* ``1e-3`` until 2026-07-31, which on a value in the
+    hundreds of thousands allowed a difference of 238 -- some two million
+    times looser than the number it was comparing against, and enough for the
+    threshold to land in a different tissue.)
+    """
     recorded = legacy_output.scalar("mincstats.bimodal_threshold_chunk")
 
     threshold = bimodal_threshold(chunk.data)
 
-    # mincstats prints four decimals of a value in the hundreds of thousands.
-    assert abs(threshold - recorded) < 1e-3 * max(1.0, abs(recorded))
+    assert abs(threshold - recorded) < 1e-4
 
 
 def test_bimodal_threshold_separates_two_clusters():
