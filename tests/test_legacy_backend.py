@@ -6,9 +6,6 @@ Stage 2 tests can trust it as an oracle.  If the shim ever drifts from what
 tests, which keeps the blame in the right place.
 """
 
-import subprocess
-
-import numpy as np
 import pytest
 import torch
 
@@ -51,38 +48,20 @@ def test_parzen_smooths_relative_to_plain_binning(gaussian_mixture):
     assert float(parzen.diff().abs().sum()) < float(plain.diff().abs().sum())
 
 
-def test_sharpen_lut_matches_the_installed_sharpen_hist(tmp_path,
-                                                        gaussian_mixture):
-    """The shim and the real `sharpen_hist` binary must agree."""
-    bins, fwhm, noise = 200, 0.15, 0.01
-    value_range = legacy.histogram_range(gaussian_mixture)
-    counts = legacy.histogram(gaussian_mixture, bins, value_range, parzen=True)
-    centers = legacy.bin_centers(bins, value_range)
+def test_sharpen_lut_matches_the_installed_sharpen_hist(legacy_output):
+    """The shim and the real `sharpen_hist` binary must agree.
 
-    # sharpen_hist takes the histogram domain from the first and last bin
-    # centres in the file, so write them at full precision.  Without -range it
-    # emits exactly one output row per bin.
-    hist_file = tmp_path / "hist.txt"
-    with open(hist_file, "w") as fp:
-        fp.write("# histogram for class 1\n")
-        fp.write("#  domain: %.15g  %.15g\n" % value_range)
-        fp.write("#  bin centers     counts\n")
-        for centre, count in zip(centers, counts):
-            fp.write("  %.15g       %.15g\n" % (centre, count))
+    On the histogram the binary was handed, which is recorded next to its
+    answer -- so this compares the deconvolution and nothing else.
+    """
+    counts = legacy_output["sharpen_hist.chunk_counts"]
+    value_range = tuple(float(v) for v in legacy_output["sharpen_hist.chunk_range"])
 
-    lut_file = tmp_path / "hist.sharp"
-    subprocess.run(
-        ["sharpen_hist", "-clobber", "-fwhm", str(fwhm), "-noise", str(noise),
-         "-quiet", str(hist_file), str(lut_file)],
-        check=True, capture_output=True)
+    from_shim = legacy.sharpen_lut(counts, value_range, fwhm=0.15, noise=0.01)
 
-    from_binary = np.loadtxt(lut_file)[:, 1]
-    from_shim = legacy.sharpen_lut(counts, value_range, fwhm, noise)
-
-    assert from_binary.shape == tuple(from_shim.shape)
     # sharpen_hist writes its lookup table with "%lf", i.e. six decimals, so
     # agreement to ~1e-6 is agreement to the last digit the binary reports.
-    assert_close(from_shim, from_binary, atol=1e-6)
+    assert_close(from_shim, legacy_output["sharpen_hist.chunk_lut"], atol=1e-6)
 
 
 def test_bspline_reproduces_a_linear_ramp():

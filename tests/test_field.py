@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from tests.conftest import assert_close, span
+from tests.inputs import tilted_plane
 from torch_n3 import blocks
 from torch_n3.backends import legacy
 
@@ -21,10 +22,7 @@ from torch_n3.backends import legacy
 def ramp_in_a_mask(chunk, chunk_mask):
     """A field defined only inside the brain mask, as the spline leaves it."""
     inside = chunk_mask.data != 0
-    z, y, x = torch.meshgrid(*[torch.arange(n, dtype=torch.float64)
-                               for n in chunk.shape], indexing="ij")
-    field = 1.0 + 0.01 * z - 0.004 * y + 0.003 * x
-    return torch.where(inside, field, torch.zeros_like(field)), inside
+    return tilted_plane(chunk, inside), inside
 
 
 def test_matches_the_legacy_solver(chunk, ramp_in_a_mask):
@@ -36,17 +34,14 @@ def test_matches_the_legacy_solver(chunk, ramp_in_a_mask):
     assert_close(ours, theirs, atol=1e-4 * span(theirs))
 
 
-def test_matches_the_correct_field_binary(workspace, chunk, ramp_in_a_mask):
+def test_matches_the_correct_field_binary(legacy_output, chunk, ramp_in_a_mask):
     """`nu_correct_field_1`: the installed program, on the same input."""
     field, inside = ramp_in_a_mask
-    source = workspace.write("field.mnc", chunk.like(field))
-    mask = workspace.write("mask.mnc", chunk.like(inside.to(torch.float64)))
-    workspace.run("correct_field", source, mask, workspace.at("extended.mnc"))
-    reference = workspace.read("extended.mnc").data
+    recorded = legacy_output["correct_field.chunk"]
 
     extended = blocks.correct_field(field, inside, chunk.step)
 
-    assert_close(extended, reference, atol=1e-4 * span(reference))
+    assert_close(extended, recorded, atol=1e-4 * span(recorded))
 
 
 def test_the_masked_values_are_left_alone(chunk, ramp_in_a_mask):

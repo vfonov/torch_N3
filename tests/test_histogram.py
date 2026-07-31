@@ -2,24 +2,17 @@
 
 Two oracles, in order of strictness.  The CFFI shim runs the legacy
 ``WHistogram`` class itself, so the port has to match it to the last bit that
-summation order allows; the installed ``volume_hist`` binary is the end-to-end
+summation order allows; ``volume_hist``'s recorded output is the end-to-end
 check that the shim is being asked the right question in the first place.
 """
 
-import numpy as np
 import pytest
 import torch
 
 from tests.conftest import assert_close
+from tests.inputs import masked_log
 from torch_n3 import blocks
 from torch_n3.backends import legacy
-
-
-def masked_log(volume, mask):
-    """What the pipeline actually histograms: the masked log volume."""
-    inside = mask.data != 0
-    values = torch.log(volume.data.clamp(min=1.0))
-    return torch.where(inside, values, torch.zeros_like(values)), inside
 
 
 def test_range_matches_the_legacy_scan(chunk, chunk_mask):
@@ -61,14 +54,9 @@ def test_counts_match_the_legacy_histogram(chunk, chunk_mask, parzen):
     assert_close(ours, theirs, atol=1e-9)
 
 
-def test_counts_match_the_volume_hist_binary(workspace, chunk, chunk_mask):
+def test_counts_match_the_volume_hist_binary(legacy_output, chunk, chunk_mask):
     """`nu_volume_hist_1`, with the ``-window`` (Parzen) variant N3 uses."""
-    source = workspace.write("chunk.mnc", chunk)
-    mask = workspace.write("mask.mnc", chunk_mask, store_dtype="int16")
-    workspace.run("volume_hist", "-bins", 200, "-auto_range", "-mask", mask,
-                  "-clobber", "-text", "-select", 1, "-quiet", "-window",
-                  source, workspace.at("hist.txt"))
-    reference = np.loadtxt(workspace.at("hist.txt"))
+    recorded = legacy_output["volume_hist.chunk"]
 
     inside = chunk_mask.data != 0
     selected = chunk.data[inside]
@@ -76,13 +64,13 @@ def test_counts_match_the_volume_hist_binary(workspace, chunk, chunk_mask):
         selected, initial=(chunk.data.max(), chunk.data.min()))
     counts = blocks.histogram(selected, 200, value_range)
 
-    assert_close(blocks.bin_centers(200, value_range), reference[:, 0],
-                 atol=1e-6)
+    assert_close(blocks.bin_centers(200, value_range), recorded[:, 0], atol=1e-6)
     # volume_hist reads the volume through volume_io, which rescales it onto a
     # single grid for the whole file, so a voxel near a bin edge can land on
     # the other side of it; the counts either side then differ by that voxel.
-    assert_close(counts, reference[:, 1], atol=2.0)
-    assert float(counts.sum()) == pytest.approx(reference[:, 1].sum(), rel=1e-4)
+    assert_close(counts, recorded[:, 1], atol=2.0)
+    assert float(counts.sum()) == pytest.approx(float(recorded[:, 1].sum()),
+                                                rel=1e-4)
 
 
 def test_parzen_splits_a_sample_between_two_bins():

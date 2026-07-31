@@ -194,16 +194,31 @@ copied or modified — and links against the EBTKS and LAPACK that ship with the
 installed MINC toolkit. Only the tests and `--backend legacy` need it.
 
 ```bash
-python3 -m pytest              # the whole suite, about 21 s
+python3 -m pytest              # the whole suite, about 9 s
 python3 -m pytest tests/test_spline.py         # one block
 python3 -m pytest -k "legacy"                  # everything, on the C++ backend
 ```
 
 The tests come in two kinds. The cases from `legacy/N3/testing/CMakeLists.txt` are
-re-expressed as comparisons: run the installed N3 program, run the Python, require
-agreement — those need the MINC toolkit on `PATH`. The per-block tests
-(`test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py`) compare
-the PyTorch block against the same code compiled into the CFFI shim.
+re-expressed as comparisons: what the installed N3 program answered, what the Python
+answers, require agreement. The per-block tests (`test_histogram.py`,
+`test_sharpen.py`, `test_spline.py`, `test_field.py`) compare the PyTorch block
+against the same code compiled into the CFFI shim.
+
+No test runs an N3 program. Those programs are deterministic, so their answers were
+recorded once into `tests/reference/` (4.9 MB) and are read from there — which keeps
+the suite fast, keeps it honest about whether a failure is yours or a different build
+of theirs, and lets it run wherever. `tests/inputs.py` holds the inputs they were
+given, so both sides build them the same way. To re-record:
+
+```bash
+python3 -m tests.regenerate_reference     # needs the MINC toolkit on PATH
+git diff --stat tests/reference           # empty if they still say the same thing
+```
+
+The only MINC program the suite itself needs is `mincconvert`, because the volumes in
+`legacy/N3/testing/` are gzipped MINC1. Without it the tests that need those volumes
+skip rather than fail.
 
 ### How close is it?
 

@@ -26,7 +26,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `legacy/N3/model_data/N3/` | ICBM/average-305 brain masks used by `-auto_mask` on Talairach-space input. |
 | `minc2-simple/` | Source checkout of the MINC2 binding (already installed). `minc2-simple/USAGE.md` is the Python API reference. |
 | `torch_n3/` | The port. `pipeline.py` is N3 itself; `blocks/` is the PyTorch implementation of each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O and geometry; `minc_tools.py` holds the two MINC utilities N3 leans on; `backends/legacy.py` wraps the original C++ through the CFFI shim in `_legacy/` and is now only an oracle. `backends.resolve("torch"\|"legacy")` switches the pipeline between them. |
-| `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons against the installed programs, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. |
+| `tests/` | `test_pipeline.py` is `legacy/N3/testing/CMakeLists.txt`'s cases, re-expressed as comparisons, run on both backends. `test_histogram.py`, `test_sharpen.py`, `test_spline.py`, `test_field.py` compare each PyTorch block against the same C++ through the shim. **No test runs an N3 program**: their answers are recorded in `tests/reference/legacy.npz` by `tests/regenerate_reference.py` (the only thing that shells out) and the inputs they were given live in `tests/inputs.py`, shared by both. Re-run the script and `git diff` should be empty. |
 
 ## The algorithm as the legacy code actually implements it
 
@@ -148,6 +148,17 @@ sharpen_hist -clobber -fwhm 0.15 -noise 0.01 -quiet h.txt h.sharp
 `h.txt` carries `# domain: <min_bin> <max_bin>` and two columns (bin centre, count);
 `h.sharp` is the two-column lookup table. Both are plain text, so they diff directly against
 tensors.
+
+For anything a *test* needs to compare against, put the case in
+`tests/regenerate_reference.py` instead of shelling out from the test — build the input in
+`tests/inputs.py` so both sides use the same one, run the script once, and read the answer
+back through the `legacy_output` fixture. Storage policy is in `tests/reference.py`: whole
+volumes at `float32`, small arrays at `float64`, and record only what the assertion looks at
+(the recovery test keeps the masked quarter of the volume, not all of it).
+
+One trap: a program that was handed a *file* saw its contents quantised, and modelling MINC's
+16-bit scaling in Python gets it wrong by a whole level. Round-trip through
+`inputs.as_stored()` instead, which both the script and the test call.
 
 ## Test tolerances
 

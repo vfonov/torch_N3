@@ -1,0 +1,16 @@
+{
+  "produced_by": "program: 2.5.01; libminc: 2.5.01; netcdf : 4.7.4 of Jul 29 2026 15:55:45 $; HDF5   : 1.12.1",
+  "values": {
+    "mincresample.chunk_shrink3_start": [
+      -72.0,
+      -126.0,
+      -90.0
+    ],
+    "mincresample.chunk_shrink3_step": [
+      9.0,
+      6.0,
+      6.0
+    ],
+    "mincstats.bimodal_threshold_chunk": 238347.4765
+  }
+}

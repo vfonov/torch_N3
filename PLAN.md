@@ -89,7 +89,14 @@ Exit criterion: `pytest tests/ -k stage1` green, and the Python pipeline reprodu
 **Progress: Stage 2 complete.** `torch_n3/blocks/` is the port; `torch_n3/backends/legacy.py`
 is now only an oracle. `backends.resolve("torch"|"legacy")` switches between them and the
 pipeline runs on either, so every test below exists in both variants. Importing
-`torch_n3.pipeline` no longer pulls in the CFFI extension. 84 tests pass in ~21 s.
+`torch_n3.pipeline` no longer pulls in the CFFI extension. 84 tests pass in ~9 s.
+
+The suite does not run the legacy programs either. They are deterministic, so
+`tests/regenerate_reference.py` ran them once and recorded the answers in
+`tests/reference/legacy.npz` (4.9 MB); `tests/inputs.py` holds the inputs, shared with
+the tests so that both sides ask the same question. Re-running the script when nothing
+has changed leaves `git diff` empty, which is the check that the recorded answers are
+still theirs.
 
 | Block | Module | Agreement with the legacy |
 |---|---|---|

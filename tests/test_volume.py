@@ -3,8 +3,8 @@
 import numpy as np
 import torch
 
-from tests.conftest import assert_close, span
-from torch_n3.volume import Volume, load_volume
+from tests.conftest import assert_close, requires_program, span
+from torch_n3.volume import Volume, load_volume, save_volume
 
 
 def test_load_puts_the_volume_in_standard_order(chunk):
@@ -14,33 +14,33 @@ def test_load_puts_the_volume_in_standard_order(chunk):
     np.testing.assert_allclose(chunk.start, [-72.0, -126.0, -90.0])
 
 
-def test_save_then_load_round_trips(workspace, chunk):
-    workspace.write("copy.mnc", chunk)
-    again = workspace.read("copy.mnc")
+def test_save_then_load_round_trips(tmp_path, chunk):
+    save_volume(str(tmp_path / "copy.mnc"), chunk, store_dtype="float64")
+    again = load_volume(str(tmp_path / "copy.mnc"))
 
     assert_close(again.data, chunk.data, atol=1e-9)
     np.testing.assert_allclose(again.step, chunk.step)
     np.testing.assert_allclose(again.start, chunk.start)
 
 
-def test_shrink_matches_the_legacy_estimation_grid(workspace, chunk):
-    """`ShrinkVolume` is `mincresample -nearest_neighbour` onto a coarser grid."""
+def test_shrink_matches_the_legacy_estimation_grid(legacy_output, chunk):
+    """`ShrinkVolume` is `mincresample -nearest_neighbour` onto a coarser grid.
+
+    ``nu_estimate_np_and_em.in:954`` picks the count and step and keeps the
+    start; the recorded run was given exactly those.
+    """
+    recorded = legacy_output["mincresample.chunk_shrink3"]
+
     shrunk = chunk.shrink(3)
-    source = workspace.write("chunk.mnc", chunk)
 
-    # nu_estimate_np_and_em.in:954 -- same step and count, keeping start.
-    lengths = [str(n) for n in reversed(shrunk.shape)]
-    steps = [repr(float(s)) for s in reversed(shrunk.step)]
-    workspace.run("mincresample", "-nearest_neighbour", "-clobber",
-                  "-nelements", *lengths, "-step", *steps, source, workspace.at("shrunk.mnc"))
-    reference = workspace.read("shrunk.mnc")
-
-    assert shrunk.shape == reference.shape
-    np.testing.assert_allclose(shrunk.step, reference.step)
-    np.testing.assert_allclose(shrunk.start, reference.start)
+    assert shrunk.shape == tuple(recorded.shape)
+    np.testing.assert_allclose(
+        shrunk.step, legacy_output.scalar("mincresample.chunk_shrink3_step"))
+    np.testing.assert_allclose(
+        shrunk.start, legacy_output.scalar("mincresample.chunk_shrink3_start"))
     # mincresample stores its result in the input's 12-bit type, so it can be
     # half a level off; the voxels it picked are what matters.
-    assert_close(shrunk.data, reference.data, atol=span(reference.data) / 4095)
+    assert_close(shrunk.data, recorded, atol=span(recorded) / 4095)
 
 
 def test_shrink_leaves_already_coarse_axes_alone():
@@ -53,18 +53,13 @@ def test_shrink_leaves_already_coarse_axes_alone():
     np.testing.assert_allclose(shrunk.step, [20.0, 4.0, 4.0])
 
 
-def test_resample_like_matches_resample_labels(workspace, chunk, model_mask):
+def test_resample_like_matches_resample_labels(legacy_output, chunk, model_mask):
     """The driver moves a mask onto the estimation grid with `resample_labels`."""
-    grid = chunk.shrink(4)
-    resampled = model_mask.resample_like(grid)
+    recorded = legacy_output["resample_labels.model_mask_on_chunk_shrink4"]
 
-    source = workspace.write("mask.mnc", model_mask, store_dtype="int16")
-    like = workspace.write("grid.mnc", grid)
-    workspace.run("resample_labels", "-clobber", "-quiet",
-                  "-resample", "-like %s" % like, source, workspace.at("resampled.mnc"))
+    resampled = model_mask.resample_like(chunk.shrink(4))
 
-    reference = workspace.read("resampled.mnc")
-    assert torch.equal(resampled.data != 0, reference.data != 0)
+    assert torch.equal(resampled.data != 0, recorded != 0)
 
 
 def test_resample_like_fills_outside_with_zero():
@@ -78,6 +73,7 @@ def test_resample_like_fills_outside_with_zero():
     assert not bool(resampled.data[4:].any())
 
 
+@requires_program("mincconvert")
 def test_gzipped_minc1_input_is_readable():
     """The test data is MINC1 and gzipped; minc2_simple reads neither directly."""
     volume = load_volume("legacy/N3/testing/block.mnc.gz")

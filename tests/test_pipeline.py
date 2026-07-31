@@ -4,8 +4,9 @@ The legacy suite mostly checks that its programs *run*; the one test with a
 numerical target is ``nu_reference_1``, which re-runs ``nu_estimate`` +
 ``nu_evaluate`` on ``brain.mnc.gz`` and requires the result to stay within
 ``1e-4`` relative RMS of ``brain_nu_ref.mnc.gz``.  Here every case is turned
-into a comparison against the installed programs instead, so that the Python
-pipeline has to reproduce them rather than merely not crash.
+into a comparison against what those programs answered -- recorded once by
+``tests/regenerate_reference.py`` -- so that the Python pipeline has to
+reproduce them rather than merely not crash.
 
 Each stage runs on both backends, so a failure says whether the port or the
 plumbing around it is at fault.
@@ -21,7 +22,9 @@ one reads it.  And the iteration amplifies: see
 import pytest
 import torch
 
+from tests import inputs
 from tests.conftest import assert_close, span
+from torch_n3 import backends
 from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, evaluate_field,
                                nu_correct, nu_estimate)
 from torch_n3.volume import Volume
@@ -38,123 +41,73 @@ def relative_rms(result, reference):
 # --------------------------------------------------------------- single stages
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_sharpen_matches_sharpen_volume(workspace, chunk, chunk_mask, backend):
+def test_sharpen_matches_sharpen_volume(legacy_output, chunk, chunk_mask,
+                                        backend):
     """`nu_sharpen_volume_1`: one pass of histogram sharpening."""
-    inside = chunk_mask.data != 0
-    log_volume = torch.log(chunk.data.clamp(min=1.0))
-    log_volume = torch.where(inside, log_volume, torch.zeros_like(log_volume))
-
-    source = workspace.write("log.mnc", chunk.like(log_volume))
-    mask = workspace.write("mask.mnc", chunk.like(inside.to(torch.float64)),
-                           store_dtype="int16")
-    workspace.run("sharpen_volume", "-parzen", "-bins", 200,
-                  "-fwhm", 0.15, "-noise", 0.01, "-clobber", "-quiet",
-                  mask, source, workspace.at("sharp.mnc"))
-    reference = workspace.read("sharp.mnc").data
-    reference = torch.where(inside, reference, torch.zeros_like(reference))
+    log_volume, inside = inputs.masked_log(chunk, chunk_mask)
+    recorded = legacy_output["sharpen_volume.chunk"]
+    recorded = torch.where(inside, recorded, torch.zeros_like(recorded))
 
     sharpened = _sharpen(log_volume, inside,
                          dict(DEFAULTS, bins=200, backend=backend))
 
     # sharpen_volume's output is a 16-bit MINC file spanning the mapped range.
-    assert_close(sharpened, reference, atol=span(reference[inside]) / 65535)
+    assert_close(sharpened, recorded, atol=span(recorded[inside]) / 65535)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_smooth_matches_spline_smooth(workspace, chunk, chunk_mask, backend):
+def test_smooth_matches_spline_smooth(legacy_output, chunk, chunk_mask, backend):
     """`spline_smooth -full_support -b_spline`, the field-smoothing stage."""
     inside = chunk_mask.data != 0
-    torch.manual_seed(3)
-    bumpy = (0.05 * torch.cos(torch.linspace(0, 6, chunk.data.numel(),
-                                             dtype=torch.float64))
-             ).reshape(chunk.shape) + 0.01 * torch.randn(chunk.shape,
-                                                         dtype=torch.float64)
-    bumpy = torch.where(inside, bumpy, torch.zeros_like(bumpy))
-
-    source = workspace.write("working.mnc", chunk.like(bumpy))
-    mask = workspace.write("mask.mnc", chunk.like(inside.to(torch.float64)),
-                           store_dtype="int16")
-    workspace.run("spline_smooth", "-full_support", "-clobber", "-quiet",
-                  "-distance", 200, "-b_spline", "-lambda", 1e-7,
-                  "-subsample", 1, "-mask", mask, source,
-                  workspace.at("residue.mnc"))
-    reference = workspace.read("residue.mnc").data
+    bumpy = inputs.smooth_bumps(chunk, inside)
+    recorded = legacy_output["spline_smooth.chunk"]
 
     smoothed = _smooth(bumpy, inside, chunk, dict(DEFAULTS, backend=backend))
 
-    assert_close(smoothed, reference, atol=span(reference) / 65535)
+    assert_close(smoothed, recorded, atol=span(recorded) / 65535)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_spline_evaluates_on_a_finer_grid_like_evaluate_field(
-        workspace, chunk, chunk_mask, backend):
+        legacy_output, chunk, chunk_mask, backend):
     """`nu_imp2field`: a spline fitted coarse, evaluated at full resolution.
 
     This is the round trip N3 makes through the ``.imp`` mapping file between
     ``nu_estimate`` and ``nu_evaluate``, and the reason the estimation can
-    afford to run on a coarse grid at all.
+    afford to run on a coarse grid at all.  The recorded answer came from
+    ``spline_smooth -compact`` followed by ``evaluate_field``.
     """
-    from torch_n3 import backends
-
     grid = chunk.shrink(4)
     inside = chunk_mask.data != 0
     coarse_inside = chunk_mask.resample_like(grid).data != 0
-
-    zz, yy, xx = torch.meshgrid(*[torch.arange(n, dtype=torch.float64)
-                                  for n in grid.shape], indexing="ij")
-    field = 1.0 + 0.01 * zz - 0.005 * yy + 0.002 * xx
+    field = inputs.tilted_plane(grid, offset=1.0, slopes=(0.01, -0.005, 0.002))
+    recorded = legacy_output["evaluate_field.chunk"]
 
     spline = backends.resolve(backend).BSplineField(grid, distance=200.0,
                                                     lam=1e-7)
     spline.fit(field, coarse_inside)
 
-    # The legacy route: write the field, fit a compact spline to it, evaluate.
-    source = workspace.write("field.mnc", grid.like(field))
-    coarse_mask = workspace.write("coarse_mask.mnc",
-                                  grid.like(coarse_inside.to(torch.float64)),
-                                  store_dtype="int16")
-    fine = workspace.write("fine.mnc", chunk)
-    fine_mask = workspace.write("fine_mask.mnc",
-                                chunk.like(inside.to(torch.float64)),
-                                store_dtype="int16")
-    workspace.run("spline_smooth", "-full_support", "-clobber", "-quiet",
-                  "-distance", 200, "-b_spline", "-lambda", 1e-7,
-                  "-subsample", 1, "-novolume", "-mask", coarse_mask,
-                  source, "-compact", workspace.at("field.imp"))
-    workspace.run("evaluate_field", "-clobber", "-mask", fine_mask,
-                  "-like", fine, workspace.at("field.imp"),
-                  workspace.at("evaluated.mnc"))
-    reference = workspace.read("evaluated.mnc").data
-
     evaluated = spline.evaluate_on(chunk)
     evaluated = torch.where(inside, evaluated, torch.zeros_like(evaluated))
 
-    assert_close(evaluated, reference, atol=span(reference) / 65535)
+    assert_close(evaluated, recorded, atol=span(recorded) / 65535)
 
 
 # ------------------------------------------------------------------ end to end
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("iterations,shrink,fwhm", [(1, 3, 0.2), (3, 4, 0.15)])
-def test_nu_correct_tracks_the_legacy_pipeline(workspace, chunk, chunk_mask,
+def test_nu_correct_tracks_the_legacy_pipeline(legacy_output, chunk, chunk_mask,
                                                iterations, shrink, fwhm,
                                                backend):
-    """`nu_correct_8`: the whole thing, against the installed `nu_correct`."""
-    source = workspace.write("chunk.mnc", chunk, store_dtype="int16")
-    mask = workspace.write("mask.mnc",
-                           chunk.like((chunk_mask.data != 0).to(torch.float64)),
-                           store_dtype="int16")
-    workspace.run("nu_correct", "-clobber", "-quiet", "-mapping_dir",
-                  workspace.at(""), "-fwhm", fwhm, "-shrink", shrink,
-                  "-stop", 0.001, "-iterations", iterations, "-mask", mask,
-                  source, workspace.at("nu.mnc"))
-    reference = workspace.read("nu.mnc").data
+    """`nu_correct_8`: the whole thing, against what `nu_correct` produced."""
+    recorded = legacy_output["nu_correct.chunk_i%d_s%d" % (iterations, shrink)]
 
     corrected = nu_correct(chunk, mask=chunk_mask, evaluation_mask=chunk_mask,
                            fwhm=fwhm, shrink=shrink, backend=backend,
                            iterations=(iterations,), stop=(0.001,))
 
-    assert relative_rms(corrected.data, reference) < 1e-3
+    assert relative_rms(corrected.data, recorded) < 1e-3
 
 
 def test_nu_estimate_recovers_a_planted_field():

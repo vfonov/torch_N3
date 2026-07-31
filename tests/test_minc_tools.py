@@ -1,43 +1,29 @@
-"""`torch_n3.minc_tools` against the MINC programs it stands in for."""
+"""`torch_n3.minc_tools` against the MINC programs it stands in for.
+
+Both comparisons use answers recorded from the real programs; see
+:mod:`tests.reference`.
+"""
 
 import torch
 
 from tests.conftest import assert_close
-from torch_n3 import blocks
 from torch_n3.minc_tools import apply_lut, bimodal_threshold
 
 
-def test_apply_lut_matches_minclookup(workspace, chunk, chunk_mask):
+def test_apply_lut_matches_minclookup(legacy_output):
     """Our continuous lookup is `minclookup -continuous`.
 
-    Built the way the pipeline builds it: a sharpened histogram of the masked
-    log volume, applied to every voxel.
+    The table and the intensities are the ones the program was given -- a few
+    thousand real voxels out of the masked log volume, spread across the
+    domain -- so this checks the interpolation rule and nothing else.
     """
-    inside = chunk_mask.data != 0
-    log_volume = torch.log(chunk.data.clamp(min=1.0))
-    log_volume = torch.where(inside, log_volume, torch.zeros_like(log_volume))
+    values = legacy_output["minclookup.values"]
+    table = legacy_output["minclookup.lut"]
+    value_range = tuple(float(v) for v in legacy_output["minclookup.range"])
 
-    value_range = blocks.histogram_range(log_volume[inside],
-                                         initial=(log_volume.max(),
-                                                  log_volume.min()))
-    counts = blocks.histogram(log_volume[inside], 200, value_range)
-    lut = blocks.sharpen_lut(counts, value_range, fwhm=0.15, noise=0.01)
+    mapped = apply_lut(values, table, value_range)
 
-    table = workspace.path / "table.txt"
-    with open(table, "w") as fp:
-        positions = torch.linspace(0.0, 1.0, lut.numel(), dtype=torch.float64)
-        for position, value in zip(positions, lut):
-            fp.write("%.15g  %.15g\n" % (position, value))
-
-    source = workspace.write("log.mnc", chunk.like(log_volume))
-    workspace.run("minclookup", "-continuous", "-clobber",
-                  "-range", repr(value_range[0]), repr(value_range[1]),
-                  "-lookup_table", table, source, workspace.at("lut.mnc"))
-
-    from_binary = workspace.read("lut.mnc").data
-    from_python = apply_lut(log_volume, lut, value_range)
-
-    assert_close(from_python, from_binary, atol=1e-9)
+    assert_close(mapped, legacy_output["minclookup.mapped"], atol=1e-9)
 
 
 def test_apply_lut_clamps_outside_the_domain():
@@ -50,15 +36,14 @@ def test_apply_lut_clamps_outside_the_domain():
     assert_close(mapped, [10.0, 10.0, 20.0, 30.0, 30.0], atol=1e-12)
 
 
-def test_bimodal_threshold_matches_mincstats(workspace, chunk):
+def test_bimodal_threshold_matches_mincstats(legacy_output, chunk):
     """`nu_evaluate`'s automatic mask comes from `mincstats -biModalT`."""
-    source = workspace.write("chunk.mnc", chunk)
-    from_binary = float(workspace.run("mincstats", "-quiet", "-biModalT", source))
+    recorded = legacy_output.scalar("mincstats.bimodal_threshold_chunk")
 
-    from_python = bimodal_threshold(chunk.data)
+    threshold = bimodal_threshold(chunk.data)
 
     # mincstats prints four decimals of a value in the hundreds of thousands.
-    assert abs(from_python - from_binary) < 1e-3 * max(1.0, abs(from_binary))
+    assert abs(threshold - recorded) < 1e-3 * max(1.0, abs(recorded))
 
 
 def test_bimodal_threshold_separates_two_clusters():

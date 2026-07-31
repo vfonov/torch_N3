@@ -1,18 +1,24 @@
-"""Shared fixtures: the legacy test data, and a way to run the legacy programs.
+"""Shared fixtures: the legacy test data, and what the legacy programs said.
 
 Most tests here are the ones ``legacy/N3/testing/CMakeLists.txt`` defines,
-re-expressed as comparisons: run the installed N3 program, run our Python, and
-require the two to agree.
+re-expressed as comparisons -- but against *recorded* answers rather than a
+live subprocess.  The programs are deterministic, so the answers are recorded
+once by ``python3 -m tests.regenerate_reference`` and read back through the
+``legacy_output`` fixture; see :mod:`tests.reference` for why.
+
+What the suite still needs from the MINC toolkit is ``mincconvert``, because
+the volumes in ``legacy/N3/testing/`` are gzipped MINC1 and ``minc2_simple``
+reads neither.  Without it, the tests that need those volumes skip.
 """
 
 import os
 import shutil
-import subprocess
 
 import pytest
 import torch
 
-from torch_n3.volume import load_volume, save_volume
+from tests import reference
+from torch_n3.volume import load_volume
 
 TESTING = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "legacy", "N3", "testing")
@@ -22,18 +28,16 @@ TESTING = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 MODEL_MASK = os.path.join("/opt/minc/1.9.18.13/share/N3",
                           "icbm_avg_152_t1_tal_nlin_symmetric_VI_mask.mnc.gz")
 
+#: Reading the test data at all needs this one program.
+CONVERTER = "mincconvert"
+
 
 def legacy_data(name):
     return os.path.join(TESTING, name)
 
 
 def program_available(name):
-    """Whether ``name`` can be run.
-
-    Most of this suite needs the MINC toolkit and says so by failing.  These
-    two are for the comparisons that are worth having when the original N3
-    programs happen to be installed, and worth skipping when they are not.
-    """
+    """Whether ``name`` can be run."""
     return shutil.which(name) is not None
 
 
@@ -46,9 +50,9 @@ def requires_program(name):
 def assert_close(actual, expected, atol=0.0, rtol=0.0):
     """Fail unless two arrays agree, whatever they arrived as.
 
-    Values reach these tests as tensors, as ``numpy`` arrays read back out of
-    MINC files, or as text loaded from a legacy program's output; this puts
-    them on the same footing first.
+    Values reach these tests as tensors, as ``numpy`` arrays out of the
+    recorded reference, or as plain Python lists; this puts them on the same
+    footing first.
     """
     torch.testing.assert_close(torch.as_tensor(actual, dtype=torch.float64),
                                torch.as_tensor(expected, dtype=torch.float64),
@@ -62,70 +66,46 @@ def span(values):
 
 
 @pytest.fixture(scope="session")
+def legacy_output():
+    """What the original N3 programs answered, recorded once."""
+    return reference.load()
+
+
+@pytest.fixture(scope="session")
 def chunk():
     """The small 91x52x50 volume -- fast enough for per-block tests."""
-    return load_volume(legacy_data("chunk.mnc.gz"))
+    return _testing_volume("chunk.mnc.gz")
 
 
 @pytest.fixture(scope="session")
 def chunk_mask():
-    return load_volume(legacy_data("chunk_mask.mnc.gz"))
+    return _testing_volume("chunk_mask.mnc.gz")
 
 
 @pytest.fixture(scope="session")
 def brain():
-    return load_volume(legacy_data("brain.mnc.gz"))
+    return _testing_volume("brain.mnc.gz")
 
 
 @pytest.fixture(scope="session")
 def brain_reference():
     """``nu_correct``'s own output, kept as the regression target."""
-    return load_volume(legacy_data("brain_nu_ref.mnc.gz"))
+    return _testing_volume("brain_nu_ref.mnc.gz")
 
 
 @pytest.fixture(scope="session")
 def model_mask():
     if not os.path.exists(MODEL_MASK):
         pytest.skip("average brain mask not installed: %s" % MODEL_MASK)
-    return load_volume(MODEL_MASK)
+    return _load(MODEL_MASK)
 
 
-@pytest.fixture
-def workspace(tmp_path):
-    """Somewhere to exchange MINC files with the legacy programs."""
-    return Workspace(tmp_path)
+def _testing_volume(name):
+    return _load(legacy_data(name))
 
 
-class Workspace:
-    """A temporary directory plus the verbs the tests need there.
-
-    File arguments are always absolute: several of the legacy programs derive
-    their own temporary file names from the output path, and do not
-    consistently resolve a relative one against the working directory.
-    """
-
-    def __init__(self, path):
-        self.path = path
-
-    def at(self, name):
-        """The absolute path of ``name`` inside the workspace."""
-        return str(self.path / name)
-
-    def write(self, name, volume, like=None, store_dtype="float64"):
-        """Put ``volume`` on disk where a legacy program can read it."""
-        target = self.at(name)
-        save_volume(target, volume, like=like, store_dtype=store_dtype)
-        return target
-
-    def read(self, name):
-        return load_volume(self.at(name))
-
-    def run(self, *command):
-        """Run an installed N3/MINC program, failing loudly if it does."""
-        result = subprocess.run([str(c) for c in command],
-                                cwd=str(self.path), capture_output=True, text=True)
-        if result.returncode != 0:
-            raise AssertionError("%s failed (%d)\n%s\n%s"
-                                 % (command[0], result.returncode,
-                                    result.stdout[-2000:], result.stderr[-2000:]))
-        return result.stdout
+def _load(path):
+    if not program_available(CONVERTER):
+        pytest.skip("%s is not on PATH: the test volumes are gzipped MINC1"
+                    % CONVERTER)
+    return load_volume(path)
