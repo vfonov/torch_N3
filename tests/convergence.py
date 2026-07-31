@@ -65,6 +65,7 @@ See ``README.md`` for how to build against a different LAPACK, and
 import argparse
 import os
 import platform
+import re
 import subprocess
 import sys
 
@@ -157,30 +158,68 @@ def _linked_libraries():
     """The LAPACK/BLAS the CFFI extension actually resolved against.
 
     Best effort, and the reason a reported table is worth anything: the
-    library named in the build is not always the one the loader finds.  A
-    statically linked LAPACK will not show up here at all, which is itself
-    worth reporting -- say so by hand if you built that way.
+    library named in the build is not always the one the loader finds.
+
+    Only ``N3_LAPACK_LIBS`` overrides give the shim a LAPACK/BLAS dependency
+    of its own -- the default build (see ``build_legacy.py``) links none at
+    all and instead leaves ``dgemm_``/``dsysv_`` undefined, resolved at
+    import time against whatever PyTorch already loaded into the process. So:
+    look for a direct dependency first (an explicit override, e.g. MKL); if
+    there is none, tell the shared-with-PyTorch default apart from an
+    ``N3_LAPACK_LIBS="EBTKS"`` build -- which also shows no dependency here,
+    because it is a static archive -- by whether ``dsysv_`` is *defined* in
+    the shim's own symbol table (statically linked in) or still undefined
+    (left for PyTorch to resolve). Only in the latter case did PyTorch's
+    choice actually run.
     """
     from torch_n3._legacy import _n3legacy
 
     path = getattr(_n3legacy, "__file__", None)
-    if path is None:
-        return None
-    if sys.platform == "darwin":
-        command = ["otool", "-L", path]
-    else:
-        command = ["ldd", path]
+    wanted = ("lapack", "blas", "mkl", "accelerate", "flexi")
+    if path is not None:
+        command = ["otool", "-L", path] if sys.platform == "darwin" else ["ldd", path]
+        try:
+            output = subprocess.run(command, capture_output=True, text=True,
+                                    check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            output = ""
+        found = [line.split()[0].strip()
+                 for line in output.splitlines()
+                 if any(name in line.lower() for name in wanted)]
+        if found:
+            return ", ".join(found)
+
+    if path is not None and _defines_own_lapack(path):
+        return "no dynamic LAPACK (static?)"
+
+    config = torch.__config__.show()
+    shared = re.findall(r"\b((?:BLAS|LAPACK)_INFO=\S+?),?\b", config)
+    if shared:
+        return "%s (via PyTorch, shim links none of its own)" % ", ".join(shared)
+    return "no dynamic LAPACK (static?)"
+
+
+def _defines_own_lapack(path):
+    """Whether ``dsysv_`` is defined in ``path`` rather than left undefined.
+
+    Distinguishes a static LAPACK linked into the shim (e.g.
+    ``N3_LAPACK_LIBS="EBTKS"``) from the shared-with-PyTorch default, which
+    otherwise both look identical to :func:`_linked_libraries`'s first check
+    -- neither has a dynamic dependency to name.
+    """
+    symbol = "_dsysv_" if sys.platform == "darwin" else "dsysv_"
     try:
-        output = subprocess.run(command, capture_output=True, text=True,
+        output = subprocess.run(["nm", path], capture_output=True, text=True,
                                 check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        return None
-
-    wanted = ("lapack", "blas", "mkl", "accelerate", "flexi")
-    found = [line.split()[0].strip()
-             for line in output.splitlines()
-             if any(name in line.lower() for name in wanted)]
-    return ", ".join(found) if found else "no dynamic LAPACK (static?)"
+        return False
+    for line in output.splitlines():
+        fields = line.split()
+        if fields and fields[-1] == symbol:
+            # nm prints "<address> <type> <name>"; undefined symbols have no
+            # address and type "U" (or "u").
+            return len(fields) == 3 and fields[-2].upper() != "U"
+    return False
 
 
 def _parse(argv):

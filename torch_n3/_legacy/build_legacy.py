@@ -6,9 +6,11 @@ Run directly to (re)build in place::
 
 The extension compiles the sources vendored under ``n3/`` and ``ebtks/`` --
 byte-for-byte copies of the files from ``legacy/N3/src`` and ``legacy/EBTKS``
-that are actually needed, see the ``README.md`` in each -- and links nothing
-but the system LAPACK/BLAS.  No MINC toolkit, no libminc2, no libEBTKS, and
-neither original checkout is required.
+that are actually needed, see the ``README.md`` in each -- and by default
+links no LAPACK/BLAS of its own at all: it shares PyTorch's, the same way a
+PyTorch C++ extension would (see the ``LAPACK_LIBS`` comment below for why).
+No MINC toolkit, no libminc2, no libEBTKS, and neither original checkout is
+required.
 
 ``compat/`` supplies the three MINC headers the legacy sources include
 (``volume_io.h``, ``time_stamp.h``, ``ParseArgv.h``) so that they can stay
@@ -32,6 +34,11 @@ BUILD_DIR = os.path.join(HERE, "build")
 # N3 and EBTKS both generate config.h with autoconf/cmake.  Between them the
 # vendored sources read only these, so we generate one rather than configuring
 # either legacy build.  Everything named here is unconditional on Linux.
+#
+# <malloc.h> is the one exception: it exists on Linux but not on macOS (whose
+# malloc/free/realloc come from <stdlib.h>, already included everywhere that
+# needs them), and every use in the vendored sources is already guarded by
+# `#ifdef HAVE_MALLOC_H` for exactly this reason -- so leave it unset there.
 CONFIG_H = """\
 #ifndef N3_SHIM_CONFIG_H
 #define N3_SHIM_CONFIG_H
@@ -40,7 +47,7 @@ CONFIG_H = """\
 #define HAVE_MKSTEMP 1
 #define HAVE_DIRENT_H 1
 #define HAVE_FCNTL_H 1
-#define HAVE_MALLOC_H 1
+%(HAVE_MALLOC_H)s
 #define HAVE_MEMORY_H 1
 #define HAVE_STDLIB_H 1
 #define HAVE_STRING_H 1
@@ -50,7 +57,7 @@ CONFIG_H = """\
 #define HAVE_SYS_WAIT_H 1
 #define HAVE_UNISTD_H 1
 #endif
-"""
+""" % {"HAVE_MALLOC_H": "" if sys.platform == "darwin" else "#define HAVE_MALLOC_H 1"}
 
 # Likewise version.h, normally produced from legacy/N3/include/version.h.in.
 # Only sharpen_hist's argument parser uses it, and only to print a banner.
@@ -113,7 +120,44 @@ SHIM_SOURCES = [
 #: To link EBTKS's own bundled f2c'd LAPACK instead of a system one, point
 #: these at the EBTKS archive: N3_LAPACK_LIBS="EBTKS".  It resolves after our
 #: own objects, so only the clapack members are taken from it.
-LAPACK_LIBS = os.environ.get("N3_LAPACK_LIBS", "lapack blas").split()
+#:
+#: Left unset, the default is to link *no* LAPACK/BLAS at all and leave
+#: n3_shim's calls to it (dgemm_, dsysv_, ...) as undefined symbols, resolved
+#: at import time against whatever is already loaded in the process -- which
+#: this package's own entry point guarantees is PyTorch's.  ``torch/__init__.py``
+#: dlopens its own dependency library with ``RTLD_GLOBAL`` for exactly this
+#: (see its "Note [Global dependencies]"), specifically so that other native
+#: extensions can share its MKL/Accelerate/OpenBLAS instead of linking a
+#: second copy.  That second copy is a real failure mode, not a hypothetical
+#: one: on macOS, a conda or Homebrew environment's own liblapack.dylib is
+#: usually a symlink to an OpenBLAS build with its own bundled libomp.dylib,
+#: and PyTorch's wheel bundles a *different* libomp.dylib -- two copies of
+#: LLVM's OpenMP runtime loaded into one process is what aborts (or, forced
+#: past that with ``KMP_DUPLICATE_LIB_OK``, segfaults instead). Riding on
+#: PyTorch's own BLAS sidesteps that entirely, on any platform, without this
+#: file having to know what PyTorch chose.
+#:
+#: This relies on two things holding, both already true of every documented
+#: entry point (``torch_n3.backends.legacy`` imports ``torch`` before the
+#: shim, and so does every test): ``torch`` (or anything else providing the
+#: same symbols, e.g. ``numpy``) must already be imported by the time a
+#: LAPACK-touching call happens, not merely before this extension is built;
+#: and the platform's default linker has to permit undefined symbols in a
+#: shared object, which is the ELF default and is macOS's default for Python
+#: extensions specifically (``-undefined dynamic_lookup``, already in
+#: ``sysconfig``'s ``LDSHARED``) -- ``-Wl,--allow-shlib-undefined`` below is
+#: a no-op where that already holds and a safety net where a hardened
+#: toolchain's default ``LDFLAGS`` narrowed it.
+_LAPACK_LIBS_ENV = os.environ.get("N3_LAPACK_LIBS")
+if _LAPACK_LIBS_ENV is not None:
+    LAPACK_LIBS = _LAPACK_LIBS_ENV.split()
+    LAPACK_EXTRA_LINK_ARGS = []
+elif sys.platform == "darwin":
+    LAPACK_LIBS = []
+    LAPACK_EXTRA_LINK_ARGS = []
+else:
+    LAPACK_LIBS = []
+    LAPACK_EXTRA_LINK_ARGS = ["-Wl,--allow-shlib-undefined"]
 LAPACK_LIB_DIRS = [d for d in os.environ.get("N3_LAPACK_LIB_DIRS", "").split(os.pathsep)
                    if d]
 
@@ -156,6 +200,7 @@ def build(verbose=True):
         ],
         library_dirs=LAPACK_LIB_DIRS,
         libraries=LAPACK_LIBS,
+        extra_link_args=LAPACK_EXTRA_LINK_ARGS,
         define_macros=[
             ("HAVE_CONFIG_H", "1"),
             ("USE_COMPMAT", "1"),

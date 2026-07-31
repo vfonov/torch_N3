@@ -363,9 +363,12 @@ The clearest demonstration of all that, and a cautionary tale.
 The spline fit solves normal equations with a condition number around `1e13` —
 at the default 200 mm the knots are further apart than the volume is wide — and
 it calls LAPACK's `dsysv` to do it. The shim used to link `libEBTKS.a`, which
-bundles its own f2c'd LAPACK. It now compiles vendored sources and links the
+bundles its own f2c'd LAPACK. It then compiled vendored sources and linked the
 **system** LAPACK/BLAS (OpenBLAS here), so that it needs nothing from the MINC
-toolkit. Same object files, same inputs; the only difference is which `dsysv`.
+toolkit; the measurements below are from that build. It now links no LAPACK of
+its own by default at all, and instead shares PyTorch's -- see "Building
+against a different LAPACK" below for why. Same object files, same inputs;
+the only difference is which `dsysv`.
 
 At block level the swap is nothing. Fitting the default 200 mm spline to a
 tilted plane on `chunk.mnc`, the two builds differ by:
@@ -446,8 +449,25 @@ fell on.
 
 #### Building against a different LAPACK
 
-The extension links `-llapack -lblas` by default. Two environment variables
-override that, and both are read at build time:
+By default the extension links no LAPACK/BLAS of its own at all: `dgemm_`,
+`dsysv_` and the rest are left as undefined symbols, resolved at import time
+against whatever is already loaded in the process. Every entry point imports
+`torch` before the shim, and PyTorch always loads its own dependency library
+with `RTLD_GLOBAL` (see its `__init__.py`, "Note [Global dependencies]") for
+exactly this kind of sharing -- so in practice this means the shim always
+rides on **PyTorch's own BLAS**, not a second one this package chose. That
+matters on macOS in particular: a conda or Homebrew environment's own
+`liblapack.dylib` is typically a symlink to an OpenBLAS build with its own
+bundled `libomp.dylib`, and PyTorch's wheel bundles a *different*
+`libomp.dylib` -- linking that OpenBLAS directly, the way `-llapack -lblas`
+used to, loads two copies of LLVM's OpenMP runtime into one process, which
+aborts (or, forced past that with `KMP_DUPLICATE_LIB_OK`, segfaults). Sharing
+PyTorch's avoids that on any platform, without this build needing to know
+which BLAS vendor PyTorch chose.
+
+Two environment variables give the shim an explicit LAPACK/BLAS dependency of
+its own again, overriding the default -- for comparing against a specific
+build, the way the table above does. Both are read at build time:
 
 ```bash
 rm -rf torch_n3/_legacy/build          # cffi will not relink without this
@@ -464,8 +484,12 @@ N3_LAPACK_LIBS="EBTKS" N3_LAPACK_LIB_DIRS="$MINC_TOOLKIT/lib" \
     python3 torch_n3/_legacy/build_legacy.py
 ```
 
-Without rebuilding, on Linux, `LD_PRELOAD` also works, because the default build
-resolves `liblapack.so.3` dynamically:
+Without rebuilding, `LD_PRELOAD` should still let you substitute a LAPACK on
+Linux: preloaded libraries are given first claim on the process's global
+symbol scope, ahead of whatever `torch` loads afterwards, which is what the
+default build now resolves `dgemm_`/`dsysv_` against instead of a dependency
+of its own. Unverified on an actual Linux build past that reasoning --
+confirm it with the `shim links:` line below before trusting it:
 
 ```bash
 LD_PRELOAD=/path/to/other/liblapack.so.3 python3 -m tests.convergence
