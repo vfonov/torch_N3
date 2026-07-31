@@ -15,11 +15,45 @@ from torch_n3.pipeline import DEFAULTS, evaluate_field, nu_estimate, nu_evaluate
 from torch_n3.volume import load_volume, save_volume
 
 
+#: Shown after the options.  ``--distance`` and ``--lambda`` between them set
+#: one thing -- how much the field is allowed to bend -- and changing either
+#: alone is the commonest way to get a worse answer than the defaults give.
+SMOOTHNESS_NOTE = """\
+how --distance and --lambda interact:
+
+  They are two halves of one setting.  --distance decides how many
+  coefficients describe the field; --lambda decides how much bending is
+  allowed between them.  Halve the spacing without raising the penalty and
+  the extra coefficients are spent following tissue contrast, which comes
+  back as field that was never there.
+
+  Non-uniformity left behind after correcting a volume with a known 20%
+  field planted on it, over both knobs (lower is better):
+
+                                         --distance
+      --lambda           200 mm    100 mm     50 mm
+      1e-7 (default)      0.31%     0.61%     1.51%
+      1e-6                0.13%     0.22%     1.01%
+      1e-5                0.33%     0.17%     0.25%
+      1e-4                0.85%     0.54%     0.35%
+
+  So: roughly a decade of --lambda per halving of --distance.  At 50 mm and
+  the default 1e-7 the correction leaves the volume further from the truth
+  than it started -- and the same spacing at 1e-4 is fine.
+
+  Measured on one synthetic field (tests/test_field_recovery.py), which is
+  smoother than a real coil profile.  Read it as the shape of the trade-off,
+  not as a table to tune from.
+"""
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="torch_n3",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Remove the smooth intensity non-uniformity from an MRI "
-                    "volume (N3, Sled/Zijdenbos/Evans 1998).")
+                    "volume (N3, Sled/Zijdenbos/Evans 1998).",
+        epilog=SMOOTHNESS_NOTE)
     parser.add_argument("input", help="MINC volume to correct")
     parser.add_argument("output", help="where to write the corrected volume")
 
@@ -34,7 +68,9 @@ def build_parser():
     protocol = parser.add_argument_group(
         "protocol", "defaults are what `nu_correct` uses with no options")
     protocol.add_argument("--distance", type=float, default=DEFAULTS["distance"],
-                          help="B-spline knot spacing in mm (default: %(default)s)")
+                          help="B-spline knot spacing in mm, the scale below "
+                               "which the field cannot vary; raise --lambda "
+                               "with it if you lower this (default: %(default)s)")
     protocol.add_argument("--fwhm", type=float, default=DEFAULTS["fwhm"],
                           help="assumed histogram blur (default: %(default)s)")
     protocol.add_argument("--noise", type=float, default=DEFAULTS["noise"],
@@ -45,7 +81,9 @@ def build_parser():
                           help="estimation-grid coarsening (default: %(default)s)")
     protocol.add_argument("--lambda", dest="lam", type=float,
                           default=DEFAULTS["lam"],
-                          help="spline regularization (default: %(default)s)")
+                          help="penalty on the field's bending energy; about a "
+                               "decade more per halving of --distance, see the "
+                               "note below (default: %(default)s)")
     protocol.add_argument("--iterations", type=int, nargs="+",
                           default=list(DEFAULTS["iterations"]),
                           help="iteration count, one per stopping stage")

@@ -25,14 +25,20 @@ from torch_n3.minc_tools import apply_lut, bimodal_threshold
 #: What ``nu_correct`` passes down when given no options
 #: (``nu_estimate.in:418-438``, ``nu_estimate_np_and_em.in:1537-1560``).
 DEFAULTS = dict(
-    distance=200.0,     # B-spline knot spacing, mm -- the main smoothness knob
+    distance=200.0,     # B-spline knot spacing, mm -- the main smoothness knob,
+                        # paired with `lam` below
     fwhm=0.15,          # width of the blur assumed in the histogram, log units
     noise=0.01,         # Wiener constant of the deconvolution
     bins=200,           # histogram bins
     iterations=(50,),   # per stopping stage
     stop=(0.001,),      # per stopping stage
     shrink=4,           # estimation runs on a grid this many times coarser
-    lam=1e-7,           # B-spline bending-energy weight
+    lam=1e-7,           # B-spline bending-energy weight.  Together with
+                        # `distance` this sets how much the field may bend, so
+                        # the two move together: about a decade more `lam` per
+                        # halving of `distance`.  Lowering `distance` alone
+                        # lets the fit follow tissue contrast instead of the
+                        # field -- see tests/test_field_recovery.py.
     subsample=1,        # use every n-th voxel when fitting the spline
     background=1.0,     # voxels at or below this are never part of the mask
     parzen=True,
