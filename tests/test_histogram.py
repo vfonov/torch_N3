@@ -64,11 +64,10 @@ def test_counts_match_the_volume_hist_binary(legacy_output, chunk, chunk_mask):
         selected, initial=(chunk.data.max(), chunk.data.min()))
     counts = blocks.histogram(selected, 200, value_range)
 
+    # volume_hist writes both columns with "%lf", so six decimals is the last
+    # digit it reports and there is nothing finer to agree to.
     assert_close(blocks.bin_centers(200, value_range), recorded[:, 0], atol=1e-6)
-    # volume_hist reads the volume through volume_io, which rescales it onto a
-    # single grid for the whole file, so a voxel near a bin edge can land on
-    # the other side of it; the counts either side then differ by that voxel.
-    assert_close(counts, recorded[:, 1], atol=2.0)
+    assert_close(counts, recorded[:, 1], atol=1e-6)
     assert float(counts.sum()) == pytest.approx(float(recorded[:, 1].sum()),
                                                 rel=1e-4)
 

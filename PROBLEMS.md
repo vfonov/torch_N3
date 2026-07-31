@@ -1,7 +1,8 @@
 # Known problems
 
 Weak spots in this repository's test suite, written down so they are visible
-rather than discovered. Audited 2026-07-31, at commit `dde3099`.
+rather than discovered. Audited 2026-07-31, at commit `dde3099`; §2 fixed the
+same day.
 
 The rule these are measured against is in [CLAUDE.md](CLAUDE.md#test-tolerances):
 a threshold states what the code is *required* to do, and is not the measured
@@ -34,20 +35,25 @@ principled bound exists it is already used and should be preferred: the 16-bit
 quantum of the file a legacy program wrote (`span(reference) / 65535`), the
 12-bit one (`/ 4095`), the six decimals `%lf` prints (`1e-6`).
 
-## 2. A bound that is far too loose
+## 2. A bound that was far too loose — fixed 2026-07-31
 
-`test_histogram.py::test_counts_match_the_volume_hist_binary` compares against
+`test_histogram.py::test_counts_match_the_volume_hist_binary` compared against
 `volume_hist` with `atol=2.0`, justified in a comment by "a voxel near a bin
 edge can land on the other side of it, and the counts either side then differ
 by that voxel".
 
-**That does not happen.** The measured maximum difference is `4.9e-7`. The
-bound is four million times looser than it needs to be, so the assertion
-currently tests almost nothing — the histogram could be badly wrong and still
-pass. It should be about `1e-6`, and the comment should go.
+That does not happen: the measured maximum difference is `4.9e-7`. The bound
+was four million times looser than it needed to be, so the assertion tested
+almost nothing — the histogram could have been badly wrong and still passed.
 
-An over-loose bound is a defect in the same way a moved one is: it is a test
-that has stopped asking a question.
+Now `1e-6`, which is not a fitted number: `volume_hist` writes both of its
+columns with `%lf`, so six decimals is the last digit it reports and there is
+nothing finer to agree to. The same bound already applied to the bin centres
+in the line above. Both now sit at 49% of it.
+
+Kept here rather than deleted, because an over-loose bound is a defect in the
+same way a moved one is — a test that has stopped asking a question — and the
+record of one having been shipped is worth as much as the fix.
 
 ## 3. Bounds that are tight enough to flake
 
@@ -121,7 +127,7 @@ Regenerate with the script in the session log, or by hand; these are from
 comparison                                 measured    bound       of bound
 histogram parzen=True vs shim              4.5e-11     1.0e-09       4.5%
 histogram parzen=False vs shim             0.0e+00     1.0e-09       0.0%
-histogram vs volume_hist (counts)          4.9e-07     2.0e+00       0.0%   <- §2
+histogram vs volume_hist (counts)          4.9e-07     1.0e-06      49.5%   (was 2.0)
 bin centres vs volume_hist                 5.0e-07     1.0e-06      49.9%
 sharpen_lut vs shim                        3.2e-14     1.0e-11       0.3%
 sharpen_lut vs sharpen_hist                5.0e-07     1.0e-06      49.9%
