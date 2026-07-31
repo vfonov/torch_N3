@@ -29,6 +29,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `torch_n3/_legacy/n3/` | The N3 sources the shim compiles, vendored byte for byte from `legacy/N3/src` (see its `README.md`) so the legacy backend builds without an N3 checkout. **Do not modify** — they are the oracle. Everything below still cites `legacy/N3/src` as the *source of truth*; for the files listed there, the two are the same bytes. |
 | `torch_n3/_legacy/ebtks/` | Likewise EBTKS, vendored from `legacy/EBTKS`: all headers, seven `.cc` files, no `clapack/`. The build links the **system** LAPACK/BLAS instead — the one thing the extension still needs from outside. What that swap costs is measured in `README.md`; it is not nothing. |
 | `torch_n3/_legacy/compat/` | Stand-ins for `<volume_io.h>`, `<time_stamp.h>` and `<ParseArgv.h>`, placed first on the include path so that `correctField.cc` and `args.cc` compile **unmodified** without libminc2. `smooth()` does its whole solve on flat `float`/`char` arrays; volume_io was only ever the marshalling at its edges. |
+| `tests/margins.py`, `tests/convergence.py` | Neither is a test; both measure and print. `python3 -m tests.margins` prints `PROBLEMS.md`'s table — where every comparison sits against its bound. `python3 -m tests.convergence` prints where the two backends stop agreeing as iterations grow, which is a property of the machine's LAPACK rather than of this code; run it on any new platform before trusting an end-to-end number there. |
 | `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/data/brain_nu_ref_legacy.mnc` | Not one of N3's files: this pipeline's own output on `brain.mnc` with the legacy blocks, under `inputs.PLATFORM_PROTOCOL`, checked in so another machine/BLAS/device can be held to it (`tests/test_reproducibility.py`). Written by the regeneration script. Regenerating churns MINC's `ident` header attribute; the voxel data is reproducible. |
@@ -284,6 +285,14 @@ keep trusting a table by hand.
   either: it moved from the sixth to the second when the shim switched to the system
   LAPACK, on a change of 3.1e-11 in the fitted field. See `README.md` on that. The same
   step appears between CPU and GPU with no LAPACK change at all, on the third.
+- **Measure the flip, do not assume it.** `python3 -m tests.convergence` sweeps the
+  iteration count and reports where agreement is lost, along with the LAPACK the extension
+  actually resolved against. Run it before raising `PLATFORM_PROTOCOL`, before believing an
+  end-to-end number on an unfamiliar machine, and after anything that touches the spline or
+  the histogram. `N3_LAPACK_LIBS` / `N3_LAPACK_LIB_DIRS` rebuild the shim against a
+  different LAPACK if you want both columns; `README.md` has the recipes. Note that
+  `PLATFORM_PROTOCOL` is at 1 with **no margin** — the smallest cliff seen is 2 — so any
+  increase needs this run on every platform that matters, not just one.
 - **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
   script driving separate executables, which can only talk through files. The `legacy`
   *backend* here is those same C++ routines called through the CFFI shim, on float64

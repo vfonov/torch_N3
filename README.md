@@ -410,6 +410,87 @@ The same knife-edge shows up without changing LAPACK at all: the same `torch`
 code on a CPU and on a GPU agrees to `6.3e-11` after one iteration and `1.0e-10`
 after two, then parts company at `1.17e-3` on the third.
 
+### Running this experiment on your own LAPACK
+
+Everything above is one machine's answer. If you are packaging this, or moving
+it to a cluster, the number you want is **where your own cliff falls** — because
+`tests/inputs.py::PLATFORM_PROTOCOL` has to stay below the smallest cliff of any
+platform this is expected to run on, and it is currently at 1 with no margin.
+
+```bash
+python3 -m tests.convergence                      # legacy vs torch, 1..6 iterations
+python3 -m tests.convergence --device cuda        # and CPU vs GPU
+python3 -m tests.convergence --volume chunk       # 20x smaller, just checks it runs
+python3 -m tests.convergence --max-iterations 10
+```
+
+It prints the platform, the LAPACK the extension actually resolved against, and
+one row per comparison:
+
+```
+platform:   Linux-6.17.0-35-generic-x86_64-with-glibc2.39, python 3.12.3, torch 2.13.0+cu130
+shim links: liblapack.so.3, libblas.so.3, libopenblas.so.0
+
+relative RMS                     1          2          3          4          5          6
+legacy vs torch           5.52e-08    0.00117    0.00212    0.00169    0.00054   0.000507
+                       ^ cliff at 2 iterations (5.52e-08 -> 0.00117)
+torch cpu vs cuda          6.3e-11   9.97e-11    0.00117   0.000214    0.00107   8.29e-05
+                       ^ cliff at 3 iterations (6.3e-11 -> 0.00117)
+```
+
+**Report the cliff, not the numbers.** The values before it are only
+interesting for being small; the ones after it are not comparable between
+machines at all — they record which side of a rounding boundary a single voxel
+fell on.
+
+#### Building against a different LAPACK
+
+The extension links `-llapack -lblas` by default. Two environment variables
+override that, and both are read at build time:
+
+```bash
+rm -rf torch_n3/_legacy/build          # cffi will not relink without this
+
+# Whatever your platform calls them
+N3_LAPACK_LIBS="mkl_rt" \
+N3_LAPACK_LIB_DIRS="/opt/intel/oneapi/mkl/latest/lib" \
+    python3 torch_n3/_legacy/build_legacy.py
+
+# EBTKS's own bundled f2c'd LAPACK, if you have libEBTKS.a. This is the
+# left-hand column of the table above. The archive resolves after our own
+# objects, so only its clapack members are taken.
+N3_LAPACK_LIBS="EBTKS" N3_LAPACK_LIB_DIRS="$MINC_TOOLKIT/lib" \
+    python3 torch_n3/_legacy/build_legacy.py
+```
+
+Without rebuilding, on Linux, `LD_PRELOAD` also works, because the default build
+resolves `liblapack.so.3` dynamically:
+
+```bash
+LD_PRELOAD=/path/to/other/liblapack.so.3 python3 -m tests.convergence
+```
+
+On Debian and Ubuntu, `update-alternatives --config liblapack.so.3-$(uname -m)-linux-gnu`
+switches the system-wide one — but only between what is installed. This machine
+has only `libopenblas`; `apt install liblapack3` adds the reference build, which
+is the interesting second data point, being the same Fortran that EBTKS's f2c'd
+copy was translated from.
+
+Whichever route, check the `shim links:` line the script prints — the library
+named in a build is not always the one the loader finds, and a statically linked
+LAPACK will not appear there at all. It reports `no dynamic LAPACK (static?)`
+in that case, which is the expected output for the EBTKS build above.
+
+#### If your cliff is at 1
+
+Then no iteration count is safe on your platform, and
+`tests/test_reproducibility.py` cannot hold there — the golden volume records a
+run that your build does not reproduce even once round the loop. That is worth
+reporting rather than working around: it would mean the flip is being triggered
+by something at the *first* pass, which nothing here has seen and which the
+block-level tests should have caught.
+
+
 ### Does it actually remove a bias field?
 
 `tests/test_field_recovery.py` plants one and asks for it back. A smooth

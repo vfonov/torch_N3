@@ -103,6 +103,20 @@ SHIM_SOURCES = [
     os.path.join(HERE, "n3_field_shim.cc"),
 ]
 
+#: Which LAPACK/BLAS to link, and where to find it.  Overridable, because
+#: which one it is measurably changes the answer -- see ``tests/convergence.py``
+#: and the LAPACK section of ``README.md``.
+#:
+#:   N3_LAPACK_LIBS="mkl_rt"                   # names, space separated
+#:   N3_LAPACK_LIB_DIRS="/opt/intel/oneapi/mkl/latest/lib"
+#:
+#: To link EBTKS's own bundled f2c'd LAPACK instead of a system one, point
+#: these at the EBTKS archive: N3_LAPACK_LIBS="EBTKS".  It resolves after our
+#: own objects, so only the clapack members are taken from it.
+LAPACK_LIBS = os.environ.get("N3_LAPACK_LIBS", "lapack blas").split()
+LAPACK_LIB_DIRS = [d for d in os.environ.get("N3_LAPACK_LIB_DIRS", "").split(os.pathsep)
+                   if d]
+
 
 def build(verbose=True):
     # Everything the build generates -- headers, object files, the extension
@@ -140,7 +154,8 @@ def build(verbose=True):
             os.path.join(N3_SRC, "SharpenHist"),
             os.path.join(N3_SRC, "CorrectField"),
         ],
-        libraries=["lapack", "blas"],
+        library_dirs=LAPACK_LIB_DIRS,
+        libraries=LAPACK_LIBS,
         define_macros=[
             ("HAVE_CONFIG_H", "1"),
             ("USE_COMPMAT", "1"),
