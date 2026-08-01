@@ -84,9 +84,14 @@ PROTOCOLS = {
 #: check matched on everything else and declared the trials already done.
 #: ``sample_size`` and ``max_iterations`` are here for the same reason:
 #: a descent stopped at a different budget is a different experiment, and a
-#: budget sweep would otherwise skip every value after the first.
-KEY = ("seed", "amplitude", "snr", "method", "solver", "protocol", "distance",
-       "lam", "penalty", "sample_size", "max_iterations", "shrink", "device")
+#: budget sweep would otherwise skip every value after the first.  So is
+#: ``backend``: the legacy blocks and the torch ones are two implementations
+#: of the same arithmetic and do not agree past three digits (CLAUDE.md), so
+#: a row from one is not a row from the other.  Only ``device`` kept those
+#: apart before, and only because the legacy backend happens to be CPU-only.
+KEY = ("seed", "amplitude", "snr", "method", "backend", "solver", "protocol",
+       "distance", "lam", "penalty", "sample_size", "max_iterations",
+       "shrink", "device")
 
 #: How the field is estimated.  ``n3`` is ``pipeline.nu_estimate``, the
 #: shipped alternating iteration; the others are ``optimize.nu_optimize``
@@ -106,7 +111,7 @@ OPTIMIZE_SEED = 0
 #: the score over the brain rather than over the whole head the estimation ran
 #: in; see :func:`_regions` for why they are worth carrying.
 COLUMNS = KEY + (
-    "backend", "field_scale", "field_terms", "loss",
+    "field_scale", "field_terms", "loss",
     "unexplained_pct", "rms_log", "planted_cv_pct", "floor_pct",
     "unexplained_brain_pct", "rms_log_brain", "planted_cv_brain_pct",
     "floor_brain_pct",
@@ -439,7 +444,7 @@ def _completed(path):
 #: ``n3`` rows carry no penalty at all -- it is not one of its parameters --
 #: so an empty string is the value, not a missing one.
 KEY_DEFAULTS = {"method": "n3", "penalty": "", "sample_size": "",
-                "max_iterations": ""}
+                "max_iterations": "", "backend": "torch"}
 
 
 def _key(row):
