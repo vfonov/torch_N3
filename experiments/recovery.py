@@ -3,10 +3,15 @@
     python3 -m experiments.recovery --seeds 50
 
 Not a test.  Nothing here asserts; it plants a random smooth field on
-colin27, adds Gaussian noise at a stated SNR, runs ``nu_estimate``, and writes
-one CSV row per trial saying how much of the field came back and how long it
-took.  ``experiments/README.md`` defines every column and
-``experiments.summarize`` reads them.
+colin27, adds Gaussian noise at a stated SNR, estimates the field, and writes
+one CSV row per trial saying how much of it came back and how long it took.
+``experiments/README.md`` defines every column and ``experiments.summarize``
+reads them.
+
+Four estimators, chosen with ``--method`` (see :data:`METHODS`), the last of
+which is a ceiling rather than an estimator: ``oracle`` is *given* the field
+that was planted and does nothing but express it in the spline basis, so no
+method that has to work it out from the intensities can score better.
 
 **Why over many trials.**  ``tests/test_field_recovery.py`` and
 ``tests/tables.py`` plant *one* analytic field on *one* volume with no noise,
@@ -94,9 +99,24 @@ KEY = ("seed", "amplitude", "snr", "method", "backend", "solver", "protocol",
        "shrink", "device")
 
 #: How the field is estimated.  ``n3`` is ``pipeline.nu_estimate``, the
-#: shipped alternating iteration; the others are ``optimize.nu_optimize``
-#: descending on the named objective.  ``protocol`` applies to ``n3`` alone.
-METHODS = ("n3",) + OBJECTIVES
+#: shipped alternating iteration; ``hoyer`` and ``tightness`` are
+#: ``optimize.nu_optimize`` descending on the named objective.  ``protocol``
+#: applies to ``n3`` alone -- see :func:`_protocols`.
+#:
+#: ``oracle`` is not an estimator at all: it is handed the field that was
+#: planted and fits it with the same penalized spline the others end with.
+#: It reads no voxel intensity, so noise and amplitude cannot mislead it and
+#: nothing that *does* read one can beat it.  What it scores is the ceiling
+#: for a ``(distance, lam, solver, shrink)`` -- the representation error of the
+#: basis, and nothing else.  Swept like any other method so that the ceiling
+#: gets a distribution over seeds, and a run time, on the same terms as the
+#: estimators being measured against it.
+ORACLE = "oracle"
+METHODS = ("n3", ORACLE) + OBJECTIVES
+
+#: Methods that take neither ``penalty`` nor a descent budget: their rows carry
+#: those key columns empty, the way ``n3``'s always have.
+UNWEIGHTED = ("n3", ORACLE)
 
 #: The voxel subset ``nu_optimize`` draws is held fixed across a whole cell --
 #: the baseline and every trial in it see the same voxels -- rather than
@@ -133,12 +153,9 @@ def main(argv=None):
     methods = args.method or ["n3"]
     solvers = args.solver or list(DIRECT_SOLVERS)
     protocols = args.protocol or list(PROTOCOLS)
-    if not any(method == "n3" for method in methods):
-        # `protocol` is N3's iteration rule and means nothing to a descent;
-        # sweeping it would multiply the work and record the same trial twice.
-        protocols = protocols[:1]
 
-    trials = (len(methods) * len(solvers) * len(protocols) * len(args.distance)
+    trials = (sum(len(_protocols(method, protocols)) for method in methods)
+              * len(solvers) * len(args.distance)
               * len(args.lam) * len(seeds) * len(args.amplitude)
               * len(args.snr))
     done = _completed(args.out)
@@ -161,7 +178,7 @@ def main(argv=None):
     with _rows(args.out) as write:
         for method in methods:
             for solver in solvers:
-                for protocol in protocols:
+                for protocol in _protocols(method, protocols):
                     for distance in args.distance:
                         for lam in args.lam:
                             cell = dict(stamp, method=method, solver=solver,
@@ -191,23 +208,36 @@ def _device(requested):
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def _protocols(method, protocols):
+    """The protocols worth running for one method.
+
+    ``protocol`` is N3's iteration rule.  A descent does not have one and the
+    oracle does not iterate at all, so sweeping it over them would multiply the
+    work and write the same trial twice under two labels.  Decided per method
+    rather than once for the whole run, so that ``--method n3 oracle`` sweeps
+    both protocols for N3 without duplicating the ceiling.
+    """
+    return protocols if method == "n3" else protocols[:1]
+
+
 def _weight(method, requested):
     """The penalty a cell actually runs at, resolved so the key records it.
 
-    Empty for ``n3``, which has no such parameter -- writing ``None`` there
-    would make it look like a value that was left unset.  For a descent, the
-    number that will be used, taken from ``optimize.PENALTY`` when the
-    command line did not say: a key that recorded "the default" rather than
-    the default's value would stop meaning anything the day that changes.
+    Empty for the methods in :data:`UNWEIGHTED`, which have no such parameter
+    -- writing ``None`` there would make it look like a value that was left
+    unset.  For a descent, the number that will be used, taken from
+    ``optimize.PENALTY`` when the command line did not say: a key that recorded
+    "the default" rather than the default's value would stop meaning anything
+    the day that changes.
     """
-    if method == "n3":
+    if method in UNWEIGHTED:
         return ""
     return PENALTY[method] if requested is None else float(requested)
 
 
 def _budget(method, args):
-    """The descent's budget, blank for ``n3`` which has none of it."""
-    if method == "n3":
+    """The descent's budget, blank for the methods that have none of it."""
+    if method in UNWEIGHTED:
         return dict(sample_size="", max_iterations="")
     return dict(sample_size=args.sample_size,
                 max_iterations=args.max_iterations)
@@ -216,13 +246,17 @@ def _budget(method, args):
 def _settings(cell, args):
     """The keyword arguments the estimator named by ``cell["method"]`` takes.
 
-    The two families share ``distance``, ``shrink`` and ``solver`` -- the
-    field model is the same -- and share nothing else: ``iterations``/``stop``
+    All three families share ``distance``, ``shrink`` and ``solver`` -- the
+    field model is the same -- and share little else: ``iterations``/``stop``
     are N3's stopping rule, ``penalty``/``sample_size``/``seed`` belong to the
     descent, and ``lam`` and ``penalty`` are weights on incomparable scales.
+    The oracle takes ``lam``, because it is fitting a spline and that is the
+    weight it fits under; it is the same ``lam`` N3's final fit uses.
     """
     common = dict(distance=cell["distance"], shrink=args.shrink,
                   solver=cell["solver"])
+    if cell["method"] == ORACLE:
+        return dict(lam=cell["lam"], **common)
     if cell["method"] == "n3":
         return dict(PROTOCOLS[cell["protocol"]], lam=cell["lam"],
                     backend=args.backend, **common)
@@ -316,7 +350,8 @@ def _trial(volume, mask, regions, planted, settings, row, baseline, args):
                                 row["seed"] + simulation.NOISE_SEED_OFFSET)
     trial = volume.like(data)
 
-    field, seconds, report = _estimate(trial, mask, row["method"], settings)
+    field, seconds, report = _estimate(trial, mask, row["method"], settings,
+                                       truth=planted)
     scores = _score(field, baseline, planted, regions)
 
     row.update(unexplained_pct=scores["mask"][0], rms_log=scores["mask"][1],
@@ -345,18 +380,29 @@ def _score(recovered, baseline, planted, regions):
             for name, region in regions.items()}
 
 
-def _estimate(volume, mask, method, settings):
+def _estimate(volume, mask, method, settings, truth=None):
     """Estimate the field by ``method``, timed.  Returns the field values.
 
     ``nu_estimate`` returns only the fitted spline, so its iteration count is
     read back off its ``verbose`` output rather than by changing
     ``torch_n3/pipeline.py`` for the sake of an experiment; ``nu_optimize``
     reports its own, along with the loss it reached.
+
+    ``truth`` is the planted field, and only :data:`ORACLE` is given it -- that
+    is what makes it the ceiling rather than an estimator.  ``None`` means the
+    untouched volume, whose field is unity by definition, which is how the
+    oracle's baseline is computed on the same terms as everyone else's.  Its
+    ``iterations`` is 1: one spline fit, no loop.
     """
     buffer = io.StringIO()
     start = time.perf_counter()
     with contextlib.redirect_stdout(buffer):
-        if method == "n3":
+        if method == ORACLE:
+            planted = (torch.ones_like(volume.data) if truth is None
+                       else truth)
+            field = simulation.basis_spline(volume, mask, planted, **settings)
+            report = {"iterations": 1}
+        elif method == "n3":
             field = nu_estimate(volume, mask=mask, verbose=True, **settings)
             report = {"iterations": buffer.getvalue().count("iteration ")}
         else:
@@ -464,6 +510,9 @@ def _snr(snr):
 
 
 def _label(cell):
+    if cell["method"] == ORACLE:
+        return ("--method oracle --solver %s --distance %g --lambda %g"
+                % (cell["solver"], cell["distance"], cell["lam"]))
     if cell["method"] == "n3":
         return ("--method n3 --backend %s --solver %s --protocol %s "
                 "--distance %g --lambda %g"
@@ -533,7 +582,10 @@ def _parse(argv):
                         help="estimators to sweep (default: n3).  'hoyer' and "
                              "'tightness' are torch_n3.optimize descending on "
                              "a sharpness objective; they ignore --protocol "
-                             "and take --penalty rather than --lambda")
+                             "and take --penalty rather than --lambda.  "
+                             "'oracle' is handed the planted field and only "
+                             "fits it -- the best any estimator could score at "
+                             "a given --distance and --lambda")
     parser.add_argument("--penalty", type=float,
                         help="bending-energy weight for the descent methods "
                              "(default: per objective, optimize.PENALTY)")

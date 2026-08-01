@@ -94,6 +94,27 @@ def test_a_smoother_field_is_easier_for_the_basis(chunk, chunk_mask, inside):
     assert floors[1] < floors[0]
 
 
+def test_the_basis_reproduces_a_unit_field_exactly(chunk, chunk_mask, inside):
+    """What ``recovery``'s oracle baseline rests on.
+
+    The oracle method is handed the planted field and fits it; on the untouched
+    volume there is no planted field, so it is handed unity, and every oracle
+    trial is then divided by whatever that fit produced.  For the division to
+    be the no-op the ceiling needs it to be, the fit has to return unity back.
+
+    It does, and not by luck: cubic B-splines are a partition of unity, so a
+    constant is *in* the span, and the bending energy of a constant is zero, so
+    the penalty does not pull the fit off it at any ``lam``.  The bound is
+    float64 rounding through a solve of a matrix whose condition number
+    CLAUDE.md puts at ~5e12, not a measured margin.
+    """
+    unit = torch.ones_like(chunk.data)
+    fitted = simulation.basis_field(chunk, chunk_mask, unit, distance=75.0,
+                                    lam=1e-7, solver="normal")
+
+    assert float((fitted[inside] - 1.0).abs().max()) < 1e-9
+
+
 def test_noise_has_the_sigma_the_snr_asked_for(chunk, inside):
     """SNR is the masked mean over the noise standard deviation."""
     sigma = simulation.noise_sigma(chunk, inside, 20.0)

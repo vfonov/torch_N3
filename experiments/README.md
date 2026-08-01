@@ -107,7 +107,7 @@ brain columns for "how well does this correct a brain", the mask columns for
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |
 | `planted_cv_pct` | the non-uniformity that was planted — what there was to remove |
-| `floor_pct` | the best this basis could have done: `unexplained_pct` of fitting the planted field with the spline itself, same grid, spacing, weight and solver |
+| `floor_pct` | the best this basis could have done: `unexplained_pct` of fitting the planted field with the spline itself, same grid, spacing, weight and solver. This is the `oracle` method's score, carried on *every* row so any trial can be read against its own ceiling |
 | `unexplained_brain_pct`, `rms_log_brain`, `planted_cv_brain_pct`, `floor_brain_pct` | the same four over the brain mask instead |
 | `iterations` | how many the run took (counted off `nu_estimate(verbose=True)`) |
 | `seconds`, `baseline_seconds` | wall time of the estimate |
@@ -128,6 +128,11 @@ never mix:
   not apply (there is no stopping rule to choose); `--penalty` replaces
   `--lambda` and is on a different scale entirely; `--sample-size` and
   `--max-iterations` control the descent.
+- **`oracle`** — not an estimator: it is *handed* the field that was planted
+  and does nothing but fit it with the same penalized spline the other two end
+  with, on the same grid, at the same `--distance`, `--lambda` and solver. It
+  reads no voxel intensity, so nothing that has to work the field out from the
+  data can score better. See "The ceiling" below.
 
 The descent's voxel subset is drawn once per cell with a fixed seed
 (`recovery.OPTIMIZE_SEED`), not from the trial's seed: the baseline is shared
@@ -170,6 +175,69 @@ Three things that belong next to that table:
   median in the 80 % rows is that tail showing.
 - **79 of 450 trials hit the 400-iteration cap**, all in the harder cells, so
   those are lower bounds on what the objective would reach, not its optimum.
+
+### The ceiling: what the basis could have done
+
+`--method oracle` is handed the field that was planted and does nothing but
+fit it with the same penalized spline, on the same grid, at the same
+`--distance`, `--lambda`, solver and `--shrink`. It reads no voxel intensity,
+so it is not an estimator — it is the **best score any estimator could have
+got** at that configuration, and the difference between it and a real method
+is estimation error with the representation error taken out.
+
+1,800 trials (4 solvers × 450), median over the brain, beside the same cells
+as above:
+
+| planted | ceiling | `hoyer` | `n3` | uncorrected |
+|---|---|---|---|---|
+| 20 % | **0.0023 %** | 0.28–1.38 % | 1.03–3.43 % | 3.50 % |
+| 40 % | **0.0049 %** | 0.50–1.44 % | 2.31–4.05 % | 6.98 % |
+| 80 % | **0.0143 %** | 1.18–1.76 % | 5.09–5.83 % | 14.03 % |
+
+**The basis is not the limitation.** Per matched trial, N3 lands a median
+**550×** above the ceiling and `hoyer` **136×**; the closest either ever comes
+is 51× and 20×, and neither reaches it on any of 450 trials. So essentially
+none of the residual anywhere in this experiment is the spline's inability to
+express the field — it is all estimation. That also confirms the
+`--field-scale 400` calibration was doing its job: the sweep measures what it
+set out to measure.
+
+Two properties the oracle has by construction, and both come out of the data
+as they should, which is a check on the harness rather than a result:
+
+- **It does not depend on the SNR** — identical to five decimal places across
+  `inf`/40/20 in every cell. It never reads a voxel, so noise can only reach it
+  through the estimation mask (`data > background`), which at these sigmas
+  moves a handful of voxels and changes the score by ~1e-5 relative.
+- **It does not depend on the solver** — `normal`, `qr`, `dr` and `blocked`
+  give the same median *and the same maximum* to five decimals. Representation
+  error is a property of the basis, and four solvers of the same objective
+  agree about it.
+
+It also costs **0.021 s**, against 0.69 s for the cheapest N3 configuration —
+one spline fit is about 3 % of a 30-iteration run.
+
+An oracle row's `unexplained_pct` reproduces its own `floor_pct` column, which
+is the same quantity computed on the clean volume: bit for bit at SNR ∞, and
+within 2.3e-4 relative at worst over all 1,800 rows. That is the mask effect
+above, and it is the check that the baseline division really is a no-op for
+this method (`tests/test_simulation.py` asserts the reason: a unit field fits
+back to unity, because cubic B-splines are a partition of unity and a constant
+has zero bending energy, so the penalty cannot pull the fit off it at any
+`lam`).
+
+### N3 can be worse than doing nothing
+
+Reading the `n3` column against `planted_cv` — which the figure draws as the
+dashed line — at **20 % planted, SNR 20, over the head mask N3's median
+residual is 5.35 % against the 4.23 % that was there to begin with: 1.26× the
+uncorrected volume.** Over the brain the same cell is a wash (0.98×). It is
+the one cell in nine where this happens, and it is the combination of a weak
+field and heavy noise: there is little to find and a lot to be misled by.
+Everywhere else N3 removes 40–70 % of what was planted (head) or 60–70 %
+(brain). The whole distribution is above the line, not just the median, which
+is the sort of thing a table of medians states and a violin makes obvious.
+
 ### Run time
 
 Per estimate on the GPU, median, same volume and settings:
@@ -291,6 +359,34 @@ The IQR rather than a standard deviation because the spread across seeds is
 not symmetric — a mean well above the median means a few hard draws are
 setting it.
 
+### Seeing it
+
+```bash
+python3 -m experiments.figures                    # all three, into results/
+python3 -m experiments.figures --figure recovery
+```
+
+Violin plots, because every cell is 50 random fields and what is worth seeing
+is the *shape* of the 50 — whether a method's advantage is the whole
+distribution moving or a few lucky draws. A bar of medians would hide both of
+the findings this sweep exists for: `hoyer`'s failure tail, and the handful of
+trials where two backends disagree by 18 %.
+
+| figure | what |
+|---|---|
+| `results/recovery.png` | the headline: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
+| `results/runtime.png` | wall time per estimate, every configuration in the file |
+| `results/implementation.png` | the three comparisons that should come out flat — solver, backend/device, and the solver's effect on the ceiling |
+
+Two conventions worth knowing before reading them. **Densities are estimated
+in log space** wherever the axis is logarithmic: a KDE fitted in linear space
+and drawn on a log axis is a picture of the wrong distribution, and these
+scores span four decades. And `implementation.png` is on **linear axes scaled
+to their own data**, deliberately — those differences are parts in a hundred,
+and on the decade axis the other figures use they would be one flat line,
+which is a picture of the axis rather than of the measurement. Read the spread
+*within* each violin against the gap *between* them.
+
 ## The two backends, over 450 trials
 
 `--backend legacy` runs N3's original C++ blocks through the CFFI shim
@@ -332,7 +428,8 @@ GPU is 8.8× faster than legacy.
 
 | file | what |
 |---|---|
-| `recovery.csv` | 5,400 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), and 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above |
+| `recovery.csv` | 7,200 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling |
+| `recovery.png`, `runtime.png`, `implementation.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
 

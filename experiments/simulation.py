@@ -190,23 +190,33 @@ def estimation_grid(volume, mask, shrink, background=DEFAULTS["background"]):
     return grid, inside
 
 
-def basis_field(volume, mask, planted, distance, lam, solver,
-                shrink=DEFAULTS["shrink"]):
-    """``planted`` as the spline basis sees it, on ``volume``'s grid.
+def basis_spline(volume, mask, planted, distance, lam, solver,
+                 shrink=DEFAULTS["shrink"]):
+    """``planted`` fitted by the spline the pipeline ends with.
 
-    Fitted with the same ``BSplineField`` the pipeline ends with -- same grid,
-    same knot spacing, same weight, same solver, same samples -- so the
-    difference between this and ``planted`` is representation error: the part
-    of the field this basis cannot express at all, no matter how well the rest
-    of the pipeline estimates it.
+    Same grid, same knot spacing, same weight, same solver, same samples as
+    step 7 of ``nu_estimate`` (``pipeline.py:118-124``) -- so the difference
+    between this and ``planted`` is representation error: the part of the field
+    this basis cannot express at all, no matter how well the rest of the
+    pipeline estimates it.
 
-    The fit is of the field, not of its log, because that is what step 7 of
-    ``nu_estimate`` fits (``pipeline.py:118-124``).
+    The fit is of the field, not of its log, because that is what step 7 fits.
+
+    This is also the *oracle estimator* of ``experiments.recovery``: an
+    estimator handed the answer, which then does nothing but express it in the
+    basis.  Nothing that reads a voxel intensity can do better, so what it
+    scores is the ceiling for a given ``distance`` and ``lam``.
     """
     grid, inside_grid = estimation_grid(volume, mask, shrink)
-    fit = BSplineField(grid, distance, lam, solver=solver).fit(
+    return BSplineField(grid, distance, lam, solver=solver).fit(
         _resample(planted, volume, grid), inside_grid)
-    return fit.evaluate_on(volume)
+
+
+def basis_field(volume, mask, planted, distance, lam, solver,
+                shrink=DEFAULTS["shrink"]):
+    """:func:`basis_spline`, evaluated back on ``volume``'s grid."""
+    return basis_spline(volume, mask, planted, distance, lam, solver,
+                        shrink).evaluate_on(volume)
 
 
 def basis_floor(volume, mask, planted, inside, distance, lam, solver,
