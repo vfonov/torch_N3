@@ -13,8 +13,11 @@ gzipped MINC1, which it cannot, and converting them on every run meant every
 test needed ``mincconvert``.  See ``tests/data/README.md``.
 """
 
+import functools
 import os
 import shutil
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -53,6 +56,37 @@ def requires_program(name):
     """Skip the test unless ``name`` is on ``PATH``."""
     return pytest.mark.skipif(not program_available(name),
                               reason="%s is not on PATH" % name)
+
+
+@functools.lru_cache(maxsize=None)
+def _torch_and_scipy_sparse_coexist():
+    """Whether ``torch`` and ``scipy.sparse.linalg`` survive being imported
+    together in one process.
+
+    On some platforms they do not: PyTorch's wheel bundles its own
+    ``libomp.dylib``, and a wheel-installed ``scipy`` (or, on macOS, one
+    built against a conda/Homebrew OpenBLAS with a *different*
+    ``libomp.dylib``) loads a second copy of LLVM's OpenMP runtime into the
+    same process, which aborts -- an ``import`` cannot be wrapped in
+    ``try/except`` against that, since the interpreter itself dies. Probe it
+    in a subprocess instead, once per test session.
+    """
+    probe = subprocess.run(
+        [sys.executable, "-c", "import torch; import scipy.sparse.linalg"],
+        capture_output=True)
+    return probe.returncode == 0
+
+
+def requires_compatible_scipy_sparse():
+    """Skip the test unless ``torch`` + ``scipy.sparse.linalg`` coexist here.
+
+    Guards ``solver="sparse"``, the one path in :mod:`torch_n3.blocks.spline`
+    that imports ``scipy.sparse`` -- see :func:`_torch_and_scipy_sparse_coexist`.
+    """
+    return pytest.mark.skipif(
+        not _torch_and_scipy_sparse_coexist(),
+        reason="torch and scipy.sparse.linalg abort when imported together "
+               "in this environment (conflicting bundled libomp copies)")
 
 
 def assert_close(actual, expected, atol=0.0, rtol=0.0):
