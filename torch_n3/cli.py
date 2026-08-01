@@ -109,7 +109,10 @@ def build_parser():
                              "factorization, which is far less sensitive to "
                              "the machine's BLAS, and 'blocked' the same "
                              "answer as 'qr' without holding the design "
-                             "matrix -- use it at a fine --distance. "
+                             "matrix -- use it at a fine --distance. 'dr' is "
+                             "'qr' reparameterized into the Demmler-Reinsch "
+                             "basis, where the penalty is diagonal, so one "
+                             "factorization answers a whole --lambda grid. "
                              "('sparse' does not converge; see PROBLEMS.md.) "
                              "torch backend only (default: %(default)s)")
     parser.add_argument("--device", help="run on this torch device, e.g. cuda")

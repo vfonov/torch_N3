@@ -250,15 +250,52 @@ argument for doing it. Until then, the two solvers' end-to-end outputs differ
 from each other at `1.2e-3` — the same order as switching LAPACK — so results
 are only comparable within one choice.
 
+**One more item on that bill, measured 2026-08-01.** The planted-field recovery
+sweep was run under all four direct solvers, and `qr` and `dr` breach
+`test_field_recovery.py`'s `AGREEMENT` bound of `1e-3` against `nu_correct` in
+exactly one cell of six:
+
+| disagreement vs `nu_correct` | `normal` | `qr` | `blocked` | `dr` | `legacy` |
+|---|---|---|---|---|---|
+| 20% planted, 50 mm | 4.29e-4 | **1.04e-3** | 5.54e-4 | **1.04e-3** | 5.90e-4 |
+| worst of the other five cells | 5.08e-4 | 5.58e-4 | 3.69e-4 | 5.58e-4 | 3.37e-4 |
+
+So making `qr` or `dr` the default fails
+`test_it_recovers_as_much_as_nu_correct_did[20%-50mm-torch]`. Nothing else in
+that file moves: every other pairing stays under `7.9e-4`, and every ordering
+the sweep asserts holds under all four solvers.
+
+**This is not the better-conditioned solvers being worse.** In that same cell
+they recover *more* of the planted field than `normal` does — 1.5070% left
+against `normal`'s 1.5131%, where `nu_correct` itself leaves 1.5057%. What the
+bound measures is agreement about the field's *shape* with the original C++,
+and `nu_correct` solves the same ill-conditioned normal equations `normal`
+does, so part of that agreement is shared formulation rather than shared
+correctness. 50 mm is where `A` is rank deficient (§12) and the two
+formulations have the most room to differ.
+
+The honest reading is that `AGREEMENT` is calibrated on implementations that
+share a formulation, and would need restating — as a bound on recovery rather
+than on likeness to one implementation — before a better-conditioned solver
+could be held to it. Recorded, not fixed, and the bound was not touched.
+
 **One item is off that bill.** The 24 `--lambda` × `--distance` cells were
-re-measured under both solvers on 2026-07-31 and would not need revising: 22
-are unchanged at the two decimals `README.md` and `cli.py` print, the largest
-move in any cell is 3.2% relative, and every conclusion the prose draws — the
+re-measured under **every direct solver** on 2026-07-31 and would not need
+revising. `normal` reproduces both published copies exactly, all 24 cells at
+the two decimals they print. The others move barely: `qr` and `dr` differ in 2
+cells of 24, `blocked` in 3, and the largest relative move in any cell is 3.2%
+(`qr`, `dr`) or 4.7% (`blocked`). Every conclusion the prose draws — the
 interior minimum in each column and where it sits, the decade-per-halving rule,
-the asymmetry at 50 mm — is identical. That is a mild surprise worth recording
-on its own, since those runs are 30 iterations deep, well past the knife-edge
-that makes end-to-end volumes incomparable; whatever the tables are measuring,
-it is not rounding. See CLAUDE.md, "Published numbers no test checks".
+the asymmetry at 50 mm — is identical under all four. That is a mild surprise
+worth recording on its own, since those runs are 30 iterations deep, well past
+the knife-edge that makes end-to-end volumes incomparable; whatever the tables
+are measuring, it is not rounding.
+
+`python3 -m tests.tables` is now the way to re-measure them, and it diffs
+against the published copies, so this claim is re-checkable rather than
+recorded. It does not make them *asserted* — nothing fails if a cell moves —
+but it removes the hand-transcription step. See CLAUDE.md, "Published numbers
+no test checks".
 
 ---
 
@@ -342,6 +379,76 @@ is where real non-determinism would surface rather than hide in the last bits.
 
 ---
 
+## 12. The Demmler–Reinsch solver, and the reading of it that does not work — 2026-07-31
+
+`solver="dr"` reparameterizes §9's stacked system into the Demmler–Reinsch
+basis, where the penalty is diagonal and a weight costs an elementwise
+division. It is a **fourth direct solver**, in `DIRECT_SOLVERS`, and it meets
+every bound `qr` meets at exactly the same margins (7.49e-08, 1.52e-08,
+2.24e-12 against the shim) — necessarily, because at `lambda == anchor` the
+divisor is 1 and the two are the same back-substitution.
+
+What it adds is `BSplineField.refit(lam)`, which reuses the factorization:
+
+| `chunk.mnc`, per `lambda` | `qr` (fresh fit) | `dr` (`refit`) |
+|---|---|---|
+| 200 mm | 103 ms | 0.040 ms |
+| 50 mm | 453 ms | 0.130 ms |
+
+**The textbook recipe was tried first and does not work here**, which is worth
+recording because it fails quietly rather than loudly. Demmler–Reinsch is
+normally written on the QR of the design `A` alone. But `A` here is the *masked*
+design, and at fine knot spacings the mask leaves basis functions with no data
+under them:
+
+| `-distance` | size | rank(A) | cond(A) = cond(R) | cond(stacked) | cond(normal) |
+|---|---|---|---|---|---|
+| 200 mm | 64 | 64 | 8.4e7 | 3.5e6 | 1.2e13 |
+| 100 mm | 100 | 100 | 7.1e6 | 8.6e5 | 7.5e11 |
+| 50 mm | 245 | **243** | **7.5e12** | 2.9e5 | 8.6e10 |
+
+So `cond(R)` is not "much better than the stacked system" — it is *worse at
+every spacing*, and at 50 mm `A` is rank deficient and `R` singular to working
+precision, worse even than the normal equations there. `D R^-1` then overflows
+into a `gamma` with 83 non-positive entries reaching `-5.7e6`, and
+`1 + lambda N gamma` passes through zero at `-7.5e4`. Clipping `gamma` at zero,
+which is the usual advice, does not rescue this: the eigenvectors are as
+damaged as the eigenvalues, so the answer is wrong rather than merely
+imprecise.
+
+Anchoring the QR on `[A; sqrt(lambda_0 N) D]` instead costs nothing and removes
+the failure outright, because the penalty rows span exactly the directions the
+data leaves empty. The cost is a real constraint, not a hidden one: the basis is
+valid only at or above its anchor, and `refit()` raises below it rather than
+returning a number.
+
+Two things this leaves open:
+
+- **`dr` is not the default and changes nothing that ships.** Everything §9
+  says about `qr` not being the default applies unchanged; `dr` is another way
+  to compute the same fit, so the whole `normal`-vs-stacked question is
+  untouched by it.
+- **The `--lambda` × `--distance` tables were re-measured under `dr`** (and
+  under every other direct solver) and did not need revising — see §9. They are
+  still swept as separate whole-pipeline runs rather than through `refit`,
+  because each cell is 30 iterations and the spline's right-hand side changes
+  every iteration; reusing one basis across the `lambda` grid would need the
+  factorization carried across iterations too, which is a further change to
+  `_solve_dr` and was not made. `python3 -m tests.tables` is the sweep.
+
+One incidental finding, unrelated to the solver but surfaced by it:
+`bending_energy_factor` returns a `D` of numerical rank `size - 2`, not
+`size - 4`. It clamps only *negative* eigenvalues of `J`, and two of `J`'s four
+near-zero eigenvalues come back positive-tiny (7.7e-14, 2.9e-13 at 200 mm), so
+they survive as rows of norm ~1e-7. This is harmless — they contribute ~1e-14
+to `D'D`, and `test_the_bending_energy_factor_squares_back_to_the_tensor` still
+passes — but `D` is not a minimal factor, and a test asserting `rank(D) ==
+size - 4` will fail. The null space *is* recovered correctly in the transformed
+basis, where `gamma` shows exactly four zeros separated from the rest by more
+than ten decades (1.7e-9 against 91 at 50 mm).
+
+---
+
 ## Where every comparison currently sits
 
 `python3 -m tests.margins` prints everything above the recovery sweep; these
@@ -365,12 +472,15 @@ bimodal_threshold vs mincstats             3.56e-05    0.0001        35.6%   (wa
 spline[normal] d=200 sub=1 vs shim         9.64e-08    5.94e-07      16.2%
 spline[qr] d=200 sub=1 vs shim             7.49e-08    5.94e-07      12.6%
 spline[blocked] d=200 sub=1 vs shim        7.49e-08    5.94e-07      12.6%
+spline[dr] d=200 sub=1 vs shim             7.49e-08    5.94e-07      12.6%
 spline[normal] d=200 sub=2 vs shim         1.69e-10    6.21e-07       0.0%
 spline[qr] d=200 sub=2 vs shim             1.52e-08    6.21e-07       2.5%
 spline[blocked] d=200 sub=2 vs shim        1.52e-08    6.21e-07       2.5%
+spline[dr] d=200 sub=2 vs shim             1.52e-08    6.21e-07       2.5%
 spline[normal] d=50  sub=1 vs shim         1.28e-11    2.9e-07        0.0%
 spline[qr] d=50  sub=1 vs shim             2.24e-12    2.9e-07        0.0%
 spline[blocked] d=50  sub=1 vs shim        2.24e-12    2.9e-07        0.0%
+spline[dr] d=50  sub=1 vs shim             2.24e-12    2.9e-07        0.0%
 spline[qr] d=200 cpu vs cuda               1.18e-12    5.94e-12      19.8%   <- §9
 correct_field vs shim                      4.27e-06    7.96e-05       5.4%
 correct_field vs binary                    4.27e-06    7.96e-05       5.4%

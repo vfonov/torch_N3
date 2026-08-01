@@ -75,7 +75,7 @@ All of the protocol options mirror `nu_correct`'s and default to its values:
 | `--field-floor` | 0.1 | Smallest field value allowed, so the division stays sane. |
 | `--device` | cpu | Any torch device, e.g. `cuda`. See [Why end-to-end numbers stop at three digits](#why-end-to-end-numbers-stop-at-three-digits) first. |
 | `--backend` | torch | `legacy` runs the original C++ for every block instead. |
-| `--solver` | normal | How the spline fit is solved. `qr` fits the same spline through a far better-conditioned system and is much more reproducible across machines; `blocked` gives the same answer without holding the design matrix, which is what to use at a fine `--distance`. (`sparse` does not converge — see below.) See [Two ways to solve the same fit](#two-ways-to-solve-the-same-fit). |
+| `--solver` | normal | How the spline fit is solved. `qr` fits the same spline through a far better-conditioned system and is much more reproducible across machines; `blocked` gives the same answer without holding the design matrix, which is what to use at a fine `--distance`; `dr` is `qr` reparameterized so that the penalty is diagonal, which makes a whole `--lambda` grid cost one factorization. (`sparse` does not converge — see below.) See [Two ways to solve the same fit](#two-ways-to-solve-the-same-fit). |
 
 Staged stopping works as in N3 — `--iterations 10 20 --stop 0.001 0.005` means "stop
 at 0.001, but after iteration 10 accept 0.005 as well".
@@ -593,6 +593,100 @@ so at the shipped spacing there is no reason to prefer it. Below 50 mm there is
 every reason: at 12.5 mm it is 3.7× faster than `qr` on a fifth of the memory,
 and faster than the normal equations too.
 
+#### Sweeping `--lambda`: `--solver dr`
+
+`--solver dr` answers the same stacked system, reparameterized so that the
+penalty becomes **diagonal** — the Demmler–Reinsch basis of the P-spline
+literature. Factorize `[A; sqrt(λ₀N) D]` once at an *anchor* weight λ₀, so that
+`R₀ᵀR₀ = AᵀA + λ₀NJ`, and set `D̃ = sqrt(N) D R₀⁻¹`. Then for every weight
+
+```
+AᵀA + λNJ  =  R₀ᵀ (I + (λ − λ₀) D̃ᵀD̃) R₀
+```
+
+and eigendecomposing `D̃ᵀD̃ = U diag(γ) Uᵀ` makes the middle factor diagonal. A
+fit becomes one elementwise division by `1 + (λ − λ₀)γ` and a triangular solve.
+
+At `λ = λ₀` the divisor is 1 and this *is* `qr`, back-substitution and all — the
+two agree to rounding, and `dr` meets every bound `qr` meets at identical
+margins. What it buys is the sweep. The QR, the triangular solve and the
+eigendecomposition do not depend on `λ`, so `BSplineField.refit(lam)` is the
+division alone:
+
+Measured on `brain.mnc`'s estimation grid — one spline fit per solver, against
+`dr`'s marginal cost for another weight:
+
+| `--distance` | coefficients | `normal` | `qr` | `blocked` | `dr` | `dr` refit |
+|---|---|---|---|---|---|---|
+| 200 mm | 80 | 4.9 ms | 5.6 ms | 8.6 ms | 7.3 ms | **0.033 ms** |
+| 100 mm | 150 | 3.6 ms | 9.0 ms | 12.5 ms | 14.9 ms | **0.044 ms** |
+| 50 mm | 392 | 8.3 ms | 27.7 ms | 26.5 ms | 43.6 ms | **0.140 ms** |
+
+That is what makes GCV or REML smoothing-parameter selection affordable here,
+and it is the tool to reach for when re-measuring the `--lambda` × `--distance`
+tables above.
+
+**For a single weight it is the slowest solver, and there is no reason to pick
+it.** The eigendecomposition is `O(k³)` on top of everything `qr` does and buys
+nothing until a second weight is asked for: a whole 30-iteration run takes
+1.8 s at 50 mm where `qr` takes 1.2 s and `normal` 0.4 s. It pays from the
+second weight and is dramatic by the fourth. Below that, use `qr`.
+
+#### What each solver costs on a GPU
+
+Peak CUDA memory *allocated* (not process RSS) for one spline fit on
+`brain_nu_ref.mnc`, measured 2026-08-01 on an RTX A6000. `legacy` is CFFI and
+CPU-only; `sparse` goes through `scipy` on the CPU; neither has a GPU
+footprint.
+
+| estimation grid | `--distance` | coefficients | `normal` | `qr` | `blocked` | `dr` |
+|---|---|---|---|---|---|---|
+| shrink 4 (3.7k samples) | 200 mm | 80 | 15 MB | 28 MB | 30 MB | 23 MB |
+| shrink 4 | 50 mm | 392 | 26 MB | 61 MB | 35 MB | 48 MB |
+| shrink 4 | 12.5 mm | 7,581 | 1.77 GB | 2.87 GB | 3.63 GB | 4.62 GB |
+| shrink 1 (238k samples) | 50 mm | 392 | 355 MB | 2.90 GB | 1.14 GB | 1.73 GB |
+| shrink 1 | 25 mm | 1,452 | 370 MB | 8.75 GB | 1.36 GB | 5.65 GB |
+
+At the shipped protocol the whole 30-iteration pipeline peaks near 100 MB
+whichever solver runs, so none of this matters there. Off it, two things do.
+
+`normal` is the most frugal by an order of magnitude — it holds `AᵀA`, never
+`A` — which is the real counterweight to its conditioning.
+
+And **`blocked`'s advantage is about the sample-to-coefficient ratio, not about
+`--distance`**. It wins decisively where samples greatly outnumber coefficients
+(1.36 GB against `qr`'s 8.75 GB at shrink 1 and 25 mm). Where coefficients
+*exceed* samples — shrink 4 at 12.5 mm, 7,581 against 3,724 — it is the
+second-worst of the four, because its running `R` is `O(size²)` and there is no
+longer much `A` to avoid holding.
+
+`γ` is non-negative, so the divisor is never below 1 and no amount of dynamic
+range in `γ` can reach the answer. The one constraint is that the basis is
+valid only at or above its anchor — below it the divisor can pass through zero
+— so `anchor=` belongs at the bottom of the grid you mean to sweep, and
+`refit()` raises underneath it rather than returning a number.
+
+**The textbook version of this does not work here**, which is worth knowing
+before reaching for it. Demmler–Reinsch is normally written on the QR of the
+design `A` alone. But `A` here is the *masked* design, and at fine knot spacings
+the mask leaves basis functions with no data under them at all:
+
+| `--distance` | coefficients | rank(A) | cond(A) | cond(stacked) | cond(normal) |
+|---|---|---|---|---|---|
+| 200 mm | 64 | 64 | 8.4e7 | 3.5e6 | 1.2e13 |
+| 100 mm | 100 | 100 | 7.1e6 | 8.6e5 | 7.5e11 |
+| 50 mm | 245 | **243** | **7.5e12** | 2.9e5 | 8.6e10 |
+
+So `R` from `A` alone is *worse* conditioned than the stacked system at every
+spacing, and at 50 mm `A` is rank deficient and `R` singular to working
+precision — worse even than the normal equations there. `D R⁻¹` then overflows
+into a `γ` with 83 non-positive entries reaching `-5.7e6`, and the divisor
+passes through zero. Clipping `γ` at zero, the usual advice, does not rescue it:
+the eigenvectors are as damaged as the eigenvalues. Anchoring on the stacked
+matrix costs nothing and removes the failure, because the penalty rows span
+exactly the directions the data leaves empty. See [PROBLEMS.md](PROBLEMS.md)
+§12.
+
 #### What did not work
 
 `--solver sparse` holds the same stacked system in `scipy.sparse` and hands it
@@ -692,6 +786,22 @@ together rather than one at a time.
 
 The 20% table is in `python3 -m torch_n3 --help` too, so it is to hand when the
 question comes up.
+
+**These are `--solver normal`'s numbers, and they barely depend on that.** Both
+tables were re-measured under every direct solver on 2026-07-31 with
+`python3 -m tests.tables`, which is also how to re-measure them after touching
+any block. `normal` reproduces all 24 cells exactly; `qr` and `dr` differ in 2
+cells of 24 and `blocked` in 3, none by more than 0.01 points, and the largest
+relative move in any cell is 3.2% (`qr`, `dr`) or 4.7% (`blocked`). Every
+conclusion above — the interior minimum in each column and where it sits, the
+decade-per-halving rule, the asymmetry at 50 mm — holds identically under all
+four. That is worth stating because these runs are 30 iterations deep, well
+past the point where two implementations' *volumes* stop being comparable: what
+the tables measure is the trade-off, not the arithmetic.
+
+It also sets the scale for reading them. `dr` is algebraically `qr` at a fixed
+weight, and 30 iterations still move it 0.3% from `qr` in the most mobile cell.
+The last digit of a cell is not meaningful.
 
 Worth noting that the shipped `1e-7` is not the best cell in either table —
 `1e-6` at the default spacing halves the residual at both amplitudes. Don't

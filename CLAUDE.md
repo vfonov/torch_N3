@@ -29,7 +29,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `torch_n3/_legacy/n3/` | The N3 sources the shim compiles, vendored byte for byte from `legacy/N3/src` (see its `README.md`) so the legacy backend builds without an N3 checkout. **Do not modify** — they are the oracle. Everything below still cites `legacy/N3/src` as the *source of truth*; for the files listed there, the two are the same bytes. |
 | `torch_n3/_legacy/ebtks/` | Likewise EBTKS, vendored from `legacy/EBTKS`: all headers, seven `.cc` files, no `clapack/`. The build links the **system** LAPACK/BLAS instead — the one thing the extension still needs from outside. What that swap costs is measured in `README.md`; it is not nothing. |
 | `torch_n3/_legacy/compat/` | Stand-ins for `<volume_io.h>`, `<time_stamp.h>` and `<ParseArgv.h>`, placed first on the include path so that `correctField.cc` and `args.cc` compile **unmodified** without libminc2. `smooth()` does its whole solve on flat `float`/`char` arrays; volume_io was only ever the marshalling at its edges. |
-| `tests/margins.py`, `tests/convergence.py` | Neither is a test; both measure and print. `python3 -m tests.margins` prints `PROBLEMS.md`'s table — where every comparison sits against its bound. `python3 -m tests.convergence` prints where the two backends stop agreeing as iterations grow, which is a property of the machine's LAPACK rather than of this code; run it on any new platform before trusting an end-to-end number there. |
+| `tests/margins.py`, `tests/convergence.py`, `tests/tables.py` | None is a test; all three measure and print. `python3 -m tests.margins` prints `PROBLEMS.md`'s table — where every comparison sits against its bound. `python3 -m tests.convergence` prints where the two backends stop agreeing as iterations grow, which is a property of the machine's LAPACK rather than of this code; run it on any new platform before trusting an end-to-end number there. `python3 -m tests.tables` re-measures the `--lambda` × `--distance` tables under each direct solver and diffs them against the copies published in `README.md` and `cli.py`. |
 | `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/data/brain_nu_ref_legacy.mnc` | Not one of N3's files: this pipeline's own output on `brain.mnc` with the legacy blocks, under `inputs.PLATFORM_PROTOCOL`, checked in so another machine/BLAS/device can be held to it (`tests/test_reproducibility.py`). Written by the regeneration script. Regenerating churns MINC's `ident` header attribute; the voxel data is reproducible. |
@@ -222,23 +222,38 @@ checked by nobody. They are also *not* invariant: they run the pipeline for 30 i
 which is well past the histogram knife-edge, so a change to any block — or to which LAPACK
 the shim links — can move them.
 
-Re-measure them, do not adjust them, and change both copies together. It is 24 cells, two
-`nu_estimate` calls each, about 15 s in total; drive it over `AMPLITUDES × DISTANCES ×
-(1e-7, 1e-6, 1e-5, 1e-4)` exactly as the `regularized` fixture does, and take
-`ratio.std(unbiased=False)` of the recovered field over the planted one, each divided by the
-same implementation's baseline on the untouched reference. Verified unchanged 2026-07-31,
-after the LAPACK swap.
+Re-measure them, do not adjust them, and change both copies together. **`python3 -m
+tests.tables` is how** — it drives `AMPLITUDES × DISTANCES × (1e-7, 1e-6, 1e-5, 1e-4)`
+exactly as the `regularized` fixture does, takes `ratio.std(unbiased=False)` of the
+recovered field over the planted one (each divided by the same implementation's baseline on
+the untouched reference), and diffs the result against the published copies, so a stale cell
+shows up as a mismatch the way `tests.margins` shows a stale bound. It is 24 cells and two
+`nu_estimate` calls each, about 15 s per solver.
 
-**Re-run 2026-07-31 under both spline solvers**, and they are steadier than the warning
-above implies. All 24 cells reproduce under `solver="normal"`; under `solver="qr"` the
-largest move in any cell is 3.2% relative (20%, 100 mm, `1e-6`: 0.2157% → 0.2226%), and 22
-of the 24 are unchanged at the two decimals both copies print — the exceptions are 40%/50 mm
-at `1e-7` (1.96% → 1.95%) and at `1e-5` (0.48% → 0.47%). Every conclusion drawn from them
-survives intact: the same interior minimum in each column (`1e-6` at 200 mm, `1e-5` at 100
-and 50 mm), identically at both amplitudes, the decade-per-halving rule, and the asymmetry
-at 50 mm. So the tables are measuring the `lambda`/`distance` trade-off rather than
-recording which side of the histogram knife-edge a voxel fell on — worth knowing, given
-that they run 30 iterations, well past it.
+**Re-run 2026-07-31 under every direct solver**, and the tables are steadier than the
+warning above implies. All 24 cells reproduce exactly under `solver="normal"`, which is what
+both copies hold. Against `normal`'s own measurement:
+
+| solver | cells differing at 2 dp | largest relative move |
+|---|---|---|
+| `normal` | 0 of 24 | — |
+| `qr` | 2 of 24 | 3.2% |
+| `dr` | 2 of 24 | 3.2% |
+| `blocked` | 3 of 24 | 4.7% |
+
+Every move is in the same few shallow cells: 40%/50 mm at `1e-7` (1.96% → 1.95%) and at
+`1e-5` (0.48% → 0.47%) for `qr` and `dr`, plus 20%/50 mm at `1e-7` (1.51% → 1.52%) and
+20%/100 mm at `1e-6` (0.22% → 0.23%) for `blocked`. The largest relative move is at
+20%/100 mm/`1e-6` for all three. Every conclusion drawn from the tables survives all four
+solvers: the same interior minimum in each column (`1e-6` at 200 mm, `1e-5` at 100 and 50
+mm), identically at both amplitudes, the decade-per-halving rule, and the asymmetry at 50
+mm. So the tables are measuring the `lambda`/`distance` trade-off rather than recording
+which side of the histogram knife-edge a voxel fell on — worth knowing, given that they run
+30 iterations, well past it.
+
+Note that `dr` is *algebraically* `qr` at a fixed weight and still moves 0.3% from it in the
+most mobile cell — 30 iterations amplify float64 rounding that much. That is the scale to
+keep in mind before reading anything into a cell's last digit.
 
 If you find yourself relying on a cell, the honest fix is to widen `LAMBDAS` and assert the
 shape being claimed — that each column has an interior minimum, and where — rather than to
@@ -319,11 +334,12 @@ keep trusting a table by hand.
   cliff seen is 2 — so any increase needs this run on every platform that matters, not just
   one. That floor is set by the *default* solver; under `qr` the smallest cliff measured
   here is 4.
-- **Four solvers now, and only three of them work.** `blocks/spline.py` has `solver=` with
+- **Five solvers now, and only four of them work.** `blocks/spline.py` has `solver=` with
   `normal` (the legacy's normal equations, the default and the reference), `qr` (dense
-  stacked least squares), `blocked` (the same stacked system folded in one band at a time)
-  and `sparse` (the same again through `scipy.sparse` + `lsqr`). `DIRECT_SOLVERS` is the
-  first three — parametrise anything asserting an exact fit over *that*, not over `SOLVERS`.
+  stacked least squares), `blocked` (the same stacked system folded in one band at a time),
+  `dr` (the same system reparameterized so the penalty is diagonal) and `sparse` (the same
+  again through `scipy.sparse` + `lsqr`). `DIRECT_SOLVERS` is the first four —
+  parametrise anything asserting an exact fit over *that*, not over `SOLVERS`.
   `blocked` exploits the fact that `A` is banded once its rows are sorted by first-axis
   knot: a sample with corner `k` touches only columns `[k*n1*n2, (k+4)*n1*n2)`. It equals
   `qr` to 4e-15 and shares its CPU/GPU reproducibility, but never holds `A` — at 12.5 mm
@@ -332,6 +348,41 @@ keep trusting a table by hand.
   to gain at the shipped spacing. `sparse` **does not converge** — LSQR is defeated by the
   same conditioning the stacked form reduces, and stops at `istop=3`, 1.8e-3 from the
   direct answer; it is kept as a recorded negative result, not as an option to use.
+- **`dr` is for sweeping `lambda`, and is `qr` when you are not.** The Demmler–Reinsch
+  reparameterization factorizes `[A; sqrt(lambda_0 N) D]` once at an *anchor* weight, so
+  `R0'R0 = A'A + lambda_0 N J`, then diagonalizes the penalty in that basis: with
+  `D~ = sqrt(N) D R0^-1` and `D~'D~ = U diag(gamma) U'`, every weight satisfies
+  `A'A + lambda N J = R0'(I + (lambda - lambda_0) D~'D~)R0`. A fit is then one elementwise
+  division and a triangular solve. At `lambda == lambda_0` the divisor is 1 and the answer
+  *is* `qr`'s, to rounding — which is why `dr` sits in `DIRECT_SOLVERS` and meets the same
+  oracle bounds (identical margins to `qr`: 7.49e-08, 1.52e-08, 2.24e-12). What it buys is
+  `BSplineField.refit(lam)`: on `brain.mnc`'s estimation grid a further weight costs 0.033 ms
+  at 200 mm and 0.140 ms at 50 mm, against 5.6 ms and 27.7 ms for a fresh `qr` fit — 170–200×.
+  That is the thing to reach for when re-measuring the `--lambda` × `--distance` tables.
+- **For a *single* weight `dr` is the slowest solver, and hungry; don't reach for it
+  otherwise.** The eigendecomposition is `O(k^3)` on top of everything `qr` does, and buys
+  nothing until a second weight is asked for. One fit on `brain.mnc`'s estimation grid:
+  7.3 ms at 200 mm and 43.6 ms at 50 mm, against `qr`'s 5.6 and 27.7 and `normal`'s 4.9 and
+  8.3; a whole 30-iteration run is 1.8 s at 50 mm against `qr`'s 1.2 s and `normal`'s 0.4 s.
+  It breaks even at about the second weight. `normal` is also the most memory-frugal by an
+  order of magnitude off the shipped protocol — it holds `AtA`, never `A` (370 MB against
+  `qr`'s 8.75 GB at `-shrink 1`, 25 mm). And `blocked`'s memory win is about the
+  sample-to-coefficient ratio, not about `-distance`: it beats `qr` 6.4× where samples
+  greatly outnumber coefficients, but is second-worst of the four at `-shrink 4`, 12.5 mm,
+  where coefficients (7,581) exceed samples (3,724) and its `O(size^2)` running `R`
+  dominates. Figures in `README.md`, "What each solver costs on a GPU".
+- **Anchor `dr` on the stacked matrix, never on `A` alone.** The textbook Demmler–Reinsch
+  takes the QR of the design alone. That is unusable here and the failure is quiet: `A` is
+  the *masked* design, and at fine spacings the mask leaves basis functions with no data
+  under them. Measured on `chunk.mnc`, `cond(A)` is 8.4e7 at 200 mm and 7.5e12 at 50 mm,
+  where `A` is rank deficient (243 of 245 columns) — worse than the normal equations there
+  — and `D R^-1` overflows into a `gamma` with 83 non-positive entries reaching -5.7e6, so
+  `1 + lambda N gamma` goes through zero. Clipping `gamma` at zero does not rescue it; the
+  eigenvectors are as damaged as the eigenvalues. Anchoring on `[A; sqrt(lambda_0 N) D]`
+  costs nothing and fixes it, because the penalty rows span exactly the directions the data
+  leaves empty: `cond(R0)` is 3.5e6 and 2.9e5 at those spacings. The price is that the basis
+  is valid only at or above its anchor — below it the divisor can reach zero — so
+  `anchor=` belongs at the bottom of the grid, and `refit()` raises underneath it.
 - **"Legacy" means two different things; keep them apart.** The *installed* N3 is a Perl
   script driving separate executables, which can only talk through files. The `legacy`
   *backend* here is those same C++ routines called through the CFFI shim, on float64

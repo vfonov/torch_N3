@@ -55,6 +55,63 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     it peaks at 1.55 GB against ``"qr"``'s 7.53 GB, and runs 3.7x faster.  At
     200 mm there is a single group and it *is* ``"qr"``, plus a sort.
 
+``"dr"``
+    The same stacked system, factorised once and then *reparameterized* so
+    that the penalty becomes diagonal -- the Demmler-Reinsch basis.  Take the
+    triangular factor ``R0`` of ``[A; sqrt(lambda_0 N) D]`` at an anchor weight
+    ``lambda_0``, so that ``R0' R0 = A'A + lambda_0 N J`` exactly, and let
+    ``D~ = sqrt(N) D R0^-1``.  Then for *every* weight
+
+    .. math::  A^T A + \\lambda N J
+               = R_0^T \\bigl(I + (\\lambda - \\lambda_0)\\,
+                 \\tilde{D}^T \\tilde{D}\\bigr) R_0,
+
+    and eigendecomposing ``D~'D~ = U diag(gamma) U'`` turns the middle factor
+    into a diagonal one.  The fit is then
+
+    .. math::  c = R_0^{-1} U \\,
+               \\frac{U^T Q_0^T [f; 0]}{1 + (\\lambda - \\lambda_0)\\gamma},
+
+    a triangular solve around an elementwise division.  At ``lambda ==
+    lambda_0`` the divisor is one and this *is* ``"qr"``, back-substitution and
+    all; the two agree to rounding, which is what the suite holds it to.
+
+    What it buys is a ``lambda`` sweep.  The QR, the triangular solve and the
+    eigendecomposition are all independent of ``lambda``, so a whole grid --
+    GCV or REML smoothing-parameter selection, or the ``--lambda`` x
+    ``--distance`` tables -- costs one factorization plus one division per
+    point instead of one fit per point.  :meth:`BSplineField.refit` is that
+    division: on ``brain.mnc``'s estimation grid a further weight costs 0.033
+    ms at 200 mm and 0.140 ms at 50 mm, against 5.6 ms and 27.7 ms for a fresh
+    ``"qr"`` fit -- 170x to 200x.  ``gamma`` is non-negative and the divisor
+    therefore never below one, so no amount of dynamic range in ``gamma``
+    (seven decades here) can reach the answer.
+
+    **For a single weight this is the slowest solver, and there is no reason
+    to pick it.**  The eigendecomposition of ``D~'D~`` is ``O(k^3)`` on top of
+    everything ``"qr"`` does, and it buys nothing until a second weight is
+    asked for.  One fit on the same grid: 7.3 ms at 200 mm against ``"qr"``'s
+    5.6 ms and ``"normal"``'s 4.9 ms, and 43.6 ms at 50 mm against 27.7 ms and
+    8.3 ms -- so a whole 30-iteration pipeline runs 1.8 s at 50 mm where
+    ``"qr"`` runs 1.2 s.  It pays from the second weight onwards and is
+    dramatic by the fourth; below that, use ``"qr"``.
+
+    **The anchor is what makes this work, and it is not what the textbook
+    recipe does.**  Demmler-Reinsch is usually written on the QR of ``A``
+    alone, whose ``R`` is then used for ``D~``.  That is unusable here: ``A``
+    is the masked design, and at fine knot spacings the mask leaves basis
+    functions with no data under them at all.  Measured on ``chunk.mnc``,
+    ``cond(A)`` is ``8.4e7`` at 200 mm and ``7.5e12`` at 50 mm, where ``A``
+    is *rank deficient* -- 243 of 245 columns -- and ``D R^-1`` overflows into
+    a ``gamma`` with 83 non-positive entries reaching ``-5.7e6``.  Clipping
+    those at zero does not help; the eigenvectors are as damaged as the
+    eigenvalues.  Anchoring on the stacked matrix instead costs nothing and
+    fixes it outright, because the penalty rows span precisely the directions
+    the data leaves empty: ``cond(R0)`` is the stacked system's ``3.5e6`` and
+    ``2.9e5`` at those two spacings.  The price is that the basis is only
+    valid at or above its anchor -- below it the divisor can pass through zero
+    -- so ``anchor`` belongs at the bottom of the intended grid.
+
 ``"sparse"``
     The same stacked system again, held in ``scipy.sparse`` and handed to
     ``lsqr``.  **It does not converge on this problem and should not be used
@@ -97,13 +154,13 @@ _CHUNK_ELEMENTS = 1 << 22
 #: The solvers :meth:`BSplineField.fit` can be asked for.  ``"normal"`` is the
 #: legacy's own formulation and the reference the others are measured against;
 #: see this module's docstring.
-SOLVERS = ("normal", "qr", "blocked", "sparse")
+SOLVERS = ("normal", "qr", "blocked", "dr", "sparse")
 
 #: The solvers that answer the fit by a direct factorization, and so to the
 #: last few bits of float64.  ``"sparse"`` is iterative and is not among them:
 #: it stops on a tolerance it cannot reach here.  Anything asserting an exact
 #: fit should be parametrised over these, not over :data:`SOLVERS`.
-DIRECT_SOLVERS = ("normal", "qr", "blocked")
+DIRECT_SOLVERS = ("normal", "qr", "blocked", "dr")
 
 
 class BSplineField:
@@ -114,11 +171,16 @@ class BSplineField:
     is the box the spline is defined on; by default it is the whole bounding
     box of ``grid``, which is what ``spline_smooth -full_support`` uses.
     ``solver`` picks how the least-squares problem is answered -- see the
-    module docstring; both minimise the same objective.
+    module docstring; all of them minimise the same objective.
+
+    ``anchor`` belongs to ``solver="dr"`` alone: it is the weight that solver
+    takes its factorization at, and the lowest one :meth:`refit` can then be
+    asked for.  It defaults to ``lam``, which makes a single fit behave exactly
+    like ``"qr"``; set it to the bottom of the grid you mean to sweep.
     """
 
     def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
-                 solver="normal"):
+                 solver="normal", anchor=None):
         self.grid = grid
         self.distance = float(distance)
         self.lam = float(lam)
@@ -128,6 +190,18 @@ class BSplineField:
             raise ValueError("unknown solver %r: expected one of %s"
                              % (solver, ", ".join(map(repr, SOLVERS))))
         self.solver = solver
+
+        if anchor is not None and solver != "dr":
+            raise ValueError("anchor is meaningful to solver=\"dr\" alone, "
+                             "not to %r" % solver)
+        self.anchor = self.lam if anchor is None else float(anchor)
+        if self.anchor <= 0.0:
+            raise ValueError("the anchor weight must be positive")
+        if self.anchor > self.lam:
+            raise ValueError("anchor %g is above lambda %g: a Demmler-Reinsch "
+                             "basis is only valid at or above its anchor"
+                             % (self.anchor, self.lam))
+        self._dr_basis = None
 
         low, high = _domain_of(grid) if domain_world is None else domain_world
         low, high = np.asarray(low, float), np.asarray(high, float)
@@ -187,7 +261,7 @@ class BSplineField:
         self._nsamples = int(where.shape[0])
 
         solve = {"qr": self._solve_stacked, "sparse": self._solve_sparse,
-                 "blocked": self._solve_blocked,
+                 "blocked": self._solve_blocked, "dr": self._solve_dr,
                  "normal": self._solve_normal}[self.solver]
         self._coefficients = solve(columns, weights, sampled)
         return self
@@ -331,6 +405,38 @@ class BSplineField:
         return torch.linalg.solve_triangular(
             final[:size, :size], final[:size, size:], upper=True)[:, 0]
 
+    def _solve_dr(self, columns, weights, values):
+        """Factorise once into the Demmler-Reinsch basis, then solve by division.
+
+        The stacked matrix is built exactly as :meth:`_solve_stacked` builds
+        it, but at the *anchor* weight and with the right-hand side carried
+        along as an extra column, so that triangularising it delivers ``R0``
+        and ``Q0'[f; 0]`` together and ``Q0`` itself is never formed -- the
+        same trick :meth:`_solve_blocked` uses to get its back-substitution
+        for free.
+
+        Everything expensive is in that factorization and in the
+        eigendecomposition :class:`DemmlerReinschBasis` does on top of it, and
+        neither depends on ``lambda``.  The basis is kept so that
+        :meth:`refit` can sweep one.
+        """
+        size = int(np.prod(self.n))
+        factor = bending_energy_factor(self.n, self.device)
+        scale = math.sqrt(self.anchor * self._nsamples)
+        rows = columns.shape[0]
+
+        stacked = torch.zeros((rows + factor.shape[0], size + 1),
+                              dtype=torch.float64, device=self.device)
+        stacked[:rows, :size].scatter_(1, columns, weights)
+        stacked[:rows, size] = values
+        stacked[rows:, :size] = scale * factor
+
+        triangle = torch.linalg.qr(stacked, mode="r")[1]
+        self._dr_basis = DemmlerReinschBasis(
+            triangle[:size, :size], triangle[:size, size], factor,
+            self._nsamples, self.anchor)
+        return self._dr_basis.coefficients(self.lam)
+
     def _solve_sparse(self, columns, weights, values):
         """``"qr"``'s stacked system, held sparse and solved iteratively.
 
@@ -413,6 +519,27 @@ class BSplineField:
             raise RuntimeError("coefficients before fit()")
         return self._coefficients
 
+    @property
+    def dr_basis(self):
+        """The Demmler-Reinsch decomposition, once ``solver="dr"`` has fitted."""
+        if self._dr_basis is None:
+            raise RuntimeError("no Demmler-Reinsch basis: that needs "
+                               "solver=\"dr\" and a completed fit()")
+        return self._dr_basis
+
+    def refit(self, lam):
+        """Move to another ``lambda`` without factorising again.
+
+        Only ``solver="dr"`` can do this, and only at or above its ``anchor``.
+        The whole cost is one elementwise division and a triangular solve, so
+        a ``lambda`` grid is a sweep over this rather than a sequence of fits;
+        the answer is the same one a fresh fit at ``lam`` would reach.
+        """
+        basis = self.dr_basis
+        self._coefficients = basis.coefficients(lam)
+        self.lam = float(lam)
+        return self
+
     def evaluate(self):
         """Evaluate the fitted spline on the grid it was fitted to."""
         return self.evaluate_on(self.grid)
@@ -491,6 +618,134 @@ class BSplineField:
                     + neighbours[None, :, None]) * self.n[2]
                    + neighbours[None, None, :]).reshape(-1)
         return base[:, None] + offsets
+
+
+# ------------------------------------------------------- Demmler-Reinsch basis
+
+class DemmlerReinschBasis:
+    """A penalised least-squares fit reparameterized so the penalty is diagonal.
+
+    Built from the triangular factor of the *stacked* system at an anchor
+    weight -- ``R0' R0 = A'A + lambda_0 N J`` -- together with the transformed
+    right-hand side ``rhs = Q0'[f; 0]``, which the same factorization produces
+    when the data rides along as an extra column.  See this module's docstring
+    for the algebra and for why the anchor is on the stacked matrix rather than
+    on ``A`` alone.
+
+    Everything here is independent of ``lambda``: the triangular solve that
+    forms ``D~ = sqrt(N) D R0^-1`` (Step 2), the eigendecomposition ``D~'D~ =
+    U diag(gamma) U'`` (Step 3), and the projection of the right-hand side into
+    that basis (Step 4).  :meth:`coefficients` is Steps 5 and 6, and is the
+    only part a ``lambda`` sweep repeats.
+
+    ``gamma`` is the penalty spectrum in the transformed basis, sorted
+    ascending by ``eigh``.  Its four smallest entries are zero to working
+    precision in three dimensions -- ``J`` cannot see an affine field -- and
+    those are the unpenalised trend components of the classical
+    Demmler-Reinsch construction.
+
+    References
+    ----------
+    Demmler, A. & Reinsch, C. (1975). "Oscillation matrices with spline
+    smoothing." *Numerische Mathematik* 24, 375-382.
+    Eilers, P. H. C. & Marx, B. D. (1996). "Flexible smoothing with B-splines
+    and penalties." *Statistical Science* 11, 89-121.
+    Ruppert, D., Wand, M. P. & Carroll, R. J. (2003). *Semiparametric
+    Regression*, ch. 3.
+    """
+
+    def __init__(self, triangle, rhs, factor, nsamples, anchor):
+        self.triangle = triangle
+        self.rhs = rhs
+        self.nsamples = int(nsamples)
+        self.anchor = float(anchor)
+
+        # Step 2.  `left=False` solves `X @ triangle = factor`, which is
+        # `D R0^-1` -- a triangular solve, never an explicit inverse.
+        self.d_tilde = math.sqrt(self.nsamples) * torch.linalg.solve_triangular(
+            triangle, factor, upper=True, left=False)
+
+        # Step 3.  `D~'D~` is a Gram matrix, so its spectrum is non-negative;
+        # the clamp is for the handful of entries that come back a rounding
+        # error below zero, as in `bending_energy_factor`.
+        gamma, vectors = torch.linalg.eigh(self.d_tilde.T @ self.d_tilde)
+        self.gamma = gamma.clamp(min=0.0)
+        self.vectors = vectors
+
+        # Step 4.
+        self.projected = vectors.T @ rhs
+
+    def divisor(self, lam):
+        """``1 + (lambda - lambda_0) * gamma`` -- what Step 5 divides by.
+
+        At or above the anchor every entry is at least one, which is the whole
+        point of the reparameterization: there is nothing here to cancel, and
+        ``gamma``'s dynamic range cannot reach the answer.
+        """
+        return 1.0 + (float(lam) - self.anchor) * self.gamma
+
+    def coefficients(self, lam):
+        """Steps 5 and 6: the elementwise division, then back to coefficients."""
+        lam = float(lam)
+        if lam < self.anchor:
+            raise ValueError(
+                "lambda %g is below this basis's anchor %g; the divisor is "
+                "only bounded away from zero at or above it, so anchor the "
+                "basis at the bottom of the grid you mean to sweep"
+                % (lam, self.anchor))
+
+        alpha = self.projected / self.divisor(lam)
+        return torch.linalg.solve_triangular(
+            self.triangle, (self.vectors @ alpha)[:, None], upper=True)[:, 0]
+
+    @property
+    def cond(self):
+        """Condition number of ``R0``, i.e. of the stacked system it factorised."""
+        return float(torch.linalg.cond(self.triangle))
+
+
+def fit_penalized_spline_dr(design, factor, values, lam, anchor=None,
+                            return_diagnostics=False):
+    """Fit ``(B'B + lam D'D) c = B'y`` through the Demmler-Reinsch basis.
+
+    The standalone form of what ``BSplineField(..., solver="dr")`` does, on
+    matrices handed in directly: ``design`` is ``B`` (``n x k``), ``factor`` is
+    ``D`` (``p x k``, the penalty's square root, ``D'D = J``), ``values`` is
+    ``y``.  Note the convention -- ``lam`` multiplies ``D'D`` with no sample
+    count in it, so a caller using N3's ``lambda * N * J`` folds the ``N`` in
+    itself.
+
+    ``anchor`` is the weight the factorization is taken at, defaulting to
+    ``lam``; the returned basis is valid at that weight and above.  Fitting a
+    grid means calling this once at the bottom of it and then
+    :meth:`DemmlerReinschBasis.coefficients` per point -- the QR and the
+    eigendecomposition do not depend on ``lam`` and must not be repeated.
+
+    Returns ``c``, or ``(c, basis)`` when ``return_diagnostics`` is set, the
+    basis carrying ``gamma``, ``vectors``, ``triangle``, ``d_tilde`` and
+    ``cond``.
+    """
+    design = torch.as_tensor(design, dtype=torch.float64)
+    factor = torch.as_tensor(factor, dtype=torch.float64)
+    values = torch.as_tensor(values, dtype=torch.float64)
+    lam = float(lam)
+    anchor = lam if anchor is None else float(anchor)
+
+    size = design.shape[1]
+    stacked = torch.zeros((design.shape[0] + factor.shape[0], size + 1),
+                          dtype=torch.float64, device=design.device)
+    stacked[:design.shape[0], :size] = design
+    stacked[:design.shape[0], size] = values
+    stacked[design.shape[0]:, :size] = math.sqrt(anchor) * factor
+
+    triangle = torch.linalg.qr(stacked, mode="r")[1]
+    # `nsamples` is 1 here: this signature carries the sample count inside
+    # `lam` already, so `D~` is `D R0^-1` unscaled.
+    basis = DemmlerReinschBasis(triangle[:size, :size], triangle[:size, size],
+                                factor, 1, anchor)
+
+    coefficients = basis.coefficients(lam)
+    return (coefficients, basis) if return_diagnostics else coefficients
 
 
 def _domain_of(grid):
