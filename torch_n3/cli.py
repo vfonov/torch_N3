@@ -12,6 +12,7 @@ import argparse
 import sys
 
 from torch_n3.blocks.spline import SOLVERS
+from torch_n3.optimize import OBJECTIVES, nu_optimize
 from torch_n3.pipeline import DEFAULTS, evaluate_field, nu_estimate, nu_evaluate
 from torch_n3.volume import load_volume, save_volume
 
@@ -116,6 +117,21 @@ def build_parser():
                              "('sparse' does not converge; see PROBLEMS.md.) "
                              "torch backend only (default: %(default)s)")
     parser.add_argument("--device", help="run on this torch device, e.g. cuda")
+    parser.add_argument("--method", choices=("n3",) + OBJECTIVES, default="n3",
+                        help="how to estimate the field: 'n3' is the shipped "
+                             "alternating iteration; 'hoyer' and 'tightness' "
+                             "minimise a stated sharpness objective by "
+                             "gradient descent over the same B-spline field "
+                             "(torch_n3/optimize.py).  The two descent methods "
+                             "ignore --fwhm's partner --noise, --bins, "
+                             "--iterations and --stop, and take --lambda as a "
+                             "weight on a *different* scale -- see "
+                             "optimize.PENALTY (default: %(default)s)")
+    parser.add_argument("--penalty", type=float,
+                        help="bending-energy weight for --method hoyer or "
+                             "tightness.  Not --lambda: the data term is "
+                             "dimensionless, so the two are not comparable "
+                             "(default: per objective, optimize.PENALTY)")
     parser.add_argument("--verbose", action="store_true",
                         help="report the field change at every iteration")
     return parser
@@ -132,11 +148,19 @@ def main(argv=None):
     mask = read(args.mask) if args.mask else None
     evaluation_mask = read(args.evaluation_mask) if args.evaluation_mask else None
 
-    field = nu_estimate(volume, mask=mask, verbose=args.verbose,
-                        distance=args.distance, fwhm=args.fwhm, noise=args.noise,
-                        bins=args.bins, shrink=args.shrink, lam=args.lam,
-                        iterations=tuple(args.iterations), stop=tuple(args.stop),
-                        backend=args.backend, solver=args.solver)
+    if args.method == "n3":
+        field = nu_estimate(volume, mask=mask, verbose=args.verbose,
+                            distance=args.distance, fwhm=args.fwhm,
+                            noise=args.noise, bins=args.bins,
+                            shrink=args.shrink, lam=args.lam,
+                            iterations=tuple(args.iterations),
+                            stop=tuple(args.stop), backend=args.backend,
+                            solver=args.solver)
+    else:
+        field = nu_optimize(volume, mask=mask, verbose=args.verbose,
+                            objective=args.method, distance=args.distance,
+                            fwhm=args.fwhm, shrink=args.shrink,
+                            penalty=args.penalty, solver=args.solver)
 
     corrected = nu_evaluate(volume, field, mask=evaluation_mask,
                             field_floor=args.field_floor, backend=args.backend)

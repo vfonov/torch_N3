@@ -235,8 +235,37 @@ class BSplineField:
 
         step = int(subsample)
         selected = values[::step, ::step, ::step]
+
+        columns, weights, where = self.design(mask, step)
+        sampled = selected[where[:, 0], where[:, 1], where[:, 2]]
+        self._nsamples = int(where.shape[0])
+
+        solve = {"qr": self._solve_stacked, "sparse": self._solve_sparse,
+                 "blocked": self._solve_blocked, "dr": self._solve_dr,
+                 "normal": self._solve_normal}[self.solver]
+        self._coefficients = solve(columns, weights, sampled)
+        return self
+
+    def design(self, mask=None, subsample=1):
+        """Where each sample sits in the basis: ``(columns, weights, where)``.
+
+        One row per masked voxel, holding the 64 basis functions that voxel
+        falls under (``weights``) and their flat coefficient indices
+        (``columns``), plus the voxel indices themselves (``where``).  This is
+        the design matrix ``A`` in the sparse form it is actually built in --
+        every row has 64 non-zeros and no other -- which is why the solvers
+        can scatter it into slabs instead of holding it whole.
+
+        :meth:`fit` uses it to build a system.  :mod:`torch_n3.optimize` uses
+        it to *evaluate*: ``(weights * c[columns]).sum(1)`` is the field at the
+        samples, differentiable in ``c``, with no dense matrix anywhere.  Both
+        want exactly these two tensors, which is why this is public.
+        """
+        step = int(subsample)
         if mask is None:
-            inside = torch.ones_like(selected, dtype=torch.bool)
+            shape = tuple(len(range(0, length, step))
+                          for length in self.grid.shape)
+            inside = torch.ones(shape, dtype=torch.bool, device=self.device)
         else:
             inside = torch.as_tensor(mask).to(torch.bool)[::step, ::step, ::step]
 
@@ -256,15 +285,7 @@ class BSplineField:
 
         weights = (basis[0][:, :, None, None] * basis[1][:, None, :, None]
                    * basis[2][:, None, None, :]).reshape(-1, 64)
-        columns = self._flat_indices(corner)
-        sampled = selected[where[:, 0], where[:, 1], where[:, 2]]
-        self._nsamples = int(where.shape[0])
-
-        solve = {"qr": self._solve_stacked, "sparse": self._solve_sparse,
-                 "blocked": self._solve_blocked, "dr": self._solve_dr,
-                 "normal": self._solve_normal}[self.solver]
-        self._coefficients = solve(columns, weights, sampled)
-        return self
+        return self._flat_indices(corner), weights, where
 
     def _solve_normal(self, columns, weights, values):
         """Form the penalised normal equations and solve them (the legacy's way)."""
@@ -465,7 +486,7 @@ class BSplineField:
         samples, block = columns.shape
         scale = math.sqrt(self.lam * self._nsamples)
 
-        design = coo_matrix(
+        sparse_design = coo_matrix(
             (weights.reshape(-1).cpu().numpy(),
              (np.repeat(np.arange(samples), block),
               columns.reshape(-1).cpu().numpy())),
@@ -473,7 +494,7 @@ class BSplineField:
         factor = csr_matrix(
             bending_energy_factor(self.n).cpu().numpy() * scale)
 
-        stacked = vstack([design, factor]).tocsr()
+        stacked = vstack([sparse_design, factor]).tocsr()
         right = np.concatenate([values.cpu().numpy(),
                                 np.zeros(factor.shape[0])])
 
@@ -518,6 +539,23 @@ class BSplineField:
         if self._coefficients is None:
             raise RuntimeError("coefficients before fit()")
         return self._coefficients
+
+    @coefficients.setter
+    def coefficients(self, values):
+        """Set the coefficients without fitting anything.
+
+        For a caller that chose them some other way -- :mod:`torch_n3.optimize`
+        arrives at them by gradient descent -- and then wants the evaluation
+        machinery below.  Nothing else about the object changes, so
+        :attr:`solve_info` and :attr:`dr_basis` stay as they were, which for an
+        unfitted spline means absent.
+        """
+        values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
+        size = int(np.prod(self.n))
+        if values.numel() != size:
+            raise ValueError("expected %d coefficients, got %d"
+                             % (size, values.numel()))
+        self._coefficients = values
 
     @property
     def dr_basis(self):
