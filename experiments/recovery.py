@@ -465,9 +465,10 @@ def _snr(snr):
 
 def _label(cell):
     if cell["method"] == "n3":
-        return ("--method n3 --solver %s --protocol %s --distance %g "
-                "--lambda %g" % (cell["solver"], cell["protocol"],
-                                 cell["distance"], cell["lam"]))
+        return ("--method n3 --backend %s --solver %s --protocol %s "
+                "--distance %g --lambda %g"
+                % (cell["backend"], cell["solver"], cell["protocol"],
+                   cell["distance"], cell["lam"]))
     return ("--method %s --solver %s --distance %g --penalty %g"
             % (cell["method"], cell["solver"], cell["distance"],
                cell["penalty"]))

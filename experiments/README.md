@@ -102,8 +102,8 @@ brain columns for "how well does this correct a brain", the mask columns for
 
 | column | what |
 |---|---|
-| `seed`, `amplitude`, `snr`, `method`, `solver`, `protocol`, `distance`, `lam`, `shrink`, `device` | the key: what defines a trial |
-| `penalty`, `loss` | the descent methods' weight, and the loss they reached — empty for `n3` |
+| `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `shrink`, `device` | the key: every parameter that changes the answer. Anything left out of it makes a sweep over that parameter silently skip — which happened four times before the list was complete |
+| `loss` | the loss the descent reached — empty for `n3` |
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |
 | `planted_cv_pct` | the non-uniformity that was planted — what there was to remove |
@@ -291,11 +291,48 @@ The IQR rather than a standard deviation because the spread across seeds is
 not symmetric — a mean well above the median means a few hard draws are
 setting it.
 
+## The two backends, over 450 trials
+
+`--backend legacy` runs N3's original C++ blocks through the CFFI shim
+(CPU only, `--solver normal` only). Run at the matched configuration with a
+**torch-on-CPU control**, so the backend is isolated from the device:
+
+| | median score, SNR ∞ / 40 / 20 | median seconds |
+|---|---|---|
+| `legacy` / cpu | 2.3066 / 2.8318 / 4.2358 % | 6.05 |
+| `torch` / cpu | 2.3066 / 2.8317 / 4.2413 % | 2.55 |
+| `torch` / cuda | — | 0.69 |
+
+The aggregates agree to four or five significant figures. Per *matched
+trial* the picture is more interesting, and it quantifies what CLAUDE.md
+describes qualitatively:
+
+| relative difference in the score | median | 90th | max |
+|---|---|---|---|
+| backend (legacy/cpu vs torch/cpu) | 2.2e-5 | 9.8e-5 | **1.8e-1** |
+| device (torch/cuda vs torch/cpu) | 2.0e-5 | 8.7e-5 | **1.7e-1** |
+
+**Both perturbations are the same size, and both have the same tail.**
+Typically the two implementations agree to one part in 50,000; on 4 trials
+of 450 they differ by more than 1 %, and on one by 18 %. That is the
+histogram knife-edge, not float noise: a single count crossing a bin
+boundary sends the iteration down a different path. The evidence that it is
+the trial and not the perturbation is that the *same* trial (seed 22, 20 %,
+SNR 20) is the worst case for backend and device alike, and all four
+outliers are at SNR 20, where the noise puts most voxels near a boundary.
+
+So "which backend" and "which device" are the same question, and neither is
+answerable trial by trial — only in distribution, which is what this
+harness is for.
+
+The torch backend is **2.4× faster than legacy on the same CPU**, and the
+GPU is 8.8× faster than legacy.
+
 ## What is in `results/`
 
 | file | what |
 |---|---|
-| `recovery.csv` | the headline run: 3,600 `n3` trials (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 450 `hoyer` at `--penalty 1e-3 --max-iterations 400`, and 450 more across the iteration-budget sweep. All on the GPU |
+| `recovery.csv` | 5,400 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), and 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
 
