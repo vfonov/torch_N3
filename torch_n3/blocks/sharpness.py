@@ -1,32 +1,32 @@
-"""How blurred an intensity distribution is, as something you can differentiate.
+"""Differentiable measures of how blurred an intensity distribution is.
 
-N3 answers that question implicitly: it deconvolves the histogram, maps every
-voxel through ``E[u | v]``, and calls the difference the field's fingerprint.
-The answer never appears as a number, so there is nothing to descend on.  This
-module makes the question explicit -- two measures of *sharpness*, both smooth
-functions of the voxel intensities, so that ``torch.autograd`` can carry a
-gradient from them back to the spline coefficients that produced them
+N3 addresses this implicitly: it deconvolves the histogram, maps every voxel
+through ``E[u | v]``, and attributes the difference to the field.  The quantity
+never appears as a number, so there is no objective to descend on.  This module
+states it explicitly, as two measures of *sharpness*, both smooth functions of
+the voxel intensities, so that ``torch.autograd`` can propagate a gradient from
+them back to the spline coefficients that produced them
 (:mod:`torch_n3.optimize`).
 
     :func:`hoyer_sparsity` of a :func:`soft_histogram`
-        A blurred histogram is a spread-out one.  Model-free: it assumes
-        nothing about how many tissues the volume holds.
+        A blurred histogram is a dispersed one.  This measure is model-free: it
+        assumes nothing about the number of tissues the volume contains.
 
     :func:`cluster_tightness`
-        A blurred histogram is one whose voxels sit far from their nearest
+        A blurred histogram is one whose voxels lie far from their nearest
         tissue mean.  This is the tissue model N3's own sources carry as dead
-        code -- ``nu_estimate_np_and_em.in``'s EM branch ``die``s without
-        ``-sharpen`` -- written differentiably.
+        code (``nu_estimate_np_and_em.in``'s EM branch ``die``s without
+        ``-sharpen``), expressed differentiably.
 
-**Both are degenerate on their own.**  Each is optimised by a *constant*
-image: a single-bin histogram has Hoyer sparsity 1, and voxels sitting exactly
-on their centroid have zero within-cluster variance.  A smooth multiplicative
-field can produce exactly that -- it need only cancel the image.  What stops
-it is :func:`standardize`, which pins the first two moments of the intensities
-before either measure looks at them, so that flattening the volume buys
-nothing.  Nothing else in this module or in :mod:`torch_n3.optimize` prevents
+**Both are degenerate in isolation.**  Each is optimised by a *constant* image:
+a single-bin histogram has Hoyer sparsity 1, and voxels lying exactly on their
+centroid have zero within-cluster variance.  A smooth multiplicative field can
+produce exactly that, by cancelling the image.  The only safeguard is
+:func:`standardize`, which fixes the first two moments of the intensities
+before either measure is evaluated, so that flattening the volume yields no
+reduction.  Nothing else in this module or in :mod:`torch_n3.optimize` prevents
 the collapse, which is why ``tests/test_sharpness.py`` demonstrates it
-happening when the standardization is removed.
+occurring when the standardization is removed.
 """
 
 import torch
@@ -36,11 +36,10 @@ def standardize(values):
     """``values`` with zero mean and unit standard deviation.
 
     Applied to the corrected intensities before every measure below, and the
-    one thing keeping either of them honest: both are minimised by a constant
-    image, and a bias field is free to produce one.  After this, an affine
-    change in the intensities -- which is what flattening the volume amounts
-    to -- leaves the measure exactly where it was, so there is nothing to gain
-    from it.
+    only safeguard on either of them: both are minimised by a constant image,
+    and a bias field is able to produce one.  After standardization an affine
+    change in the intensities, which is what flattening the volume amounts to,
+    leaves the measure unchanged, so it yields no reduction.
 
     Population standard deviation, ``unbiased=False``, as everywhere else in
     this port (CLAUDE.md: ``torch.std`` defaults the other way).
@@ -185,10 +184,10 @@ def em_centroids(values, centroids, beta=200.0):
 def cluster_occupancy(values, centroids, beta=200.0):
     """The share of the samples each centroid holds.
 
-    A diagnostic, not part of any loss: a centroid that has lost its mass is
-    no longer modelling anything, and the fit has quietly become one with
-    fewer classes than it was asked for.  :func:`quantile_centroids` makes that
-    unlikely at the start; this is how it gets noticed if it happens anyway.
+    A diagnostic rather than part of any loss: a centroid that has lost its
+    mass no longer models anything, and the fit has become one with fewer
+    classes than were requested.  :func:`quantile_centroids` makes that
+    unlikely at initialisation; this is how it is detected if it occurs.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     centroids = torch.as_tensor(centroids, dtype=torch.float64).reshape(-1)

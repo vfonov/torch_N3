@@ -3,17 +3,18 @@
 This is a transcription of the Perl drivers in ``legacy/N3/src/NUcorrect``,
 with each shell-out replaced by a call to one of the blocks in
 :mod:`torch_n3.blocks` or :mod:`torch_n3.minc_tools`.  The structure follows
-``nu_estimate_np_and_em.in`` step by step so the two can be read side by side.
+``nu_estimate_np_and_em.in`` step by step, so that the two can be read side by
+side.
 
-The idea behind N3, in one paragraph: a multiplicative bias field becomes an
-*additive* one in log-intensity space, and blurs the tissue-intensity
-histogram.  So we repeatedly (1) guess what the histogram would look like
-without the blur and map every voxel to that sharpened estimate, (2) attribute
-the leftover difference to the field, and (3) keep only the smooth part of it
-by fitting a B-spline.  What remains after a few rounds is the field.
+The principle of N3: a multiplicative bias field becomes an *additive* one in
+log-intensity space, and blurs the tissue-intensity histogram.  The algorithm
+therefore repeats three steps: (1) estimate the histogram without the blur and
+map every voxel to that sharpened estimate, (2) attribute the remaining
+difference to the field, and (3) retain only its smooth component by fitting a
+B-spline.  What remains after several iterations is the field.
 
-Every block can be served either by the PyTorch port or by the original C++;
-``backend`` chooses, and the default is the port.  See
+Every block can be supplied either by the PyTorch port or by the original C++;
+``backend`` selects between them, and the default is the port.  See
 :func:`torch_n3.backends.resolve`.
 """
 
@@ -25,8 +26,8 @@ from torch_n3.minc_tools import apply_lut, bimodal_threshold
 #: What ``nu_correct`` passes down when given no options
 #: (``nu_estimate.in:418-438``, ``nu_estimate_np_and_em.in:1537-1560``).
 DEFAULTS = dict(
-    distance=200.0,     # B-spline knot spacing, mm -- the main smoothness knob,
-                        # paired with `lam` below
+    distance=200.0,     # B-spline knot spacing, mm -- the dominant smoothness
+                        # parameter, paired with `lam` below
     fwhm=0.15,          # width of the blur assumed in the histogram, log units
     noise=0.01,         # Wiener constant of the deconvolution
     bins=200,           # histogram bins
@@ -37,8 +38,8 @@ DEFAULTS = dict(
                         # `distance` this sets how much the field may bend, so
                         # the two move together: about a decade more `lam` per
                         # halving of `distance`.  Lowering `distance` alone
-                        # lets the fit follow tissue contrast instead of the
-                        # field -- see tests/test_field_recovery.py.
+                        # permits the fit to follow tissue contrast rather
+                        # than the field -- see tests/test_field_recovery.py.
     subsample=1,        # use every n-th voxel when fitting the spline
     solver="normal",    # how the spline fit is solved: "normal" is the
                         # legacy's own penalised normal equations, "qr"
@@ -48,9 +49,9 @@ DEFAULTS = dict(
     parzen=True,
     parzen_sigma=None,  # None is N3's own `-parzen`: linear interpolation into
                         # the two neighbouring bins.  A number replaces it with
-                        # a real Parzen window -- a Gaussian this many bin
-                        # widths wide -- which is an alternation to the
-                        # algorithm, not a part of it (tests/parzen.py).
+                        # a Gaussian Parzen window of that many bin widths,
+                        # which is a modification to the algorithm rather than
+                        # part of it (tests/parzen.py).
     deblur=False,       # True reproduces `-blur`: skip the deconvolution
     backend="torch",    # or "legacy", to run the original C++ instead
 )
@@ -60,11 +61,11 @@ def nu_correct(volume, mask=None, evaluation_mask=None, field_floor=0.1,
                verbose=False, **options):
     """Estimate the bias field and divide it out.  Returns the corrected volume.
 
-    ``mask`` restricts the *estimation* to a region of interest (strongly
-    recommended -- N3 is a histogram method, and background voxels only add
-    noise).  ``evaluation_mask`` restricts where the field is taken at face
-    value before being extended outwards; when omitted, one is derived from
-    the data, exactly as ``nu_evaluate`` does.
+    ``mask`` restricts the *estimation* to a region of interest.  Supplying it
+    is strongly recommended: N3 is a histogram method, and background voxels
+    contribute only noise.  ``evaluation_mask`` restricts where the field is
+    used directly before being extrapolated outwards; when omitted, one is
+    derived from the data, exactly as ``nu_evaluate`` does.
     """
     field = nu_estimate(volume, mask=mask, verbose=verbose, **options)
     return nu_evaluate(volume, field, mask=evaluation_mask,
@@ -87,8 +88,8 @@ def nu_estimate(volume, mask=None, verbose=False, **options):
     #    is lost by sampling the field sparsely (`WorkspaceSampling`).
     grid = volume if opts["shrink"] == 1 else volume.shrink(opts["shrink"])
 
-    # 2 and 3. Log domain, and the mask N3 will work inside.  The clamp keeps
-    # log() away from zero, where it would eat the volume's dynamic range.
+    # 2 and 3. Log domain, and the mask N3 works inside.  The clamp keeps
+    # log() away from zero, where it would consume the volume's dynamic range.
     # The mask is on whatever grid the caller had; it follows the estimation
     # onto the coarse one (`CheckSampling`).
     log_volume = torch.log(grid.data.clamp(min=1.0))
@@ -139,10 +140,10 @@ def nu_evaluate(volume, field, mask=None, field_floor=0.1, backend=None):
 def evaluate_field(volume, field, mask=None, field_floor=0.1, backend=None):
     """Sample ``field`` on ``volume``'s grid and make it safe to divide by.
 
-    ``field`` is the spline returned by :func:`nu_estimate`.  Evaluating it is
-    only half the job: it was fitted inside a mask and is meaningless (even
-    negative) away from there, so the values outside are thrown away and
-    replaced by a smooth extension of the ones inside, then floored.
+    ``field`` is the spline returned by :func:`nu_estimate`.  Evaluation alone
+    is not sufficient: the spline was fitted inside a mask and is meaningless,
+    and may be negative, outside it, so the values outside are discarded and
+    replaced by a smooth extension of those inside, then floored.
     """
     backend = backends.resolve(backend)
 
@@ -190,7 +191,7 @@ def _sharpen(values, inside, opts):
 def _smooth(values, inside, grid, opts):
     """Keep only the smooth part of ``values`` (``spline_smooth -b_spline``).
 
-    ``spline_smooth`` writes zeros outside the mask, and so do we.
+    ``spline_smooth`` writes zeros outside the mask, and so does this.
     """
     backend = backends.resolve(opts["backend"])
     spline = backend.BSplineField(grid, opts["distance"], opts["lam"],

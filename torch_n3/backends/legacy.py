@@ -101,8 +101,8 @@ def histogram(values, bins, value_range, parzen=True, sigma=None):
     between its two neighbouring centres (N3's ``-parzen`` / ``-window``),
     which is why the counts are floats rather than integers.
 
-    ``sigma`` -- the Gaussian Parzen window -- is an alternation to the
-    algorithm rather than part of it, so the oracle does not have it.
+    ``sigma``, the Gaussian Parzen window, is a modification to the algorithm
+    rather than part of it, so the oracle does not implement it.
     """
     if sigma is not None:
         raise ValueError(
@@ -185,8 +185,8 @@ class BSplineField:
     def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
                  solver="normal"):
         # The oracle has one solver: the normal equations, as TBSpline.cc
-        # forms them.  Asking it for the stacked QR would silently get the
-        # other answer, so say so instead.
+        # forms them.  Requesting the stacked QR would return the normal
+        # equations' answer instead, so raise rather than mislead.
         if solver != "normal":
             raise ValueError(
                 "the legacy backend only solves the normal equations; "

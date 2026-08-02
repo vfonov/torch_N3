@@ -1,11 +1,11 @@
 """Command line front end: ``python3 -m torch_n3 input.mnc output.mnc``.
 
-The options mirror ``nu_correct``'s, so an existing invocation mostly
-translates across.  What is *not* here is the ``.imp`` mapping file:
+The options mirror those of ``nu_correct``, so an existing invocation largely
+translates across.  The ``.imp`` mapping file is not implemented:
 :func:`torch_n3.pipeline.nu_estimate` returns the fitted spline as an object,
-and ``--field`` writes it out as a volume, which is the useful form from
-Python.  Writing N3's compact spline format would only matter for handing the
-field back to the legacy tools.
+and ``--field`` writes it as a volume, which is the form usable from Python.
+Writing N3's compact spline format would be required only to return the field
+to the legacy tools.
 """
 
 import argparse
@@ -17,20 +17,20 @@ from torch_n3.pipeline import DEFAULTS, evaluate_field, nu_estimate, nu_evaluate
 from torch_n3.volume import load_volume, save_volume
 
 
-#: Shown after the options.  ``--distance`` and ``--lambda`` between them set
-#: one thing -- how much the field is allowed to bend -- and changing either
-#: alone is the commonest way to get a worse answer than the defaults give.
+#: Shown after the options.  ``--distance`` and ``--lambda`` jointly set one
+#: quantity, the amount by which the field may bend, and changing either alone
+#: is the most common way of obtaining a worse answer than the defaults give.
 SMOOTHNESS_NOTE = """\
 how --distance and --lambda interact:
 
-  They are two halves of one setting.  --distance decides how many
-  coefficients describe the field; --lambda decides how much bending is
-  allowed between them.  Halve the spacing without raising the penalty and
-  the extra coefficients are spent following tissue contrast, which comes
-  back as field that was never there.
+  They are two halves of one setting.  --distance determines how many
+  coefficients describe the field; --lambda determines how much bending is
+  permitted between them.  Halving the spacing without raising the penalty
+  spends the additional coefficients on tissue contrast, which is returned
+  as field that was not present.
 
   Non-uniformity left behind after correcting a volume with a known 20%
-  field planted on it, over both knobs (lower is better):
+  field planted on it, over both parameters (lower is better):
 
                                          --distance
       --lambda           200 mm    100 mm     50 mm
@@ -39,17 +39,18 @@ how --distance and --lambda interact:
       1e-5                0.33%     0.17%     0.25%
       1e-4                0.85%     0.54%     0.35%
 
-  So: raise --lambda by about a decade each time you halve --distance, and
-  err high rather than low.  The best cell per column is 1e-6, 1e-5, 1e-5 --
-  one decade for the first halving and none for the second -- so that rule
-  overshoots at 50 mm on purpose.  It is the right way to be wrong: there,
-  1e-4 costs 0.10 points against the best cell, while the default 1e-7 costs
-  1.26 and leaves the volume further from the truth than it started.
+  Raise --lambda by about a decade for each halving of --distance, and err
+  high rather than low.  The best cell per column is 1e-6, 1e-5, 1e-5: one
+  decade for the first halving and none for the second, so the rule
+  deliberately overshoots at 50 mm.  That is the preferable direction of
+  error, since there 1e-4 costs 0.10 points against the best cell while the
+  default 1e-7 costs 1.26 and leaves the volume further from the truth than
+  it started.
 
   Measured on one synthetic field (tests/test_field_recovery.py), which is
   smoother than a real coil profile.  A 40% field gives the same table
-  roughly doubled, with the same minima; both are in README.md.  Read them
-  as the shape of the trade-off, not as a table to tune from.
+  approximately doubled, with the same minima; both are in README.md.  They
+  establish the shape of the trade-off and are not a table to tune from.
 """
 
 
@@ -75,8 +76,9 @@ def build_parser():
         "protocol", "defaults are what `nu_correct` uses with no options")
     protocol.add_argument("--distance", type=float, default=DEFAULTS["distance"],
                           help="B-spline knot spacing in mm, the scale below "
-                               "which the field cannot vary; raise --lambda "
-                               "with it if you lower this (default: %(default)s)")
+                               "which the field cannot vary; lowering it "
+                               "requires raising --lambda (default: "
+                               "%(default)s)")
     protocol.add_argument("--fwhm", type=float, default=DEFAULTS["fwhm"],
                           help="assumed histogram blur (default: %(default)s)")
     protocol.add_argument("--noise", type=float, default=DEFAULTS["noise"],
@@ -104,7 +106,7 @@ def build_parser():
                                "window on the histogram.  N3's own -parzen is "
                                "linear interpolation into two bins; this "
                                "replaces it with the kernel estimator the name "
-                               "implies, and is an alternation to the "
+                               "denotes, and is a modification to the "
                                "algorithm rather than part of it.  torch "
                                "backend only (default: N3's linear split)")
 

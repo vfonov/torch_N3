@@ -32,7 +32,7 @@ N3_SRC = os.path.join(HERE, "n3")
 BUILD_DIR = os.path.join(HERE, "build")
 
 # N3 and EBTKS both generate config.h with autoconf/cmake.  Between them the
-# vendored sources read only these, so we generate one rather than configuring
+# vendored sources read only these, so one is generated here rather than by
 # either legacy build.  Everything named here is unconditional on Linux.
 #
 # <malloc.h> is the one exception: it exists on Linux but not on macOS (whose
@@ -80,9 +80,9 @@ void set_program_name(char *name);
 
 EBTKS = os.path.join(HERE, "ebtks")
 
-# EBTKS's own build compiles these plus a bundled f2c'd LAPACK; we link the
-# system LAPACK/BLAS instead, so `clapack/` is not vendored.  Pruned to what
-# the extension actually pulls in -- see ebtks/README.md.
+# EBTKS's own build compiles these plus a bundled f2c'd LAPACK; this build
+# links the system LAPACK/BLAS instead, so `clapack/` is not vendored.  Pruned
+# to what the extension actually requires -- see ebtks/README.md.
 EBTKS_SOURCES = [
     os.path.join(EBTKS, "src", "FileIO.cc"),
     os.path.join(EBTKS, "src", "MString.cc"),
@@ -118,8 +118,8 @@ SHIM_SOURCES = [
 #:   N3_LAPACK_LIB_DIRS="/opt/intel/oneapi/mkl/latest/lib"
 #:
 #: To link EBTKS's own bundled f2c'd LAPACK instead of a system one, point
-#: these at the EBTKS archive: N3_LAPACK_LIBS="EBTKS".  It resolves after our
-#: own objects, so only the clapack members are taken from it.
+#: these at the EBTKS archive: N3_LAPACK_LIBS="EBTKS".  It resolves after the
+#: shim's own objects, so only the clapack members are taken from it.
 #:
 #: Left unset, the default is to link *no* LAPACK/BLAS at all and leave
 #: n3_shim's calls to it (dgemm_, dsysv_, ...) as undefined symbols, resolved
@@ -206,8 +206,8 @@ def build(verbose=True):
             ("USE_COMPMAT", "1"),
             ("USE_DBLMAT", "1"),
             ("USE_FCOMPMAT", "1"),
-            # sharpen_hist.cc is a program; we want its helper functions, not
-            # its entry point.
+            # sharpen_hist.cc is a program, and only its helper functions are
+            # wanted here, so its entry point is renamed out of the way.
             ("main", "n3_sharpen_hist_unused_main"),
         ],
         extra_compile_args=["-O2", "-w"],

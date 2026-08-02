@@ -1,11 +1,11 @@
-"""Bias correction as an optimization, rather than as a fixed-point iteration.
+"""Bias correction posed as an optimization rather than a fixed-point iteration.
 
 ``pipeline.nu_estimate`` is N3: sharpen the histogram, attribute the residual
-to the field, smooth it, repeat, and stop when the field stops moving.  That
-loop descends on nothing in particular, and CLAUDE.md records the price --
-the stopping rule quantises everything downstream, one histogram count
-flipping between bins moves the answer four orders of magnitude, and no
-end-to-end comparison means anything past three digits.
+to the field, smooth it, repeat, and terminate when the field ceases to change.
+That loop descends on no stated objective, and CLAUDE.md records the
+consequences: the stopping rule quantises everything downstream, one histogram
+count moving between bins changes the answer by four orders of magnitude, and
+no end-to-end comparison is informative past three digits.
 
 :func:`nu_optimize` keeps N3's *model* exactly -- a tensor cubic B-spline
 field with a bending-energy penalty, in the log domain -- and replaces the
@@ -17,21 +17,20 @@ over the spline coefficients ``c``, where ``measure`` is one of the two in
 :mod:`torch_n3.blocks.sharpness`.  There is then one number that goes down,
 and it can be watched.
 
-It returns the same thing ``nu_estimate`` does -- a fitted
+It returns what ``nu_estimate`` returns, a fitted
 :class:`~torch_n3.blocks.spline.BSplineField` describing the *multiplicative*
-field -- so ``nu_evaluate``, ``evaluate_field`` and everything in
-``experiments/`` take it without modification.
+field, so ``nu_evaluate``, ``evaluate_field`` and everything in
+``experiments/`` accept it without modification.
 
 **What is not shared with N3.**  ``penalty`` is not ``lambda``.  N3's weighs
 the bending energy against a least-squares residual in log-intensity squared;
-here the data term is a dimensionless measure of order one, so the two live on
-different scales and the default below was measured rather than inherited.
+here the data term is a dimensionless measure of order one, so the two are on
+unrelated scales and the default below was measured rather than inherited.
 
-**What holds this together.**  ``standardize``.  Both measures are optimal on
-a constant image, and a smooth field is perfectly capable of producing one by
-cancelling the volume.  Pinning the first two moments of the corrected
-intensities before measuring them removes that solution, and nothing else
-here does.  See :mod:`torch_n3.blocks.sharpness` and the collapse tests.
+**What makes this well posed.**  ``standardize``.  Both measures are optimal on
+a constant image, and a smooth field is able to produce one by cancelling the
+volume.  Fixing the first two moments of the corrected intensities before
+measuring them removes that solution, and nothing else here does.  See :mod:`torch_n3.blocks.sharpness` and the collapse tests.
 
 **Where the two measures stand, measured.**  On ``tests/tables.py``'s
 experiment -- ``brain_nu_ref.mnc``, the analytic planted field, the score N3's
@@ -42,19 +41,19 @@ own published table reports -- at each side's best weight, 20% planted:
     100 mm   0.17%    0.21%     diverges
      50 mm   0.25%    0.17%     diverges
 
-``hoyer`` is a working estimator: worse than N3 where N3 is strong, better at
-50 mm, and -- unlike N3 -- it *improves* as the field gains freedom, which is
-the opposite trend and the interesting part.
+``hoyer`` is a working estimator: worse than N3 where N3 is strongest, better
+at 50 mm, and, unlike N3, improving as the field gains freedom, which is the
+opposite trend.
 
-``tightness`` **does not work, and not for want of tuning.**  Its loss falls
+``tightness`` **does not work, and not for lack of tuning.**  Its loss falls
 monotonically while the estimate gets worse and the field's own
 non-uniformity grows without bound (at 200 mm: loss 0.234 -> 0.185 while the
 field goes from 35% to 55% non-uniform, and at a lighter penalty to 257%).
-The reason is a second degeneracy that ``standardize`` does not touch:
-within-cluster variance is minimised by a distribution concentrated at a few
-widely separated spikes, and a smooth field can push towards that by
-*amplifying* contrast, not only by flattening it.  Standardizing pins the
-first two moments; nothing pins the third.  It is kept here because it is
+The cause is a second degeneracy that ``standardize`` does not address:
+within-cluster variance is also minimised by a distribution concentrated at a
+few widely separated modes, and a smooth field can approach that by
+*amplifying* contrast as well as by flattening it.  Standardizing fixes the
+first two moments; nothing fixes the third.  It is retained here because it is
 implemented, tested and instructive, not because it should be used.
 """
 
@@ -553,6 +552,6 @@ def _check(opts):
     if opts["resample"] == "always" and opts["optimizer"] == "lbfgs":
         raise ValueError(
             "resample=\"always\" makes the objective stochastic, and L-BFGS's "
-            "line search and curvature pairs both assume it is not -- the fit "
-            "would be quietly wrong rather than loudly.  Use optimizer=\"adam\" "
-            "with it, or resample=\"once\" with L-BFGS.")
+            "line search and curvature pairs both assume it is not; the fit "
+            "would be incorrect without raising an error.  Use "
+            "optimizer=\"adam\" with it, or resample=\"once\" with L-BFGS.")

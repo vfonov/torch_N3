@@ -1,7 +1,7 @@
 """The smooth field fit: a cubic tensor B-spline (``spline_smooth -b_spline``).
 
-Each iteration of N3 hands this block a noisy, voxelwise estimate of the log
-field and asks for the smooth part of it.  The answer is a tensor product of
+Each iteration of N3 supplies this block with a noisy, voxelwise estimate of
+the log field and requires the smooth part of it.  The answer is a tensor product of
 uniform cubic B-splines, fitted by least squares with a penalty on the
 spline's bending energy:
 
@@ -9,23 +9,23 @@ spline's bending energy:
 
 ``A`` holds the basis functions at every masked voxel, ``J`` the bending
 energy of the basis (the integrated second derivatives), ``N`` the number of
-samples, and ``lambda`` is N3's ``-lambda``.  With the default 200 mm knot
-spacing a whole head is described by 80 coefficients, which is most of what
-makes the field smooth: it simply cannot represent anything sharper.  The
-penalty is the rest, and the two have to be set together -- halving the
-spacing without raising ``lambda`` gives the fit enough freedom to start
-following tissue contrast instead.  See ``python3 -m torch_n3 --help``.
+samples, and ``lambda`` is N3's ``-lambda``.  At the default 200 mm knot
+spacing a whole head is described by 80 coefficients, which accounts for most
+of the field's smoothness: the basis cannot represent anything sharper.  The
+penalty accounts for the remainder, and the two must be set jointly, since
+halving the spacing without raising ``lambda`` gives the fit sufficient freedom
+to begin following tissue contrast.  See ``python3 -m torch_n3 --help``.
 
 Two solvers answer that least-squares problem, selected by ``solver``:
 
 ``"normal"``
-    Form ``AtA + lambda*N*J`` and solve it, which is what the legacy does
+    Form ``AtA + lambda*N*J`` and solve it, as the legacy does
     (``TBSpline.cc:290``, via LAPACK's ``dsysv``).  Squaring ``A`` squares its
-    condition number, and at the default spacing -- where the knots are
-    further apart than the head is wide -- that lands around ``1e13``, close
-    enough to singular that the last digits of the answer belong to whichever
-    BLAS ran it.  This is the reference: bit-for-bit what the repository has
-    always computed.
+    condition number, and at the default spacing, where the knots are further
+    apart than the head is wide, that reaches about ``1e13``: close enough to
+    singular that the last digits of the answer are determined by whichever
+    BLAS computed them.  This is the reference formulation, and is bit for bit
+    what the repository has always computed.
 
 ``"qr"``
     Solve the same problem without ever squaring ``A``, by stacking the
@@ -35,9 +35,9 @@ Two solvers answer that least-squares problem, selected by ``solver``:
                c \\simeq \\begin{bmatrix} f \\\\ 0 \\end{bmatrix},
                \\qquad D^T D = J
 
-    whose normal equations are the ones above, term for term, so it minimises
-    the *same* objective -- but its condition number is the square root of the
-    other's, and the answer no longer depends on the machine to the degree the
+    whose normal equations are those above, term for term, so it minimises the
+    same objective.  Its condition number is the square root of the other's,
+    and the answer depends on the machine to a far smaller degree than the
     normal equations do.  On the grid ``brain.mnc`` is estimated on, that is
     ``2.3e6`` against ``5.3e12``, and the fitted field moves ``3.0e-13``
     relative RMS between a CPU and a GPU where the normal equations move it by
@@ -50,10 +50,10 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     time.  Sorting is what makes the groups cheap: ``A`` is banded once its
     rows are ordered by their first-axis knot, so each group touches one
     window of ``4*n1*n2`` columns instead of all ``n0*n1*n2`` of them.  This
-    is the one to reach for at a fine ``-distance``, where the dense stack
-    stops fitting in memory: at 12.5 mm on ``chunk.mnc`` (3168 coefficients)
+    is the solver to select at a fine ``-distance``, where the dense stack no
+    longer fits in memory: at 12.5 mm on ``chunk.mnc`` (3168 coefficients)
     it peaks at 1.55 GB against ``"qr"``'s 7.53 GB, and runs 3.7x faster.  At
-    200 mm there is a single group and it *is* ``"qr"``, plus a sort.
+    200 mm there is a single group and it reduces to ``"qr"`` plus a sort.
 
 ``"dr"``
     The same stacked system, factorised once and then *reparameterized* so
@@ -76,7 +76,7 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     lambda_0`` the divisor is one and this *is* ``"qr"``, back-substitution and
     all; the two agree to rounding, which is what the suite holds it to.
 
-    What it buys is a ``lambda`` sweep.  The QR, the triangular solve and the
+    What it provides is an inexpensive ``lambda`` sweep.  The QR, the triangular solve and the
     eigendecomposition are all independent of ``lambda``, so a whole grid --
     GCV or REML smoothing-parameter selection, or the ``--lambda`` x
     ``--distance`` tables -- costs one factorization plus one division per
@@ -84,33 +84,33 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     division: on ``brain.mnc``'s estimation grid a further weight costs 0.033
     ms at 200 mm and 0.140 ms at 50 mm, against 5.6 ms and 27.7 ms for a fresh
     ``"qr"`` fit -- 170x to 200x.  ``gamma`` is non-negative and the divisor
-    therefore never below one, so no amount of dynamic range in ``gamma``
-    (seven decades here) can reach the answer.
+    therefore never falls below one, so no dynamic range in ``gamma`` (seven
+    decades here) can affect the answer.
 
-    **For a single weight this is the slowest solver, and there is no reason
-    to pick it.**  The eigendecomposition of ``D~'D~`` is ``O(k^3)`` on top of
-    everything ``"qr"`` does, and it buys nothing until a second weight is
-    asked for.  One fit on the same grid: 7.3 ms at 200 mm against ``"qr"``'s
+    **For a single weight this is the slowest solver and should not be
+    selected.**  The eigendecomposition of ``D~'D~`` is ``O(k^3)`` in addition
+    to everything ``"qr"`` performs, and yields no benefit until a second
+    weight is requested.  One fit on the same grid: 7.3 ms at 200 mm against ``"qr"``'s
     5.6 ms and ``"normal"``'s 4.9 ms, and 43.6 ms at 50 mm against 27.7 ms and
     8.3 ms -- so a whole 30-iteration pipeline runs 1.8 s at 50 mm where
-    ``"qr"`` runs 1.2 s.  It pays from the second weight onwards and is
-    dramatic by the fourth; below that, use ``"qr"``.
+    ``"qr"`` runs 1.2 s.  It becomes economical from the second weight
+    onwards and decisively so by the fourth; below that, use ``"qr"``.
 
-    **The anchor is what makes this work, and it is not what the textbook
-    recipe does.**  Demmler-Reinsch is usually written on the QR of ``A``
+    **The anchor is what makes this work, and it differs from the textbook
+    formulation.**  Demmler-Reinsch is usually written on the QR of ``A``
     alone, whose ``R`` is then used for ``D~``.  That is unusable here: ``A``
     is the masked design, and at fine knot spacings the mask leaves basis
     functions with no data under them at all.  Measured on ``chunk.mnc``,
     ``cond(A)`` is ``8.4e7`` at 200 mm and ``7.5e12`` at 50 mm, where ``A``
     is *rank deficient* -- 243 of 245 columns -- and ``D R^-1`` overflows into
     a ``gamma`` with 83 non-positive entries reaching ``-5.7e6``.  Clipping
-    those at zero does not help; the eigenvectors are as damaged as the
+    those at zero does not recover it; the eigenvectors are as damaged as the
     eigenvalues.  Anchoring on the stacked matrix instead costs nothing and
-    fixes it outright, because the penalty rows span precisely the directions
-    the data leaves empty: ``cond(R0)`` is the stacked system's ``3.5e6`` and
-    ``2.9e5`` at those two spacings.  The price is that the basis is only
-    valid at or above its anchor -- below it the divisor can pass through zero
-    -- so ``anchor`` belongs at the bottom of the intended grid.
+    removes the failure entirely, because the penalty rows span precisely the
+    directions the data leaves empty: ``cond(R0)`` is the stacked system's ``3.5e6`` and
+    ``2.9e5`` at those two spacings.  The cost is that the basis is valid only at or
+    above its anchor, since below it the divisor can pass through zero, so
+    ``anchor`` belongs at the bottom of the intended grid.
 
 ``"sparse"``
     The same stacked system again, held in ``scipy.sparse`` and handed to
@@ -120,11 +120,11 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     methods, and LSQR's convergence is governed by the very condition number
     the stacked form was chosen to reduce.  At 200 mm it stops after ~2,950
     iterations reporting ``istop=3`` ("condition number exceeds ``conlim``"),
-    18 s later and ``1.8e-3`` away from the direct answer -- worse than the
-    gap between this port and the original C++.  Raising the iteration limit
-    does not help; it is not stopping early.  Kept because the measurement is
-    worth having: see :attr:`BSplineField.solve_info` for what LSQR reports,
-    and ``PROBLEMS.md`` for the whole finding.
+    18 s in and ``1.8e-3`` from the direct answer, which is larger than the
+    difference between this port and the original C++.  Raising the iteration
+    limit has no effect; it is not terminating early.  Retained because the
+    measurement is informative: see :attr:`BSplineField.solve_info` for what
+    LSQR reports, and ``PROBLEMS.md`` for the full result.
 
 The three direct solvers agree to far better than the fit is determined to;
 where they differ, the stacked pair is the more accurate (they reach a
@@ -170,13 +170,14 @@ class BSplineField:
     ``lam`` the weight on the bending energy (``-lambda``).  ``domain_world``
     is the box the spline is defined on; by default it is the whole bounding
     box of ``grid``, which is what ``spline_smooth -full_support`` uses.
-    ``solver`` picks how the least-squares problem is answered -- see the
-    module docstring; all of them minimise the same objective.
+    ``solver`` selects how the least-squares problem is solved; see the
+    module docstring.  All of them minimise the same objective.
 
-    ``anchor`` belongs to ``solver="dr"`` alone: it is the weight that solver
-    takes its factorization at, and the lowest one :meth:`refit` can then be
-    asked for.  It defaults to ``lam``, which makes a single fit behave exactly
-    like ``"qr"``; set it to the bottom of the grid you mean to sweep.
+    ``anchor`` applies to ``solver="dr"`` alone: it is the weight at which that
+    solver takes its factorization, and the lowest weight :meth:`refit` can
+    subsequently be given.  It defaults to ``lam``, which makes a single fit
+    behave exactly as ``"qr"`` does; set it to the bottom of the grid to be
+    swept.
     """
 
     def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
@@ -327,7 +328,8 @@ class BSplineField:
         # where the default would pick a different one per device and put the
         # machine back into the answer.  It reports rank deficiency as an
         # error rather than returning a minimum-norm answer for it, which is
-        # what we want -- with lambda above zero it takes a nearly empty mask.
+        # the required behaviour: with lambda above zero, rank deficiency
+        # requires a nearly empty mask.
         return torch.linalg.lstsq(stacked, right, driver="gels").solution
 
     def _solve_blocked(self, columns, weights, values):
@@ -433,8 +435,8 @@ class BSplineField:
         it, but at the *anchor* weight and with the right-hand side carried
         along as an extra column, so that triangularising it delivers ``R0``
         and ``Q0'[f; 0]`` together and ``Q0`` itself is never formed -- the
-        same trick :meth:`_solve_blocked` uses to get its back-substitution
-        for free.
+        same construction :meth:`_solve_blocked` uses to obtain its
+        back-substitution at no additional cost.
 
         Everything expensive is in that factorization and in the
         eigendecomposition :class:`DemmlerReinschBasis` does on top of it, and
@@ -728,8 +730,8 @@ class DemmlerReinschBasis:
         if lam < self.anchor:
             raise ValueError(
                 "lambda %g is below this basis's anchor %g; the divisor is "
-                "only bounded away from zero at or above it, so anchor the "
-                "basis at the bottom of the grid you mean to sweep"
+                "bounded away from zero only at or above it, so anchor the "
+                "basis at the bottom of the grid to be swept"
                 % (lam, self.anchor))
 
         alpha = self.projected / self.divisor(lam)

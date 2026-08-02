@@ -12,14 +12,15 @@ legacy histogram matter enough to be reproduced exactly:
 
 Ported from ``legacy/N3/src/VolumeHist/{DHistogram.cc,WHistogram.h}``.
 
-One thing here is *not* a port.  N3's ``-parzen``/``-window`` is not a Parzen
-kernel density estimate at all -- it is linear interpolation into two bins, a
-triangular kernel exactly one bin wide, tied to the bin spacing rather than to
-anything about the data.  ``sigma=`` replaces it with the estimator the name
-promises: a Gaussian kernel of a stated width, spreading each measurement over
-as many bins as it reaches.  That is an alternation to the algorithm, not a
-reproduction of it, so it is off by default and the legacy backend rejects it;
-what it costs and buys is measured in ``tests/parzen.py``.
+One component here is *not* a port.  N3's ``-parzen``/``-window`` is not a
+Parzen kernel density estimate: it is linear interpolation into two bins, a
+triangular kernel exactly one bin wide, determined by the bin spacing rather
+than by any property of the data.  ``sigma=`` replaces it with the estimator
+the name denotes: a Gaussian kernel of a stated width, distributing each
+measurement over as many bins as it reaches.  That is a modification to the
+algorithm rather than a reproduction of it, so it is disabled by default and
+the legacy backend rejects it; its costs and benefits are measured in
+``tests/parzen.py``.
 """
 
 import math
@@ -86,7 +87,7 @@ def histogram(values, bins, value_range, parzen=True, sigma=None):
 
     ``sigma`` (requires ``parzen``) replaces that triangle with a Gaussian
     kernel of standard deviation ``sigma`` **bin widths**, evaluated at the bin
-    centres and normalised per sample.  It is the actual Parzen estimator; see
+    centres and normalised per sample.  It is the Parzen estimator proper; see
     the module docstring for why it is not the default.  Note that the width is
     in bins rather than in intensity units, so it follows ``-auto_range`` as the
     range moves from iteration to iteration -- multiply by ``(high - low) /
@@ -159,12 +160,12 @@ def _add_gaussian(counts, values, low, high, width, bins, sigma):
     centres a sample is dropped, not clipped -- so that this differs from
     ``_add_split`` only in the shape of the kernel.
 
-    Weights are normalised *per sample*, over the bins that exist.  Every
-    retained sample therefore contributes exactly 1 to the total, as it does
-    under the linear split, rather than losing the part of its kernel that
-    hangs off the end of the range; near the edges the kernel is renormalised
-    rather than truncated, which is the usual reflectionless boundary for a
-    density estimate on a finite support.
+    Weights are normalised *per sample*, over the bins present.  Every retained
+    sample therefore contributes exactly 1 to the total, as under the linear
+    split, rather than losing the part of its kernel falling outside the range.
+    Near the edges the kernel is renormalised rather than truncated, which is
+    the standard reflectionless boundary for a density estimate on a finite
+    support.
     """
     if not sigma > 0:
         raise ValueError("histogram: sigma must be positive (got %r)" % sigma)
