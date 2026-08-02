@@ -96,7 +96,7 @@ port**: `histogram(..., sigma=)` / `nu_estimate(parzen_sigma=)` / `--parzen-sigm
 sample with a Gaussian of `sigma` *bin widths*, truncated at 4σ and renormalized per sample so
 a voxel near the range edge still counts as one. Off by default; the legacy backend rejects it;
 no oracle, so `tests/test_histogram.py` states its properties instead. What it does to the
-pipeline is measured by `python3 -m tests.parzen` and written up in `README.md`, "A real Parzen
+pipeline is measured by `python3 -m tests.parzen` and written up in `README.md`, "Gaussian Parzen
 window". Summary: it substitutes for regularization — a third off the residual non-uniformity
 at the shipped defaults, nothing at 200 mm once `--lambda` is tuned for the spacing — and past
 about `sigma 2` it adds more blur than `--fwhm` tells the deconvolution to remove, which shows
@@ -231,7 +231,7 @@ the exception**, and they are the most cited numbers in the repository:
 
 | Where | What |
 |---|---|
-| `README.md`, "Does it actually remove a bias field?" | both tables, 20% and 40% planted |
+| `README.md`, "Bias-field recovery on simulated data" | both tables, 20% and 40% planted |
 | `torch_n3/cli.py`, `SMOOTHNESS_NOTE` | the 20% table, shown by `--help` |
 | `tests/test_field_recovery.py` | asserts the `1e-7` row at every spacing (the recovery sweep), and `LAMBDAS = [1e-5, 1e-4]` at the *finest* spacing only — the `regularized` fixture fixes `distance = min(DISTANCES)` |
 

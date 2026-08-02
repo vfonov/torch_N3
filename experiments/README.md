@@ -103,7 +103,7 @@ brain columns for "how well does this correct a brain", the mask columns for
 | column | what |
 |---|---|
 | `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `parzen_sigma`, `shrink`, `device` | the key: every parameter that changes the answer. Anything left out of it makes a sweep over that parameter silently skip — which happened four times before the list was complete |
-| `parzen_sigma` | the histogram kernel: a Gaussian Parzen window this many bin widths wide, or **empty for N3's own linear split**, which is what every row written before the column existed ran. `--method n3` only; see "A real Parzen window" in the top-level README |
+| `parzen_sigma` | the histogram kernel: a Gaussian Parzen window this many bin widths wide, or **empty for N3's own linear split**, which is what every row written before the column existed ran. `--method n3` only; see "Gaussian Parzen window" in the top-level README |
 | `loss` | the loss the descent reached — empty for `n3` |
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |

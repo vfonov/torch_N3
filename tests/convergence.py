@@ -76,10 +76,10 @@ from torch_n3.blocks.spline import SOLVERS
 from torch_n3.pipeline import nu_correct
 from torch_n3.volume import load_volume
 
-#: Agreement is "lost" once it is this many times worse than at one iteration.
-#: The step is four orders of magnitude when it comes, so nothing here is
-#: sensitive to the exact factor -- it is a cliff detector, not a threshold.
-CLIFF = 100.0
+#: Agreement is treated as lost once it is this many times worse than at one
+#: iteration.  The step, when it occurs, is four orders of magnitude, so the
+#: exact factor is immaterial: this detects a step, not a threshold crossing.
+DIVERGENCE = 100.0
 
 
 def main(argv=None):
@@ -105,9 +105,9 @@ def main(argv=None):
     for label, pair in runs:
         values = [pair(volume, mask, n) for n in counts]
         print("%-22s %s" % (label, "".join("%11.3g" % v for v in values)))
-        print("%-22s %s" % ("", _cliff_note(values, counts)))
+        print("%-22s %s" % ("", _divergence_note(values, counts)))
     print()
-    print("A cliff at N means agreement survives N-1 iterations, no more.")
+    print("Divergence at N means agreement survives N-1 iterations, no more.")
     print("tests/inputs.py::PLATFORM_PROTOCOL is currently %d iteration(s)."
           % _platform_iterations())
 
@@ -124,16 +124,16 @@ def _pair(backend_a, device_a, solver_a, backend_b, device_b, solver_b):
     return compare
 
 
-def _cliff_note(values, counts):
+def _divergence_note(values, counts):
     """Where agreement was lost, in words."""
     if not values:
         return ""
     first = values[0]
     for value, count in zip(values, counts):
-        if first > 0 and value > CLIFF * first:
-            return "^ cliff at %d iterations (%.3g -> %.3g)" % (
+        if first > 0 and value > DIVERGENCE * first:
+            return "^ divergence at %d iterations (%.3g -> %.3g)" % (
                 count, first, value)
-    return "^ no cliff up to %d iterations" % counts[-1]
+    return "^ no divergence up to %d iterations" % counts[-1]
 
 
 def _platform_iterations():
