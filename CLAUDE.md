@@ -29,7 +29,7 @@ the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already i
 | `torch_n3/_legacy/n3/` | The N3 sources the shim compiles, vendored byte for byte from `legacy/N3/src` (see its `README.md`) so the legacy backend builds without an N3 checkout. **Do not modify** — they are the oracle. Everything below still cites `legacy/N3/src` as the *source of truth*; for the files listed there, the two are the same bytes. |
 | `torch_n3/_legacy/ebtks/` | Likewise EBTKS, vendored from `legacy/EBTKS`: all headers, seven `.cc` files, no `clapack/`. The build links the **system** LAPACK/BLAS instead — the one thing the extension still needs from outside. What that swap costs is measured in `README.md`; it is not nothing. |
 | `torch_n3/_legacy/compat/` | Stand-ins for `<volume_io.h>`, `<time_stamp.h>` and `<ParseArgv.h>`, placed first on the include path so that `correctField.cc` and `args.cc` compile **unmodified** without libminc2. `smooth()` does its whole solve on flat `float`/`char` arrays; volume_io was only ever the marshalling at its edges. |
-| `tests/margins.py`, `tests/convergence.py`, `tests/tables.py` | None is a test; all three measure and print. `python3 -m tests.margins` prints `PROBLEMS.md`'s table — where every comparison sits against its bound. `python3 -m tests.convergence` prints where the two backends stop agreeing as iterations grow, which is a property of the machine's LAPACK rather than of this code; run it on any new platform before trusting an end-to-end number there. `python3 -m tests.tables` re-measures the `--lambda` × `--distance` tables under each direct solver and diffs them against the copies published in `README.md` and `cli.py`. |
+| `tests/margins.py`, `tests/convergence.py`, `tests/tables.py`, `tests/parzen.py` | None is a test; all four measure and print. `python3 -m tests.margins` prints `PROBLEMS.md`'s table — where every comparison sits against its bound. `python3 -m tests.convergence` prints where the two backends stop agreeing as iterations grow, which is a property of the machine's LAPACK rather than of this code; run it on any new platform before trusting an end-to-end number there. `python3 -m tests.tables` re-measures the `--lambda` × `--distance` tables under each direct solver and diffs them against the copies published in `README.md` and `cli.py`. `python3 -m tests.parzen` measures the one *alternation* to the algorithm that lives in the port: `--parzen-sigma`, a real Gaussian Parzen window in place of N3's linear split (`blocks/histogram.py`). It runs `tables.py`'s sweep once per window at `solver="normal"`, plus the shipped protocol end to end. Its `None` rows are `tables.py`'s published cells, so a mismatch there means something else moved. |
 | `PROBLEMS.md` | Known weak spots in the test suite: fitted thresholds, tight margins, dropped assertions, and the measured margin of every comparison. |
 | `tests/data/` | The test volumes as MINC2, checked in: byte-for-byte the same images as `legacy/N3/testing/` and the installed model mask. Converted once so that reading them needs nothing installed. |
 | `tests/data/brain_nu_ref_legacy.mnc` | Not one of N3's files: this pipeline's own output on `brain.mnc` with the legacy blocks, under `inputs.PLATFORM_PROTOCOL`, checked in so another machine/BLAS/device can be held to it (`tests/test_reproducibility.py`). Written by the regeneration script. Regenerating churns MINC's `ident` header attribute; the voxel data is reproducible. |
@@ -90,6 +90,17 @@ Given the masked histogram `X` of the corrected log volume (default 200 bins, au
 `-parzen`/`-window` does **not** mean a Parzen kernel density estimate: each sample is split
 linearly between the two nearest bin centres (mass `1−offset` / `offset`). Without it each
 sample increments a single bin. Samples outside the first/last half-bin are discarded.
+
+`blocks/histogram.py` also carries the estimator that name implies, as an **alternation, not a
+port**: `histogram(..., sigma=)` / `nu_estimate(parzen_sigma=)` / `--parzen-sigma` spreads each
+sample with a Gaussian of `sigma` *bin widths*, truncated at 4σ and renormalized per sample so
+a voxel near the range edge still counts as one. Off by default; the legacy backend rejects it;
+no oracle, so `tests/test_histogram.py` states its properties instead. What it does to the
+pipeline is measured by `python3 -m tests.parzen` and written up in `README.md`, "A real Parzen
+window". Summary: it substitutes for regularization — a third off the residual non-uniformity
+at the shipped defaults, nothing at 200 mm once `--lambda` is tuned for the spacing — and past
+about `sigma 2` it adds more blur than `--fwhm` tells the deconvolution to remove, which shows
+up as harm in the well-regularized cells.
 
 ### Field smoothing — `legacy/N3/src/Splines/TBSpline.cc`
 
@@ -260,6 +271,12 @@ keep in mind before reading anything into a cell's last digit.
 If you find yourself relying on a cell, the honest fix is to widen `LAMBDAS` and assert the
 shape being claimed — that each column has an interior minimum, and where — rather than to
 keep trusting a table by hand.
+
+`README.md`'s **`--parzen-sigma` tables are in the same category** — published, cited, and
+asserted by nothing. They are the same sweep, so the same warning applies, with one thing in
+their favour: their `linear (N3)` row is the published `1e-7` row, so `python3 -m tests.parzen`
+re-measures the baseline alongside the alternation and a drift in either shows up. Only the
+default histogram path has an oracle; the window's own tables rest entirely on that re-run.
 
 ## Gotchas when porting
 

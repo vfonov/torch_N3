@@ -811,6 +811,72 @@ profile; a field with more structure is exactly the case where the extra
 penalty would start to cost. What the tables are good for is the *shape* of
 the trade-off, not the numbers in them.
 
+### A real Parzen window: `--parzen-sigma`
+
+N3's `-parzen`/`-window` is not a Parzen window. `WHistogram::add` splits each
+sample linearly between the two bin centres it falls between — a triangular
+kernel exactly one bin wide, whose width is set by `--bins` and by wherever
+`-auto_range` put the range this iteration rather than by anything about the
+measurement. `--parzen-sigma s` replaces it with the estimator the name
+promises: a Gaussian of standard deviation `s` **bin widths**, evaluated at the
+bin centres and normalised per sample, so a voxel is spread over as many bins
+as the kernel reaches. Nothing downstream changes.
+
+This is an alternation to the algorithm, not part of the port. It is **off by
+default**, the legacy backend rejects it, and every other number in this file
+is measured without it. `python3 -m tests.parzen` is the measurement below,
+re-run it after touching the histogram or the sharpening.
+
+Residual non-uniformity left behind on the planted-field sweep, `--solver
+normal`, 20% planted — the same experiment as the `--lambda` × `--distance`
+tables above, so the first row *is* that table's first row:
+
+*At the shipped `--lambda 1e-7`:*
+
+| window | `--distance` 200 mm | 100 mm | 50 mm |
+|---|---|---|---|
+| linear (N3) | 0.31% | 0.61% | 1.51% |
+| `--parzen-sigma 0.5` | 0.31% | 0.61% | 1.52% |
+| `--parzen-sigma 1` | 0.28% | 0.53% | 1.46% |
+| `--parzen-sigma 2` | **0.22%** | 0.29% | 0.77% |
+| `--parzen-sigma 4` | **0.22%** | **0.24%** | **0.34%** |
+
+*Best cell in each column, `--lambda` swept over `1e-7 … 1e-4` as well:*
+
+| window | `--distance` 200 mm | 100 mm | 50 mm |
+|---|---|---|---|
+| linear (N3) | 0.13% | 0.17% | 0.25% |
+| `--parzen-sigma 1` | **0.12%** | 0.17% | 0.23% |
+| `--parzen-sigma 2` | **0.12%** | **0.15%** | **0.17%** |
+| `--parzen-sigma 4` | 0.16% | 0.17% | 0.19% |
+
+Read the two together. At a *fixed* weight the window is worth having — a third
+off the residual at the shipped defaults, a factor of four at 50 mm. Against a
+weight that has been tuned for the spacing, it buys nothing at 200 mm and about
+a third at 50 mm. So what the window mostly does is **substitute for
+regularization**: it helps exactly the cells that were under-penalised, which is
+the axis `--lambda` already moves along, and the two do not add up. If you have
+tuned `--lambda` for your spacing, expect the window to do very little; if you
+are running the defaults, `--parzen-sigma 2` is the cheaper of the two knobs to
+reach for.
+
+A wide window is not free. `sigma 4` is the best of the sweep at 50 mm and the
+*worst* at 200 mm with `--lambda 1e-6` (1.21× the linear split) and at every
+`1e-4` cell. The mechanism is visible in the units: one bin is 0.026 log units
+on this volume, so `sigma 2` adds a blur of 0.052 against the 0.064 standard
+deviation that `--fwhm 0.15` tells `sharpen_hist` to remove, and `sigma 4`
+exceeds it. The window adds a Gaussian the deconvolution was never told about,
+so past a point it simply under-sharpens. The obvious follow-up — take the added
+width back out of `--fwhm` in quadrature — is untested; nothing in the sweep
+covers it.
+
+End to end on `brain.mnc` under the shipped protocol it is not a cosmetic
+change: the corrected volume moves 6.2e-3 relative RMS at `sigma 0.5` and 8.8e-2
+at `sigma 4`, and correspondingly away from `brain_nu_ref.mnc` (3.0e-3 → 4.9e-3
+→ 8.6e-2). That last column is not an accuracy score — N3 produced that
+reference, so anything that changes N3 moves away from it — which is why the
+planted-field sweep is where the question gets answered.
+
 ## Requirements
 
 Python 3.12, `torch`, `numpy`, `cffi` and `minc2_simple`.

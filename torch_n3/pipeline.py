@@ -46,6 +46,11 @@ DEFAULTS = dict(
                         # the same problem (torch backend only)
     background=1.0,     # voxels at or below this are never part of the mask
     parzen=True,
+    parzen_sigma=None,  # None is N3's own `-parzen`: linear interpolation into
+                        # the two neighbouring bins.  A number replaces it with
+                        # a real Parzen window -- a Gaussian this many bin
+                        # widths wide -- which is an alternation to the
+                        # algorithm, not a part of it (tests/parzen.py).
     deblur=False,       # True reproduces `-blur`: skip the deconvolution
     backend="torch",    # or "legacy", to run the original C++ instead
 )
@@ -167,7 +172,7 @@ def _sharpen(values, inside, opts):
     value_range = backend.histogram_range(
         selected, initial=(values.max(), values.min()))
     counts = backend.histogram(selected, opts["bins"], value_range,
-                               opts["parzen"])
+                               opts["parzen"], sigma=opts["parzen_sigma"])
 
     # The drivers pass the histogram from volume_hist to sharpen_hist, and the
     # mapping from sharpen_hist to minclookup, through text files written with

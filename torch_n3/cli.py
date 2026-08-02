@@ -98,6 +98,15 @@ def build_parser():
                           help="stopping threshold, one per stage")
     protocol.add_argument("--field-floor", type=float, default=0.1,
                           help="smallest field value allowed before dividing")
+    protocol.add_argument("--parzen-sigma", type=float,
+                          default=DEFAULTS["parzen_sigma"],
+                          help="width, in bin widths, of a Gaussian Parzen "
+                               "window on the histogram.  N3's own -parzen is "
+                               "linear interpolation into two bins; this "
+                               "replaces it with the kernel estimator the name "
+                               "implies, and is an alternation to the "
+                               "algorithm rather than part of it.  torch "
+                               "backend only (default: N3's linear split)")
 
     parser.add_argument("--backend", choices=("torch", "legacy"),
                         default=DEFAULTS["backend"],
@@ -155,7 +164,8 @@ def main(argv=None):
                             shrink=args.shrink, lam=args.lam,
                             iterations=tuple(args.iterations),
                             stop=tuple(args.stop), backend=args.backend,
-                            solver=args.solver)
+                            solver=args.solver,
+                            parzen_sigma=args.parzen_sigma)
     else:
         field = nu_optimize(volume, mask=mask, verbose=args.verbose,
                             objective=args.method, distance=args.distance,

@@ -92,7 +92,7 @@ def histogram_range(values, initial=None):
     return float(out[0]), float(out[1])
 
 
-def histogram(values, bins, value_range, parzen=True):
+def histogram(values, bins, value_range, parzen=True, sigma=None):
     """Histogram of ``values`` with ``bins`` bins spanning ``value_range``.
 
     Bin *centres* are evenly spaced from ``value_range[0]`` to
@@ -100,7 +100,15 @@ def histogram(values, bins, value_range, parzen=True):
     them are dropped.  With ``parzen=True`` each sample is split linearly
     between its two neighbouring centres (N3's ``-parzen`` / ``-window``),
     which is why the counts are floats rather than integers.
+
+    ``sigma`` -- the Gaussian Parzen window -- is an alternation to the
+    algorithm rather than part of it, so the oracle does not have it.
     """
+    if sigma is not None:
+        raise ValueError(
+            "the legacy backend has only N3's linear split; the Gaussian "
+            "Parzen window (sigma=%r) is implemented by the torch backend "
+            "alone" % sigma)
     values = _as_double_array(values).ravel()
     counts = np.zeros(int(bins), dtype=np.float64)
     lo, hi = float(value_range[0]), float(value_range[1])
