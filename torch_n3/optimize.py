@@ -66,7 +66,7 @@ from torch_n3.blocks.sharpness import (cluster_occupancy, cluster_tightness,
                                        quantile_centroids, soft_histogram,
                                        standardize)
 from torch_n3.blocks.spline import BSplineField, bending_energy_tensor
-from torch_n3.pipeline import nu_estimate
+from torch_n3.pipeline import _denoised, nu_estimate
 
 #: The measures :func:`nu_optimize` can descend on.
 OBJECTIVES = ("hoyer", "tightness")
@@ -185,6 +185,16 @@ DEFAULTS = dict(
     anchor=PRECONDITION_ANCHOR,
     init="zero",
     init_iterations=1,
+
+    # The pre-estimation filter, on the same terms as in `pipeline.DEFAULTS`
+    # -- see there for what each does and why it is off.  Repeated rather than
+    # shared so that the two estimators take the same options; a field
+    # estimated by descent on a denoised volume is comparable with an N3 one
+    # only if both were given the same input.
+    denoise=False,
+    denoise_search=3,
+    denoise_patch=1,
+    denoise_strength=1.0,
 )
 
 
@@ -204,6 +214,7 @@ def nu_optimize(volume, mask=None, verbose=False, **options):
     if opts["learning_rate"] is None:
         opts["learning_rate"] = LEARNING_RATE[opts["optimizer"]]
 
+    volume = _denoised(volume, opts)
     grid = volume if opts["shrink"] == 1 else volume.shrink(opts["shrink"])
     log_volume = torch.log(grid.data.clamp(min=1.0))
     inside = grid.data > opts["background"]

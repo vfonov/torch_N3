@@ -110,6 +110,42 @@ def build_parser():
                                "algorithm rather than part of it.  torch "
                                "backend only (default: N3's linear split)")
 
+    denoising = parser.add_argument_group(
+        "denoising", "off by default, and not part of N3: a non-local-means "
+                     "filter over the input, feeding the estimation only")
+    denoising.add_argument("--denoise", action="store_true",
+                           help="filter the volume before estimating the "
+                                "field.  N3's data term is the intensity "
+                                "histogram, so noise enters the estimate "
+                                "directly; this attacks that spatially, where "
+                                "--parzen-sigma attacks it in the histogram.  "
+                                "The *output* is never denoised: the fitted "
+                                "field is divided into the original volume.  "
+                                "A modification to the algorithm rather than "
+                                "part of it, with no counterpart in the "
+                                "original -- torch backend only.  Expensive: "
+                                "it runs at full resolution while the "
+                                "estimation runs on the --shrink grid, so on "
+                                "a 2 mm brain it is some forty times the cost "
+                                "of the whole estimation it feeds (8.3 s "
+                                "against 0.19 s); use --device cuda, where it "
+                                "is 0.21 s.  Measured to help less than "
+                                "--parzen-sigma does -- read the README before "
+                                "turning it on")
+    denoising.add_argument("--denoise-search", type=int,
+                           default=DEFAULTS["denoise_search"],
+                           help="search radius in voxels; the cost is cubic "
+                                "in this (default: %(default)s)")
+    denoising.add_argument("--denoise-patch", type=int,
+                           default=DEFAULTS["denoise_patch"],
+                           help="patch half-width in voxels; larger is a "
+                                "stricter similarity test and so less "
+                                "smoothing (default: %(default)s)")
+    denoising.add_argument("--denoise-strength", type=float,
+                           default=DEFAULTS["denoise_strength"],
+                           help="multiplies the estimated noise level; 0 is "
+                                "exactly the identity (default: %(default)s)")
+
     parser.add_argument("--backend", choices=("torch", "legacy"),
                         default=DEFAULTS["backend"],
                         help="which implementation of the blocks to run "
@@ -167,12 +203,20 @@ def main(argv=None):
                             iterations=tuple(args.iterations),
                             stop=tuple(args.stop), backend=args.backend,
                             solver=args.solver,
-                            parzen_sigma=args.parzen_sigma)
+                            parzen_sigma=args.parzen_sigma,
+                            denoise=args.denoise,
+                            denoise_search=args.denoise_search,
+                            denoise_patch=args.denoise_patch,
+                            denoise_strength=args.denoise_strength)
     else:
         field = nu_optimize(volume, mask=mask, verbose=args.verbose,
                             objective=args.method, distance=args.distance,
                             fwhm=args.fwhm, shrink=args.shrink,
-                            penalty=args.penalty, solver=args.solver)
+                            penalty=args.penalty, solver=args.solver,
+                            denoise=args.denoise,
+                            denoise_search=args.denoise_search,
+                            denoise_patch=args.denoise_patch,
+                            denoise_strength=args.denoise_strength)
 
     corrected = nu_evaluate(volume, field, mask=evaluation_mask,
                             field_floor=args.field_floor, backend=args.backend)

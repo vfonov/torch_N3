@@ -54,6 +54,22 @@ DEFAULTS = dict(
                         # part of it (tests/parzen.py).
     deblur=False,       # True reproduces `-blur`: skip the deconvolution
     backend="torch",    # or "legacy", to run the original C++ instead
+    denoise=False,      # Off, and not part of N3.  True filters the volume
+                        # with one non-local-means pass (blocks/denoise.py)
+                        # at full resolution, before `shrink`, for the
+                        # *estimation* only: `nu_evaluate` still divides the
+                        # original intensities, so the output is corrected and
+                        # never denoised.  A modification rather than part of
+                        # the algorithm, so there is no oracle for it and the
+                        # legacy backend rejects it (tests/denoise.py).
+    denoise_search=3,   # search radius in voxels; the cost is cubic in this
+                        # and in nothing else
+    denoise_patch=1,    # patch half-width; similarity is judged over
+                        # (2*patch+1)^3 voxels, so larger is a stricter match
+                        # and therefore less smoothing
+    denoise_strength=1.0,  # multiplies the estimated noise level.  0 is
+                        # exactly the identity, since no voxel then clears the
+                        # filter's own noise floor, and larger smooths harder.
 )
 
 
@@ -79,10 +95,19 @@ def nu_estimate(volume, mask=None, verbose=False, **options):
     The returned spline is the in-memory equivalent of N3's ``.imp`` mapping
     file: a compact description of a smooth field that can be evaluated on any
     grid, including the full-resolution one.
+
+    With ``denoise`` the estimate is made on a filtered copy of the volume.
+    Only the estimate: the spline that comes back describes a field on the same
+    grid as ever, and :func:`nu_evaluate` divides the caller's own intensities
+    by it.
     """
     opts = dict(DEFAULTS, **options)
     _check_stages(opts)
     backend = backends.resolve(opts["backend"])
+
+    # 0. Optionally, take the noise off first -- at full resolution, because
+    #    the shrink below is nearest-neighbour and would alias it in.
+    volume = _denoised(volume, opts)
 
     # 1. Estimation runs on a coarser grid; the answer is a spline, so nothing
     #    is lost by sampling the field sparsely (`WorkspaceSampling`).
@@ -199,6 +224,30 @@ def _smooth(values, inside, grid, opts):
     spline.fit(values, inside, opts["subsample"])
     smoothed = spline.evaluate()
     return torch.where(inside, smoothed, torch.zeros_like(smoothed))
+
+
+def _denoised(volume, opts):
+    """The volume the *estimation* sees.  The caller's own, unless ``denoise``.
+
+    Full resolution, and before ``shrink``, because
+    :meth:`torch_n3.volume.Volume.shrink` is nearest-neighbour subsampling: it
+    aliases noise onto the estimation grid rather than averaging it away, so
+    filtering afterwards would be filtering something the sampling had already
+    corrupted.
+
+    Returns a *new* ``Volume``, which is what keeps :func:`nu_evaluate`
+    dividing the original intensities rather than the filtered ones.  The
+    filter is reached through the backend so that ``backend="legacy"`` refuses
+    here, where the option was set, instead of silently ignoring it.
+    """
+    if not opts["denoise"]:
+        return volume
+
+    backend = backends.resolve(opts.get("backend"))
+    return volume.like(backend.denoise(volume.data,
+                                       search=opts["denoise_search"],
+                                       patch=opts["denoise_patch"],
+                                       strength=opts["denoise_strength"]))
 
 
 def _as_written(values):

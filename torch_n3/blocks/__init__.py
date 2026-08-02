@@ -16,12 +16,22 @@ those tensors live on.  The names below are exactly the ones
 :mod:`torch_n3.backends.legacy` exports, so the two are interchangeable:
 :func:`torch_n3.backends.resolve` picks between them, and the pipeline is
 written against the pair.
+
+:mod:`~torch_n3.blocks.denoise` is exported alongside them but is **not** one
+of them: it is a modification rather than a port, it has no oracle, and the
+legacy backend answers it with a refusal.  It appears here only so that the
+pipeline can reach it through the same ``resolve`` as the rest, and so that
+asking the oracle for it fails where the request is made rather than
+downstream.  :mod:`~torch_n3.blocks.sharpness` is the other module in this
+package that ports nothing, and is not exported at all -- nothing dispatches
+on it, so :mod:`torch_n3.optimize` imports it by its full path.
 """
 
+from torch_n3.blocks.denoise import denoise
 from torch_n3.blocks.field import correct_field
 from torch_n3.blocks.histogram import bin_centers, histogram, histogram_range
 from torch_n3.blocks.sharpen import sharpen_lut
 from torch_n3.blocks.spline import BSplineField
 
 __all__ = ["bin_centers", "histogram", "histogram_range", "sharpen_lut",
-           "BSplineField", "correct_field"]
+           "BSplineField", "correct_field", "denoise"]

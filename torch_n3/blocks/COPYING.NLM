@@ -1,0 +1,28 @@
+Provenance of torch_n3/blocks/denoise.py
+========================================
+
+`denoise.py` implements the non-local-means filter of
+
+    Manjon, J. V., Coupe, P., Buades, A., Fonov, V., Collins, D. L., &
+    Robles, M. (2010).  "Non-local MRI upsampling."
+    Medical Image Analysis 14(6), 784-792.
+
+Copyright (C) 2010 Jose V. Manjon and Pierrick Coupe.
+
+The authors' own distribution of the method is Matlab plus a C MEX kernel,
+`cMRegularizarNLM3D_V2.c`, which is stated by its accompanying header to be
+GPL-licensed.  `denoise.py` is a PyTorch reimplementation of that kernel's
+computation, carrying none of its code: it was written as whole-volume tensor
+operations rather than as the original's per-voxel loop, and it differs from
+the original by convention as well as by expression -- see the module
+docstring, "Not the same filter as the C kernel".
+
+It is nevertheless a derivative of a GPL-licensed work by descent, and it is
+recorded here as such.  The remainder of `torch_n3` states no licence; the
+sources it ports from carry the permissive MNI terms reproduced in
+`torch_n3/_legacy/n3/COPYING` and `torch_n3/_legacy/ebtks/COPYING`.  Anyone
+redistributing this package should settle the two against each other before
+doing so.
+
+The filter is off by default and is not part of N3.  Nothing on the default
+path of `torch_n3` executes any of `denoise.py`.

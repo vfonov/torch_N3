@@ -88,6 +88,10 @@ All protocol options mirror those of `nu_correct` and default to its values:
 | `--iterations` | 50 | Iteration budget, one number per stopping stage. |
 | `--stop` | 0.001 | Terminate when the field changes by less than this, one per stage. |
 | `--field-floor` | 0.1 | Smallest field value admitted, which bounds the division. |
+| `--denoise` | off | Filter the volume with one non-local-means pass before estimating the field, for the *estimation only* — the output is the original volume divided by the fitted field, and is never denoised. A modification to the algorithm rather than part of it, with no counterpart in the original: torch backend only. Expensive; see [Non-local means](#non-local-means---denoise). |
+| `--denoise-search` | 3 | Search radius in voxels. The cost is cubic in this and in nothing else. |
+| `--denoise-patch` | 1 | Patch half-width in voxels. Larger is a stricter similarity test, and so less smoothing. |
+| `--denoise-strength` | 1.0 | Multiplies the estimated noise level. Zero is exactly the identity. |
 | `--device` | cpu | Any torch device, for example `cuda`. See [Limits on end-to-end agreement](#limits-on-end-to-end-agreement) first. |
 | `--backend` | torch | `legacy` substitutes the original C++ for every block. |
 | `--solver` | normal | Formulation used for the spline fit. `qr` fits the same spline through a far better-conditioned system and is substantially more reproducible across machines; `blocked` returns the same answer without holding the design matrix, and is the appropriate choice at a fine `--distance`; `dr` reparameterizes `qr` so that the penalty is diagonal, which reduces an entire `--lambda` grid to one factorization. (`sparse` does not converge; see below.) See [Solver formulations](#solver-formulations). |
@@ -185,6 +189,7 @@ alongside it.
 | `torch_n3/blocks/sharpen.py` | The sharpened mapping, `sharpen_hist` — the mathematical core. |
 | `torch_n3/blocks/spline.py` | The smooth field fit, `spline_smooth`. |
 | `torch_n3/blocks/field.py` | The field extension past the mask, `correct_field`. |
+| `torch_n3/blocks/denoise.py` | Not a port: the optional non-local-means prefilter (`--denoise`). No oracle; the legacy backend refuses it. |
 | `torch_n3/volume.py` | MINC I/O, geometry, shrinking and resampling. |
 | `torch_n3/minc_tools.py` | The two MINC utilities on the critical path: continuous lookup, and the Otsu threshold. |
 | `torch_n3/backends/legacy.py` | The same blocks, as the original C++. |
@@ -887,6 +892,71 @@ volume, so `sigma 2` adds a blur of 0.052 against the 0.064 standard deviation t
 window adds a Gaussian of which the deconvolution has not been informed, so beyond
 some width it under-sharpens. The corresponding correction — removing the added width
 from `--fwhm` in quadrature — is untested; no part of the sweep covers it.
+
+### Non-local means (`--denoise`)
+
+The port carries a second modification, and it attacks the same problem from the
+other side. `--parzen-sigma` smooths the *histogram*; `--denoise` filters the
+*volume*, with one non-local-means pass (Manjón et al. 2010, `blocks/denoise.py`)
+before the field is estimated. Only the estimate is affected: the volume written out
+is the caller's own intensities divided by the fitted field, never the filtered copy.
+It runs at full resolution, before `--shrink`, because `Volume.shrink` is
+nearest-neighbour subsampling and would otherwise alias the noise it is meant to
+remove.
+
+Since both modifications suppress noise-driven variance in N3's data term, the
+question is not whether either helps in isolation but whether they are **substitutes
+or complements**. Measured together (`python3 -m tests.denoise`): the recovery
+experiment at the shipped `--distance 200 --lambda 1e-7`, with white noise added at a
+stated SNR. Non-uniformity left in the recovered field, lower is better:
+
+| | SNR ∞ | SNR 40 | SNR 20 |
+|---|---|---|---|
+| linear (N3) | 0.31% | 0.29% | 0.51% |
+| `--parzen-sigma 2` | **0.22%** | **0.23%** | 0.40% |
+| `--parzen-sigma 4` | **0.22%** | 0.24% | 0.38% |
+| `--denoise` | 0.29% | 0.42% | 0.66% |
+| `--denoise --parzen-sigma 2` | **0.22%** | 0.33% | 0.44% |
+| `--denoise --parzen-sigma 4` | 0.28% | 0.30% | **0.30%** |
+
+**They are substitutes, and denoising is the weaker of the two.** Of the nine paired
+comparisons, the window alone beats the same window with denoising added in six, ties
+in one, and loses two. Against N3's own linear split denoising makes matters worse at
+both noise levels (0.42% against 0.29% at SNR 40, 0.66% against 0.51% at SNR 20). The
+one cell where it clearly earns its cost is the noisiest at the widest window — 0.30%
+against 0.38% at SNR 20 with `--parzen-sigma 4` — which is also the only cell where
+it beats every alternative. The noiseless column is the control and behaves as
+expected: with no noise to remove, a spatial filter can only take away structure the
+estimate was using, and the `sigma 4` row degrades from 0.22% to 0.28%.
+
+The plausible reading is that N3 is already insensitive to voxel-level noise. It
+never looks at a voxel's neighbours; it looks at the histogram, where independent
+noise mostly averages out, and the field it fits is smooth over 200 mm. Removing the
+noise before the histogram is built therefore duplicates what the histogram does
+anyway, while removing genuine tissue contrast that the sharpening relies on. A
+further piece of evidence for that reading: changing the filter's own noise floor by
+a factor of 2.4 — which is what replacing its `max()`-based intensity scale with a
+range-based one did on this volume (`PROBLEMS.md` §1) — moved no cell of the table by
+more than 0.01 points.
+
+It is also expensive. The filter runs at full resolution while the estimation runs on
+a grid coarser by `--shrink 4`, so on `brain.mnc` it costs forty to fifty times the
+whole estimation it feeds — 8.3 s against 0.15–0.19 s on a CPU (the ratio moves
+between runs because the estimation is short enough for its timing to be noisy), or
+0.24 s with `--device cuda`.
+
+**The option is therefore off by default and is not recommended at the shipped
+protocol.** It is kept because the result above is worth having recorded, because the
+one cell it wins is the noisiest, and because these numbers are one analytic field on
+one volume at one seed. A verdict on real data needs `experiments/`'s Monte Carlo,
+which has not been run for it. `--denoise --parzen-sigma 4` is the configuration to
+try first if the input is genuinely noisy.
+
+End to end on `brain.mnc` under the shipped protocol, denoising stops the iteration
+five steps earlier (26 against 31) and moves the corrected volume 1.10e-1 relative
+RMS. That last figure is not an accuracy verdict — N3 produced `brain_nu_ref.mnc`, so
+anything that changes N3 moves away from it — but it establishes that the option is
+far from cosmetic.
 
 End to end on `brain.mnc` under the shipped protocol the effect is not cosmetic: the
 corrected volume moves 6.2e-3 relative RMS at `sigma 0.5` and 8.8e-2 at `sigma 4`,

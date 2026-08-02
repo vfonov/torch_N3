@@ -46,6 +46,54 @@ Where a principled bound exists it is already used and is to be preferred: the 1
 quantum of the file a legacy program wrote (`span(reference) / 65535`), the
 12-bit one (`/ 4095`), the six decimals `%lf` prints (`1e-6`).
 
+**The denoising filter's intensity scale was set by `max()` — fixed
+2026-08-02.** `blocks/denoise.py`'s noise floor is absolute (one intensity unit
+in 256), so something has to bring it onto the volume's own scale. The code
+this was ported from uses `values.max()`, and that was carried over unchanged
+at first. It is wrong twice.
+
+*Not robust.* A maximum over 902,629 voxels is decided by one of them, and an
+outlier can only raise it — a raised maximum raises the floor, and a raised
+floor *excludes* voxels from filtering. Planting a single bright voxel in
+`brain.mnc` and changing nothing else:
+
+| planted voxel | floor | voxels filtered | volume moved (rel RMS) |
+|---|---|---|---|
+| none | 4214 | 92.7% | 1.14e-1 |
+| 2× the maximum | 8428 | 64.3% | — |
+| 10× | 42142 | 28.1% | 9.89e-2 |
+| 100× | 421416 | **0.0%** | **3.63e-4** |
+
+At 100× the filter was the identity to three digits: `--denoise` still cost its
+eight seconds and still reported nothing wrong. Spikes of this kind are not
+hypothetical in MRI — reconstruction artefacts, metal, a mis-set `valid_range`
+— and none of them is visible in the output.
+
+*Not translation-invariant.* Everything else in the filter is built from
+differences, so adding a constant to a volume changes nothing. A floor taken
+from a *level* does change, so the same anatomy with a DC offset would be
+filtered as though its noise were smaller than it is.
+
+**The fix** is to measure the floor against the volume's dynamic range instead
+— the 1st-to-99th centile separation, `SCALE_QUANTILES` — since noise is a
+spread and belongs to be judged against a spread. It removes both faults at
+once and makes the whole filter affine-equivariant, `denoise(a*v + b) ==
+a*denoise(v) + b`, which `tests/test_denoise.py` now asserts in both arguments;
+the spike table above is flat at every magnitude under it. Nearest-rank
+centiles by `kthvalue` rather than `torch.quantile`, which refuses tensors
+above 2²⁴ elements — a 512³ volume exceeds that eightfold — and which would
+also give up the exactness, since a *selected* element rescales exactly where
+an interpolated one does not.
+
+Two consequences worth recording. The floor drops by whatever `max/range` is
+(1.55 on `brain.mnc`, so 92.7% of voxels filtered becomes 97.6%), which changes
+the filter's behaviour on every volume and not only on spiked ones; the
+`README.md` table was re-measured under it rather than carried over. And a
+volume that is *almost* all background now has no dynamic range to measure
+against, where a maximum always had something: that is diagnosed rather than
+silently admitted, and a volume with no spread anywhere is returned unchanged
+before the question arises, since its noise level is provably zero.
+
 ## 2. A bound that was far too loose — fixed 2026-07-31
 
 `test_histogram.py::test_counts_match_the_volume_hist_binary` compared against
@@ -451,6 +499,40 @@ still passes, but `D` is not a minimal factor and a test asserting
 `rank(D) == size - 4` will fail. The null space is recovered correctly in the
 transformed basis, where `gamma` shows exactly four zeros separated from the
 remainder by more than ten decades (1.7e-9 against 91 at 50 mm).
+
+---
+
+## 13. The denoising filter's effect on N3 is asserted by nothing — 2026-08-02
+
+`tests/test_denoise.py` contributes **no rows to the table below**, by
+construction: every bound in it is either exact (`torch.equal`) or an ordering,
+because the filter is a modification with no oracle and a numeric bound could
+only have been justified by first running it. That is the right choice for the
+filter's own properties, but it means the suite pins only that `--denoise`
+changes the estimated field, never *how*. The numbers that say whether it is
+worth using — `README.md`'s "Non-local means" table — are re-measured by
+`python3 -m tests.denoise` and asserted by no test, exactly the status
+`CLAUDE.md` records for the `--parzen-sigma` tables. The control cell is the
+one guard: `off`/`linear (N3)`/`snr inf` is `tables.py`'s published cell, so
+drift elsewhere surfaces there.
+
+Two further limits on that measurement, both stated in the script:
+
+- It is **one analytic field, one volume, one seed**. `tests/parzen.py` carries
+  the same caveat and `experiments/` is the answer to it — 450 random fields
+  per configuration. That Monte Carlo **has not been run for `--denoise`**, so
+  the conclusion that it is the weaker of the two noise suppressors rests on
+  the single sweep.
+- The filter holds no more than about 119 bytes per voxel, all of it live at
+  once: a 512³ volume would need ~15 GB. Above that the loop would have to be
+  tiled with a `search + patch` halo, which is **not implemented** and would
+  fail as an allocation error rather than as a diagnosed one. Reaching for
+  float32 instead is not the remedy, and CLAUDE.md forbids it.
+
+`optimize.py`'s opening (`:207-215`) also duplicates `pipeline.py`'s and is now
+one line longer, since both call `_denoised`. It was left duplicated
+deliberately: every recorded reference runs through those lines, and factoring
+them out in the same change as a behavioural addition would confound the two.
 
 ---
 

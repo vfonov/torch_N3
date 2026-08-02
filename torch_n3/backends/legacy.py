@@ -124,6 +124,21 @@ def bin_centers(bins, value_range):
                                   int(bins)))
 
 
+def denoise(values, search=3, patch=1, strength=1.0):
+    """Refuse: N3 has no denoising stage, so the oracle has nothing to offer.
+
+    Present only so that asking for one through this backend fails where the
+    request is made.  Were it absent, ``backend="legacy"`` with denoising on
+    would raise an ``AttributeError`` somewhere downstream, or -- worse, had
+    the pipeline been written to skip a missing block -- would quietly return
+    an undenoised estimate under a flag that said otherwise.
+    """
+    raise ValueError(
+        "the legacy backend is N3, and N3 has no denoiser; the non-local-means "
+        "filter is a modification to the algorithm rather than part of it, and "
+        "is implemented by the torch backend alone")
+
+
 def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
     """N3's sharpened intensity mapping, one value per histogram bin.
 
