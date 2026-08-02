@@ -9,6 +9,20 @@ The original implementation is a set of Perl drivers over a dozen C++ programs
 algorithm in PyTorch, block by block, with each block validated against the program
 it replaces.
 
+![Non-uniformity remaining after correction, and wall time, for legacy N3, the PyTorch
+port and a gradient-descent estimator](experiments/results/summary.png)
+
+Non-uniformity remaining after correction on colin27, over 50 random fields at each of
+three field amplitudes and three noise levels, beside the wall time of the same trials.
+The original C++ blocks and the port coincide in every cell — the same algorithm
+computed twice — and the GPU runs it 8.8× faster than the original on a CPU (0.69 s
+against 6.05 s per estimate). `hoyer` is not N3: it is the second estimator in
+`torch_n3/optimize.py`, which retains N3's B-spline field and bending-energy penalty
+and replaces the alternating iteration with gradient descent on a stated sharpness
+objective. It is better in every cell by a factor of 2.5–5 and worse on 17 of the 450
+matched trials, a failure tail N3 does not have. Method, complete tables and
+limitations are in [experiments/README.md](experiments/README.md).
+
 ---
 
 ## Quick start

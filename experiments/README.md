@@ -395,6 +395,7 @@ tail and the small number of trials on which two backends differ by 18 %.
 
 | figure | what |
 |---|---|
+| `results/summary.png` | the three estimators in one figure: legacy N3 (the original C++ blocks through the shim, CPU), the port at `--solver normal` on the GPU, and `hoyer`, over all nine cells, beside their wall times. The two N3 violins coincide at every cell, so the separation below them is attributable to the change of objective and not to the change of implementation |
 | `results/recovery.png` | the principal figure: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
 | `results/cells.png` | the same data disaggregated: **one panel per (amplitude, SNR)**, with N3's four solvers drawn separately and `hoyer` and `oracle` beside them. Brain only, one shared range across all nine |
 | `results/runtime.png` | wall time per estimate, every configuration in the file |
@@ -625,7 +626,7 @@ The torch backend is **2.4× faster than legacy on the same CPU**, and the GPU i
 | file | what |
 |---|---|
 | `recovery.csv` | 9,900 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 2,700 more `n3` at `--solver normal` for the three Gaussian Parzen windows (3 × 2 protocols × 450), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling. Everything but those 2,700 ran under N3's own histogram, which is what an empty `parzen_sigma` means |
-| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run of several hours, and regenerated from the CSV rather than maintained by hand |
+| `summary.png`, `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run of several hours, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, retained as the only CPU sample. Written before `method`/`penalty` existed, so it uses the older column set; `summarize` reads it, and `recovery` refuses to append to it |
 

@@ -2,7 +2,7 @@
 
     python3 -m experiments.figures
 
-Reads ``results/recovery.csv`` and writes five PNGs beside it.  Violin plots
+Reads ``results/recovery.csv`` and writes seven PNGs beside it.  Violin plots
 throughout, because that is what this experiment produces: every cell is 50
 random fields, and the thing worth seeing is the *shape* of the 50 -- whether a
 method's advantage is the whole distribution moving or a few lucky draws, and
@@ -64,7 +64,8 @@ def main(argv=None):
     rows = _read(args.path)
     print("%d rows in %s" % (len(rows), args.path))
 
-    for name, draw in (("recovery", _recovery), ("runtime", _runtime),
+    for name, draw in (("summary", _summary), ("recovery", _recovery),
+                       ("runtime", _runtime),
                        ("implementation", _implementation),
                        ("solvers", _solvers), ("cells", _cells),
                        ("windows", _windows)):
@@ -92,6 +93,120 @@ def _select(rows, **constraints):
 
 def _values(rows, column):
     return numpy.array([float(row[column]) for row in rows if row[column]])
+
+
+# --------------------------------------------------------------------------
+# The summary: the original implementation, the port, and the descent.
+# --------------------------------------------------------------------------
+
+#: The three estimators the summary compares, in the order drawn:
+#: ``(label, colour, method, constraints)``.  The two N3 rows differ only in
+#: which implementation of the blocks ran, so they are two shades of one
+#: colour; ``hoyer`` is a different objective and takes its own.
+SUMMARY = (
+    ("legacy N3 (C++, cpu)", "#9dbdd8", "n3",
+     dict(backend="legacy", solver="normal", protocol="fixed30",
+          device="cpu", parzen_sigma="")),
+    ("torch N3 (normal, cuda)", "#3a6ea5", "n3", dict(MATCHED["n3"])),
+    ("hoyer (gradient descent, cuda)", "#d1701c", "hoyer",
+     dict(MATCHED["hoyer"])),
+)
+
+
+def _summary(rows):
+    """The three estimators side by side: what they leave, and what they cost.
+
+    One figure for the two questions a reader arrives with.  Left: the
+    non-uniformity remaining in the brain after correction, over all nine
+    cells, so that the comparison is read across the amplitude and noise axes
+    rather than at one operating point.  Right: wall time for the same trials.
+
+    The two N3 rows are the same algorithm computed twice -- the original C++
+    blocks through the CFFI shim, and the PyTorch port -- and their violins
+    coincide at every cell, to the width of the line.  That coincidence is the
+    result the figure carries: the port reproduces the implementation it was
+    derived from, and the separation visible below both of them belongs to the
+    change of objective rather than to the change of implementation.  The
+    per-trial statement of the same agreement, which a violin cannot resolve,
+    is in ``experiments/README.md``, "The two backends, over 450 trials".
+
+    The cost panel is linear and the score panel logarithmic, for the reason
+    given in the module docstring: the scores span four decades and the times
+    a factor of nine.  The devices differ between rows and are stated in the
+    labels; the panel therefore reports the cost of each configuration as it
+    was run, not the cost of the arithmetic on equal hardware, for which
+    ``runtime.png`` carries the torch-on-CPU control.
+    """
+    figure, axes = pyplot.subplots(
+        1, 2, figsize=(14, 5.2), gridspec_kw={"width_ratios": [2.7, 1.0]})
+
+    drawn = []
+    offsets = numpy.linspace(-0.26, 0.26, len(SUMMARY))
+    centres, ticks = [], []
+    for index, (amplitude, snr) in enumerate(
+            (a, s) for a in AMPLITUDES for s in SNRS):
+        centres.append(index)
+        ticks.append("%d%%\nSNR %s" % (float(amplitude) * 100,
+                                       "∞" if snr == "inf" else snr))
+        for (_, colour, method, constraints), offset in zip(SUMMARY, offsets):
+            cell = _select(rows, method=method, amplitude=amplitude, snr=snr,
+                           **constraints)
+            _violin(axes[0], _values(cell, "unexplained_brain_pct"),
+                    index + offset, colour, width=0.22, drawn=drawn)
+
+    # The planted non-uniformity: what the score would be without correction.
+    # Once per amplitude, since the noise does not change it.
+    for index in range(0, len(centres), len(SNRS)):
+        amplitude = AMPLITUDES[index // len(SNRS)]
+        level = numpy.log10(numpy.median(_values(
+            _select(rows, method="n3", amplitude=amplitude, **MATCHED["n3"]),
+            "planted_cv_brain_pct")))
+        drawn.append(numpy.array([level]))
+        axes[0].plot([index - 0.45, index + len(SNRS) - 0.55], [level] * 2,
+                     color=COLOUR["uncorrected"], linestyle="--",
+                     linewidth=1.4, zorder=1)
+    for boundary in range(len(SNRS), len(centres), len(SNRS)):
+        axes[0].axvline(boundary - 0.5, color="0.85", linewidth=1, zorder=0)
+
+    axes[0].set_xticks(centres)
+    axes[0].set_xticklabels(ticks, fontsize=9)
+    axes[0].set_xlabel("planted field (log peak-to-peak) and SNR")
+    axes[0].set_ylabel("unexplained, % of mean (brain)")
+    axes[0].set_title("Non-uniformity left after correction", fontsize=11)
+    _log_axis(axes[0], drawn)
+
+    drawn = []
+    for index, (_, colour, method, constraints) in enumerate(SUMMARY):
+        seconds = _values(_select(rows, method=method, **constraints),
+                          "seconds")
+        _violin(axes[1], seconds, index, colour, width=0.6, log=False,
+                drawn=drawn)
+        # Above the whole violin rather than beside its median, which the
+        # body covers where the distribution is narrow.
+        axes[1].annotate("%.2f s" % numpy.median(seconds),
+                         (index, seconds.max()),
+                         textcoords="offset points", xytext=(0, 6),
+                         ha="center", fontsize=9, color=colour)
+    axes[1].set_xticks(range(len(SUMMARY)))
+    axes[1].set_xticklabels(["legacy\ncpu", "torch\ncuda", "hoyer\ncuda"],
+                            fontsize=9)
+    axes[1].set_ylabel("seconds per estimate")
+    axes[1].set_title("Wall time, all 450 trials each", fontsize=11)
+    _linear_axis(axes[1], drawn)
+
+    figure.suptitle("Legacy N3, the PyTorch port and the descent -- colin27, "
+                    "50 random fields per cell, 75 mm knots", fontsize=13,
+                    y=1.0)
+    figure.tight_layout()
+    figure.legend(handles=[Line2D([], [], color=colour, linewidth=8,
+                                  alpha=0.65, label=label)
+                           for label, colour, _, _ in SUMMARY]
+                  + [Line2D([], [], color=COLOUR["uncorrected"],
+                            linestyle="--",
+                            label="uncorrected (what was planted)")],
+                  loc="lower center", ncol=4, fontsize=9,
+                  bbox_to_anchor=(0.5, 1.0), frameon=False)
+    return figure
 
 
 # --------------------------------------------------------------------------
@@ -637,7 +752,7 @@ def _parse(argv):
     parser.add_argument("--out", default=FIGURES,
                         help="directory for the PNGs (default: %(default)s)")
     parser.add_argument("--figure", default="all",
-                        choices=("all", "recovery", "runtime",
+                        choices=("all", "summary", "recovery", "runtime",
                                  "implementation", "solvers", "cells",
                                  "windows"),
                         help="which figure to draw (default: all)")
