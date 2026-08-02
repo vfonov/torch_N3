@@ -1,30 +1,31 @@
 # Simulated bias-field recovery
 
-Plant a **random** smooth field on colin27, add Gaussian noise at a stated
-SNR, run `nu_estimate`, and measure how much of the field came back. Repeat
-over many seeds, so that every configuration gets a *distribution* rather than
-a number.
+A **random** smooth field is planted on colin27, Gaussian noise is added at a
+stated SNR, `nu_estimate` is run, and the proportion of the field recovered is
+measured. This is repeated over many seeds, so that every configuration yields
+a distribution rather than a single value.
 
 ```bash
 python3 -m experiments.recovery --seeds 50 --verbose      # hours; resumable
 python3 -m experiments.summarize --group solver snr       # read the rows
 ```
 
-Nothing here is a test. `pytest.ini` collects `tests/` only, and the one thing
-in this directory that is checked automatically is the generators, from
+Nothing here is a test. `pytest.ini` collects `tests/` only, and the only part
+of this directory covered automatically is the generators, from
 `tests/test_simulation.py`.
 
-## Why
+## Motivation
 
-`tests/test_field_recovery.py` and `tests/tables.py` plant *one* analytic
-field on *one* volume with no noise. Every number they publish is a single
-draw, and CLAUDE.md says what that is worth: "If you find yourself relying on
-a cell, the honest fix is to widen `LAMBDAS` and assert the shape being
-claimed". This is the statistical version of the same experiment — random
-fields, real noise, and an IQR to read a difference against.
+`tests/test_field_recovery.py` and `tests/tables.py` plant one analytic field
+on one volume with no noise. Every value they publish is a single draw, and
+CLAUDE.md states the consequence: if a result comes to depend on a particular
+cell, the correct remedy is to widen `LAMBDAS` and assert the property being
+claimed. This is the statistical form of the same experiment: random fields,
+added noise, and an interquartile range against which a difference can be
+read.
 
-The score is deliberately the one `tests/tables.py` publishes, so the two can
-be read together.
+The score is deliberately the one `tests/tables.py` publishes, so that the two
+can be read together.
 
 ## The data
 
@@ -38,38 +39,38 @@ be read together.
 | `colin27_t1_tal_lin_mask.mnc` | the brain mask, for `--mask` |
 
 From <https://packages.bic.mni.mcgill.ca/mni-models/colin27/mni_colin27_1998_minc2.zip>;
-unzip it and move the three files here. They are MINC2 already, so
+unzip it and move the three files here. They are already MINC2, so
 `load_volume` reads them without `mincconvert`.
 
-colin27 is an average of 27 scans of one subject, so it starts out with very
-little noise of its own — which is what makes it a good base for noise that
-is *known*.
+colin27 is an average of 27 scans of one subject and therefore carries very
+little noise of its own, which is what makes it a suitable base for noise of a
+known magnitude.
 
-## What is measured
+## Measured quantities
 
 **The planted field** (`simulation.random_bias_field`) is a sum of
 `--field-terms` (8) cosine waves in world coordinates, with directions uniform
 on the sphere, wavelengths no shorter than `--field-scale` mm, random phases,
 and amplitudes falling off with frequency; then rescaled to exactly
-`--amplitude` log peak-to-peak inside the mask and normalised to mean 1. In mm
-rather than in normalised axes, so a trial's difficulty is a property of the
-field and not of the volume's size. Deliberately not a B-spline: N3's basis
-should have to approximate it, not reproduce it.
+`--amplitude` log peak-to-peak inside the mask and normalised to mean 1. The wavelengths are in mm
+rather than in normalised axes, so that a trial's difficulty is a property of
+the field rather than of the volume's size. The field is deliberately not a
+B-spline: N3's basis must approximate it rather than reproduce it.
 
 `--field-scale` defaults to **400 mm**, the scale a receive coil's sensitivity
 actually varies on, and about the smoothness of
 `tests.inputs.synthetic_bias_field` (`cos(0.9u)`, ~620 mm across this volume).
 It was calibrated against the `floor` column below: at 400 mm a planted field
-costs the basis 0.002-0.005% at 75 mm knots, i.e. essentially nothing, so what
-the sweep measures is the *estimation* rather than the basis. Shorten it and
-that stops being true — an early probe at ~300 mm in normalised axes left 2.3%
-that no estimator could have recovered.
+costs the basis 0.002-0.005% at 75 mm knots, which is negligible, so the sweep
+measures the estimation rather than the basis. At shorter scales this ceases
+to hold: an early probe at about 300 mm in normalised axes left 2.3% that no
+estimator could have recovered.
 
 **The noise** is `clamp(clean * planted + sigma*N(0,1), min=0)` — field first,
 then noise. `sigma = mean(clean[mask]) / SNR`, taken from the clean, *unbiased*
 volume so that SNR 20 means the same thing at every amplitude (sigma = 12,135
-here; 6,068 at SNR 40). `--snr inf` is the noiseless control, and the field is
-still random per seed. The field and the noise of one trial come from two
+here; 6,068 at SNR 40). `--snr inf` is the noiseless control, in which the field
+remains random per seed. The field and the noise of one trial come from two
 independent generators, both derived from the seed, so either can be
 reproduced alone.
 
@@ -83,65 +84,67 @@ unexplained_pct = 100 * ratio.std(unbiased=False)
 
 `baseline` is the same configuration's answer on the clean, unbiased volume,
 divided out because colin27 is not perfectly uniform to begin with and N3
-removes that too. It is computed once per `(solver, protocol, distance, lam)`
-— which is what fixes the loop order — and *not* per noise realisation, so
-noise shows up as error. That is the point of the experiment.
+removes that too. It is computed once per `(solver, protocol, distance, lam)`,
+which is what fixes the loop order, and not per noise realisation, so that
+noise appears as error. That is the purpose of the experiment.
 
-**Two regions, and the difference matters.** The estimation runs over the head
-mask, and so does the headline score — but a head mask takes in scalp, skull
-and neck, where the field is worst determined and where nobody is going to use
-the correction. Every trial is therefore scored twice, over the estimation
-mask and over the brain (`--brain-mask`, the `_brain` columns). At 75 mm on
+**Two regions are scored, and the difference between them is substantial.**
+The estimation runs over the head mask, as does the primary score, but a head
+mask includes scalp, skull and neck, where the field is least well determined
+and where the correction is not applied in practice. Every trial is therefore
+scored twice, over the estimation mask and over the brain (`--brain-mask`, the
+`_brain` columns). At 75 mm on
 colin27 one field scores **2.11 % over the head and 0.96 % over the brain**,
-and `tests.inputs.synthetic_bias_field`'s analytic field splits the same way
-(1.94 % / 0.80 %) — so it is the region, not the random generator. Read the
-brain columns for "how well does this correct a brain", the mask columns for
-"how well was the estimation problem solved as posed".
+and `tests.inputs.synthetic_bias_field`'s analytic field divides in the same
+proportion (1.94 % / 0.80 %), so the effect is attributable to the region and
+not to the random generator. The brain columns measure how well a brain is
+corrected; the mask columns measure how well the estimation problem was solved
+as posed.
 
 ## The columns
 
 | column | what |
 |---|---|
-| `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `parzen_sigma`, `shrink`, `device` | the key: every parameter that changes the answer. Anything left out of it makes a sweep over that parameter silently skip — which happened four times before the list was complete |
+| `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `parzen_sigma`, `shrink`, `device` | the key: every parameter that changes the answer. A parameter omitted from it causes a sweep over that parameter to be skipped without any diagnostic, which occurred four times before the list was complete |
 | `parzen_sigma` | the histogram kernel: a Gaussian Parzen window this many bin widths wide, or **empty for N3's own linear split**, which is what every row written before the column existed ran. `--method n3` only; see "Gaussian Parzen window" in the top-level README |
-| `loss` | the loss the descent reached — empty for `n3` |
+| `loss` | the loss the descent reached; empty for `n3` |
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |
 | `planted_cv_pct` | the non-uniformity that was planted — what there was to remove |
-| `floor_pct` | the best this basis could have done: `unexplained_pct` of fitting the planted field with the spline itself, same grid, spacing, weight and solver. This is the `oracle` method's score, carried on *every* row so any trial can be read against its own ceiling |
+| `floor_pct` | the best score this basis admits: `unexplained_pct` of fitting the planted field with the spline itself, at the same grid, spacing, weight and solver. This is the `oracle` method's score, carried on every row so that any trial can be read against its own ceiling |
 | `unexplained_brain_pct`, `rms_log_brain`, `planted_cv_brain_pct`, `floor_brain_pct` | the same four over the brain mask instead |
-| `iterations` | how many the run took (counted off `nu_estimate(verbose=True)`) |
+| `iterations` | the number the run required (counted from `nu_estimate(verbose=True)`) |
 | `seconds`, `baseline_seconds` | wall time of the estimate |
-| `backend`, `field_scale`, `field_terms`, `timestamp`, `git_commit`, `torch_version`, `host` | provenance, on every row, because rows from several runs and machines end up in one file |
+| `backend`, `field_scale`, `field_terms`, `timestamp`, `git_commit`, `torch_version`, `host` | provenance, on every row, since rows from several runs and machines accumulate in one file |
 
-`unexplained_pct / planted_cv_pct` is the fraction *not* removed;
-`floor_pct` says how much of it the basis was never going to get.
+`unexplained_pct / planted_cv_pct` is the fraction not removed; `floor_pct`
+gives the part of it the basis could not have represented.
 
 ## Methods
 
-`--method` chooses the estimator, and `method` is a key column so the results
-never mix:
+`--method` selects the estimator. `method` is a key column, so results from
+different estimators are never pooled.
 
 - **`n3`** (default) — `pipeline.nu_estimate`, the shipped alternating
   iteration. `--protocol`, `--lambda` and the solver apply.
 - **`hoyer`**, **`tightness`** — `optimize.nu_optimize`, gradient descent on a
   stated sharpness objective over the *same* B-spline field. `--protocol` does
   not apply (there is no stopping rule to choose); `--penalty` replaces
-  `--lambda` and is on a different scale entirely; `--sample-size` and
+  `--lambda` and is on an unrelated scale; `--sample-size` and
   `--max-iterations` control the descent.
-- **`oracle`** — not an estimator: it is *handed* the field that was planted
-  and does nothing but fit it with the same penalized spline the other two end
-  with, on the same grid, at the same `--distance`, `--lambda` and solver. It
-  reads no voxel intensity, so nothing that has to work the field out from the
-  data can score better. See "The ceiling" below.
+- **`oracle`** — not an estimator: it is given the field that was planted and
+  only fits it with the same penalized spline the other two arrive at, on the
+  same grid, at the same `--distance`, `--lambda` and solver. It reads no voxel
+  intensity, so no method that must infer the field from the data can score
+  better. See "The ceiling" below.
 
 The descent's voxel subset is drawn once per cell with a fixed seed
-(`recovery.OPTIMIZE_SEED`), not from the trial's seed: the baseline is shared
-by every trial in a cell, so the two must see the same voxels or the ratio
-measures the subsets rather than the fields. The trial's seed still governs
+(`recovery.OPTIMIZE_SEED`) rather than from the trial's seed. The baseline is
+shared by every trial in a cell, so the two must see the same voxels; otherwise
+the ratio measures the subsets rather than the fields. The trial's seed still governs
 the planted field and the noise, which is what is being swept.
 
-### The colin27 head-to-head, 50 seeds
+### Comparison on colin27, 50 seeds
 
 `experiments/results/recovery.csv` holds 4,050 trials: 3,600 `n3` (4 solvers ×
 2 protocols) and 450 `hoyer` at `--penalty 1e-3 --distance 75`, on **identical
@@ -163,28 +166,30 @@ non-uniformity over the brain, n = 50 per cell:
 | 80 % | 40 | 5.38 % | **1.19 %** |
 | 80 % | 20 | 5.83 % | **1.76 %** |
 
-`hoyer` wins every cell by 2.5–5×, and no IQR overlaps. The gap widens with
-amplitude: N3 degrades steeply as the planted field grows (1.03 → 5.09 % at
-SNR ∞) where `hoyer` barely does (0.28 → 1.18 %).
+`hoyer` is better in every cell by a factor of 2.5–5, and no interquartile
+ranges overlap. The difference increases with amplitude: N3 degrades steeply as
+the planted field grows (1.03 → 5.09 % at SNR ∞) where `hoyer` degrades only
+slightly (0.28 → 1.18 %).
 
-Three things that belong next to that table:
+Two qualifications belong with that table:
 
-- **`hoyer` has a failure tail N3 does not.** It loses on 17 of 450 matched
-  trials, all at 40–80 % amplitude, and its worst trial (seed 9, 80 %) reaches
-  9.3 % against N3's 6.9 %. N3's spread is narrow and its worst case bounded;
-  `hoyer` is better *typically* and occasionally worse. A mean well above its
-  median in the 80 % rows is that tail showing.
-- **79 of 450 trials hit the 400-iteration cap**, all in the harder cells, so
-  those are lower bounds on what the objective would reach, not its optimum.
+- **`hoyer` has a failure tail that N3 does not.** It is worse on 17 of 450
+  matched trials, all at 40–80 % amplitude, and its worst trial (seed 9, 80 %)
+  reaches 9.3 % against N3's 6.9 %. N3's spread is narrow and its worst case
+  bounded, whereas `hoyer` is better typically and occasionally worse. A mean
+  well above the median in the 80 % rows is that tail.
+- **79 of 450 trials reached the 400-iteration cap**, all in the harder cells,
+  so those values are lower bounds on what the objective would reach rather
+  than its optimum.
 
-### The ceiling: what the basis could have done
+### The ceiling: the best score the basis admits
 
-`--method oracle` is handed the field that was planted and does nothing but
-fit it with the same penalized spline, on the same grid, at the same
-`--distance`, `--lambda`, solver and `--shrink`. It reads no voxel intensity,
-so it is not an estimator — it is the **best score any estimator could have
-got** at that configuration, and the difference between it and a real method
-is estimation error with the representation error taken out.
+`--method oracle` is given the field that was planted and only fits it with the
+same penalized spline, on the same grid, at the same `--distance`, `--lambda`,
+solver and `--shrink`. It reads no voxel intensity and is therefore not an
+estimator: it is the **best score attainable at that configuration**, and the
+difference between it and a real method is estimation error with the
+representation error removed.
 
 1,800 trials (4 solvers × 450), median over the brain, beside the same cells
 as above:
@@ -195,49 +200,50 @@ as above:
 | 40 % | **0.0049 %** | 0.50–1.44 % | 2.31–4.05 % | 6.98 % |
 | 80 % | **0.0143 %** | 1.18–1.76 % | 5.09–5.83 % | 14.03 % |
 
-**The basis is not the limitation.** Per matched trial, N3 lands a median
-**550×** above the ceiling and `hoyer` **136×**; the closest either ever comes
-is 51× and 20×, and neither reaches it on any of 450 trials. So essentially
-none of the residual anywhere in this experiment is the spline's inability to
-express the field — it is all estimation. That also confirms the
-`--field-scale 400` calibration was doing its job: the sweep measures what it
-set out to measure.
+**The basis is not the limiting factor.** Per matched trial, N3 is a median
+**550×** above the ceiling and `hoyer` **136×**; the closest either comes is
+51× and 20× respectively, and neither reaches it on any of the 450 trials.
+Essentially none of the residual anywhere in this experiment is the spline's
+inability to represent the field; it is all estimation error. This also
+confirms the `--field-scale 400` calibration: the sweep measures the quantity
+it was designed to measure.
 
-Two properties the oracle has by construction, and both come out of the data
-as they should, which is a check on the harness rather than a result:
+The oracle has two properties by construction, and both are reproduced by the
+data, which is a check on the harness rather than a result:
 
-- **It does not depend on the SNR** — identical to five decimal places across
-  `inf`/40/20 in every cell. It never reads a voxel, so noise can only reach it
-  through the estimation mask (`data > background`), which at these sigmas
-  moves a handful of voxels and changes the score by ~1e-5 relative.
-- **It does not depend on the solver** — `normal`, `qr`, `dr` and `blocked`
-  give the same median *and the same maximum* to five decimals. Representation
-  error is a property of the basis, and four solvers of the same objective
-  agree about it.
+- **It does not depend on the SNR**: identical to five decimal places across
+  `inf`/40/20 in every cell. It never reads a voxel, so noise reaches it only
+  through the estimation mask (`data > background`), which at these values of
+  sigma moves a handful of voxels and changes the score by about 1e-5 relative.
+- **It does not depend on the solver**: `normal`, `qr`, `dr` and `blocked` give
+  the same median and the same maximum to five decimals. Representation error
+  is a property of the basis, and four solvers of the same objective agree on
+  it.
 
-It also costs **0.021 s**, against 0.69 s for the cheapest N3 configuration —
-one spline fit is about 3 % of a 30-iteration run.
+It also costs **0.021 s**, against 0.69 s for the least expensive N3
+configuration: one spline fit is about 3 % of a 30-iteration run.
 
 An oracle row's `unexplained_pct` reproduces its own `floor_pct` column, which
-is the same quantity computed on the clean volume: bit for bit at SNR ∞, and
-within 2.3e-4 relative at worst over all 1,800 rows. That is the mask effect
-above, and it is the check that the baseline division really is a no-op for
-this method (`tests/test_simulation.py` asserts the reason: a unit field fits
+is the same quantity computed on the clean volume: exactly at SNR ∞, and within
+2.3e-4 relative at worst over all 1,800 rows. The residual difference is the
+mask effect described above, and this is the check that the baseline division
+is indeed an identity for this method (`tests/test_simulation.py` asserts the reason: a unit field fits
 back to unity, because cubic B-splines are a partition of unity and a constant
 has zero bending energy, so the penalty cannot pull the fit off it at any
 `lam`).
 
-### N3 can be worse than doing nothing
+### Cases in which correction increases non-uniformity
 
-Reading the `n3` column against `planted_cv` — which the figure draws as the
-dashed line — at **20 % planted, SNR 20, over the head mask N3's median
-residual is 5.35 % against the 4.23 % that was there to begin with: 1.26× the
-uncorrected volume.** Over the brain the same cell is a wash (0.98×). It is
-the one cell in nine where this happens, and it is the combination of a weak
-field and heavy noise: there is little to find and a lot to be misled by.
-Everywhere else N3 removes 40–70 % of what was planted (head) or 60–70 %
-(brain). The whole distribution is above the line, not just the median, which
-is the sort of thing a table of medians states and a violin makes obvious.
+Reading the `n3` column against `planted_cv`, which the figure draws as the
+dashed line: at **20 % planted, SNR 20, over the head mask, N3's median
+residual is 5.35 % against the 4.23 % initially present, or 1.26× the
+uncorrected volume.** Over the brain the same cell is neutral (0.98×). This is
+the only cell of the nine in which it occurs, and it arises from the
+combination of a weak field and heavy noise: there is little signal to recover
+and a large source of error. In every other cell N3 removes 40–70 % of what was
+planted (head) or 60–70 % (brain). The whole distribution lies above the line,
+not only the median, which is a property a table of medians states and a violin
+plot displays directly.
 
 ### Run time
 
@@ -251,13 +257,14 @@ Per estimate on the GPU, median, same volume and settings:
 | `n3` `qr` / `dr` | 2.58 / 2.62 | 30 | — |
 | `hoyer` (cap 400) | 2.48 | 197 | **12.6 ms** |
 
-`hoyer` is 3.6× slower than the *cheapest* N3 configuration but level with
-`qr` and `dr`, which are what you would run for cross-platform
-reproducibility. Per iteration it is **half N3's cost** — a gather over 16 k
-samples, a soft histogram and a backward pass, against a full-volume histogram,
-a deconvolution and a whole spline solve. It simply takes more iterations.
+`hoyer` is 3.6× slower than the least expensive N3 configuration but
+comparable to `qr` and `dr`, which are the configurations used for
+cross-platform reproducibility. Per iteration it costs **half of N3**: a gather
+over 16 k samples, a soft histogram and a backward pass, against a full-volume
+histogram, a deconvolution and a complete spline solve. It requires more
+iterations.
 
-**And it does not need them.** Capping the descent (10 seeds × 3 amplitudes ×
+**Those iterations are not necessary.** Capping the descent (10 seeds × 3 amplitudes ×
 3 SNRs = 90 trials per budget, brain, median):
 
 | budget | seconds | median | IQR | mean |
@@ -271,11 +278,12 @@ a deconvolution and a whole spline solve. It simply takes more iterations.
 | `n3`, 30 iterations | 0.68 | 3.57 % | 2.06–5.08 | 3.58 % |
 
 At **20 iterations `hoyer` is both 2.6× faster than N3 and 2.5× more
-accurate** (0.26 s, 1.43 % against 0.68 s, 3.57 %). So the 4× cost quoted above
-is a choice, not a requirement: it buys the last factor of ~1.6 in accuracy
-(1.43 % → 0.87 %). Between 20 and 50 the curve is flat-to-slightly-worse and
-the IQRs overlap; the real gains arrive after 100. Beyond 200 nothing changes
-except the tail (the mean keeps falling, 1.68 → 1.45 %, as slow trials finish).
+accurate** (0.26 s, 1.43 % against 0.68 s, 3.57 %). The 4× cost quoted above is
+therefore a choice rather than a requirement: it obtains the final factor of
+about 1.6 in accuracy (1.43 % → 0.87 %). Between 20 and 50 iterations the curve
+is flat to slightly worse and the interquartile ranges overlap; the substantive
+improvement occurs after 100. Beyond 200 only the tail changes, the mean
+continuing to fall from 1.68 to 1.45 % as the slow trials complete.
 
 **Measured against N3 on `tests/tables.py`'s experiment** — `brain_nu_ref.mnc`,
 the analytic planted field, the same score N3's published table reports — each
@@ -287,28 +295,29 @@ method at its own best weight, 20 % planted:
 | 100 mm | **0.17 %** | 0.21 % | diverges |
 | 50 mm | 0.25 % | **0.17 %** | diverges |
 
-N3's column reproduces its published table exactly, so the harness is
-faithful. `hoyer` loses where N3 is strong and wins at 50 mm, and the trends
-run opposite: N3 degrades as the field gains freedom, `hoyer` improves. Its
-useful weights are `1e-4`–`1e-3`; below ~`1e-5` it becomes unstable at fine
-spacings (at 50 mm and `1e-6` the field ran away to 1316 % non-uniformity).
+N3's column reproduces its published table exactly, which establishes that the
+harness is faithful. `hoyer` is worse where N3 is strongest and better at
+50 mm, and the two trends are opposed: N3 degrades as the field gains freedom
+while `hoyer` improves. Its usable weights are `1e-4`–`1e-3`; below about
+`1e-5` it becomes unstable at fine spacings (at 50 mm and `1e-6` the field
+diverged to 1316 % non-uniformity).
 
-`tightness` **does not work**, and not for want of tuning — its loss falls
-while its estimate gets worse. See `torch_n3/optimize.py`'s docstring and
+`tightness` **does not work**, and not for lack of tuning: its loss falls while
+its estimate deteriorates. See `torch_n3/optimize.py`'s docstring and
 `tests/test_optimize.py::test_tightness_makes_its_own_estimate_worse_as_it_converges`.
 
 ## Protocols
 
 `--protocol` sweeps both by default:
 
-- **`fixed30`** — `iterations=(30,), stop=(0.0,)`. Every trial does the same
-  work, so a difference between two cells is the fit. This is what
-  `tests/tables.py` uses.
-- **`default`** — `iterations=(50,), stop=(0.001,)`, what `nu_correct` ships.
-  Noise moves the stopping point, so `iterations` and `seconds` become real
-  measurements rather than constants.
+- **`fixed30`** — `iterations=(30,), stop=(0.0,)`. Every trial performs the
+  same work, so a difference between two cells is attributable to the fit. This
+  is the protocol `tests/tables.py` uses.
+- **`default`** — `iterations=(50,), stop=(0.001,)`, as shipped by
+  `nu_correct`. Noise moves the stopping point, so `iterations` and `seconds`
+  become measurements rather than constants.
 
-## Running it
+## Running the sweep
 
 The full sweep is 50 seeds x 3 amplitudes x 3 SNRs x 4 solvers x 2 protocols =
 3,600 trials. `--dry-run` counts them first.
@@ -323,35 +332,35 @@ on an RTX A6000, one 30-iteration trial:
 | `blocked` | 1.8 s | — |
 | `qr`, `dr` | 2.6 s | ~5-7 s |
 
-About two hours for the sweep on the GPU against three on the CPU. `device` is
-one of the key columns, so rows from the two never mix in a summary — and a
-sweep only resumes against rows from the same device. CLAUDE.md is worth
-reading before comparing across them: the same backend on a GPU lands 1.3e-3
-from the CPU end to end, which is larger than most differences this experiment
-is looking for.
+The sweep takes about two hours on the GPU against three on the CPU. `device`
+is one of the key columns, so rows from the two are never pooled in a summary,
+and a sweep resumes only against rows from the same device. Read CLAUDE.md
+before comparing across them: the same backend on a GPU differs from the CPU by
+1.3e-3 end to end, which is larger than most of the differences this experiment
+is intended to resolve.
 
-It is **resumable**: rows are flushed as they are produced and a re-run skips
-any trial already in the file, so it can be killed and restarted, or extended
-with more seeds, without losing or repeating work. A configuration whose
-trials are all present does not even recompute its baseline.
+The sweep is **resumable**: rows are flushed as they are produced and a re-run
+skips any trial already present in the file, so it can be interrupted and
+restarted, or extended with further seeds, without losing or repeating work. A
+configuration whose trials are all present does not recompute its baseline.
 
 ```bash
 python3 -m experiments.recovery --dry-run
 python3 -m experiments.recovery --seeds 50 --verbose      # or nohup ... &
 python3 -m experiments.recovery --seeds 80 --verbose      # adds seeds 51-80
 
-# the histogram-kernel sweep below: 'none' is N3's own split, and its 900
-# trials are already in the file, so this adds 2,700 and takes ~50 min
+# the histogram-kernel sweep below: 'none' is N3's own split, whose 900 trials
+# are already in the file, so this adds 2,700 and takes about 50 min
 python3 -m experiments.recovery --method n3 --solver normal \
     --parzen-sigma none 1 2 4 --verbose
 ```
 
-Give one sweep the machine: two side by side share the same GPU (or, on the
-CPU, the same cores) and neither goes faster. A second job does not change the
-scores — they are deterministic given the seed — but it does make the
-`seconds` column meaningless.
+Run one sweep at a time: two concurrent sweeps share the same GPU, or the same
+cores on the CPU, and neither completes sooner. A second job does not change
+the scores, which are deterministic given the seed, but it does invalidate the
+`seconds` column.
 
-## Reading it
+## Interpreting the output
 
 ```bash
 python3 -m experiments.summarize --group solver snr
@@ -359,62 +368,62 @@ python3 -m experiments.summarize --group amplitude snr --metric rms_log
 python3 -m experiments.summarize --group protocol solver --metric seconds
 python3 -m experiments.summarize --group distance lam --csv > grid.csv
 
-# one file now holds several experiments, so drop the ones not being asked
-# about; `x=` matches an empty column, which is how N3's own histogram is
-# spelled
+# one file now holds several experiments, so exclude those not under
+# consideration; `x=` matches an empty column, which is how N3's own histogram
+# is denoted
 python3 -m experiments.summarize --where method=n3 solver=normal \
     device=cuda protocol=default --group amplitude snr parzen_sigma
 ```
 
 Per group: `n`, mean, median, IQR, extremes, mean run time, and mean `floor`.
-The IQR rather than a standard deviation because the spread across seeds is
-not symmetric — a mean well above the median means a few hard draws are
-setting it.
+The interquartile range is reported rather than a standard deviation because
+the spread across seeds is not symmetric; a mean well above the median
+indicates that a few difficult draws determine it.
 
-### Seeing it
+### Figures
 
 ```bash
-python3 -m experiments.figures                    # all three, into results/
+python3 -m experiments.figures                    # all figures, into results/
 python3 -m experiments.figures --figure recovery
 ```
 
-Violin plots, because every cell is 50 random fields and what is worth seeing
-is the *shape* of the 50 — whether a method's advantage is the whole
-distribution moving or a few lucky draws. A bar of medians would hide both of
-the findings this sweep exists for: `hoyer`'s failure tail, and the handful of
-trials where two backends disagree by 18 %.
+Violin plots are used because every cell is 50 random fields and the quantity
+of interest is the shape of those 50: whether a method's advantage is the whole
+distribution moving or a few favourable draws. A bar chart of medians would
+conceal both of the findings this sweep exists for, namely `hoyer`'s failure
+tail and the small number of trials on which two backends differ by 18 %.
 
 | figure | what |
 |---|---|
-| `results/recovery.png` | the headline: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
-| `results/cells.png` | the same thing split out — **one panel per (amplitude, SNR)**, with N3's four solvers drawn apart, `hoyer` and `oracle` beside them. Brain only, one shared range across all nine |
+| `results/recovery.png` | the principal figure: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
+| `results/cells.png` | the same data disaggregated: **one panel per (amplitude, SNR)**, with N3's four solvers drawn separately and `hoyer` and `oracle` beside them. Brain only, one shared range across all nine |
 | `results/runtime.png` | wall time per estimate, every configuration in the file |
-| `results/implementation.png` | the three comparisons that should come out flat — solver, backend/device, and the solver's effect on the ceiling |
-| `results/solvers.png` | the solvers asked properly: per-trial difference from `normal` (six decades, log) beside seconds (a factor of 3.8, linear) |
-| `results/windows.png` | N3's linear split against the Gaussian Parzen window, one panel per cell — and the one figure here that draws **both protocols**, because how much the window buys depends on how long the iteration runs |
+| `results/implementation.png` | the three comparisons expected to show no effect: solver, backend/device, and the solver's effect on the ceiling |
+| `results/solvers.png` | the solver comparison posed per trial: difference from `normal` (six decades, log) beside seconds (a factor of 3.8, linear) |
+| `results/windows.png` | N3's linear split against the Gaussian Parzen window, one panel per cell, and the only figure here that draws **both protocols**, because the reduction the window yields depends on the length of the iteration |
 
 `recovery.png` pools the four solvers into one `n3` violin per cell, which is
-the right summary and the wrong picture for two questions: whether the solvers
-separate anywhere in particular (they do not — nine cells, four violins each,
-all indistinguishable), and how a cell's own spread compares with the gap
-between methods. `cells.png` is those two questions.
+the appropriate summary but does not address two questions: whether the solvers
+separate in any particular cell (they do not — nine cells, four violins each,
+all indistinguishable), and how a cell's own spread compares with the
+difference between methods. `cells.png` addresses both.
 
-Two conventions worth knowing before reading them. **Densities are estimated
-in log space** wherever the axis is logarithmic: a KDE fitted in linear space
-and drawn on a log axis is a picture of the wrong distribution, and these
-scores span four decades. And `implementation.png` is on **linear axes scaled
-to their own data**, deliberately — those differences are parts in a hundred,
-and on the decade axis the other figures use they would be one flat line,
-which is a picture of the axis rather than of the measurement. Read the spread
-*within* each violin against the gap *between* them.
+Two conventions apply. **Densities are estimated in log space** wherever the
+axis is logarithmic: a kernel density estimate fitted in linear space and drawn
+on a log axis depicts the wrong distribution, and these scores span four
+decades. `implementation.png` uses **linear axes scaled to their own data**,
+deliberately: those differences are parts per hundred, and on the decade axis
+the other figures use they would appear as a single flat line, which would
+depict the axis rather than the measurement. Read the spread within each violin
+against the difference between them.
 
 ## The histogram kernel, over 450 trials each
 
 `--parzen-sigma` replaces N3's `-parzen` — linear interpolation into two bins —
 with a Gaussian Parzen window of a stated width in bin widths. The top-level
 README describes it; `tests/parzen.py` measures it on **one** analytic field
-with **no noise**, and this is the same question asked of 450 random fields per
-window at three amplitudes and three SNRs.
+with **no noise**, and this section poses the same question to 450 random
+fields per window at three amplitudes and three SNRs.
 
 Median unexplained non-uniformity over the brain, 50 seeds per cell, 75 mm
 knots, `--lambda 1e-7`, `--solver normal`, on the GPU. Best in each row bold:
@@ -447,9 +456,9 @@ knots, `--lambda 1e-7`, `--solver normal`, on the GPU. Best in each row bold:
 | 80 % | 40 | 4.22 % | 4.20 % | 3.50 % | **3.18 %** |
 | 80 % | 20 | 5.46 % | 5.28 % | 4.33 % | 4.34 % |
 
-Trial by trial against the linear split on the *same* seed, field and noise —
-the comparison worth making, since a seed that lies badly for the basis is hard
-for every kernel:
+Trial by trial against the linear split on the same seed, field and noise. This
+is the informative comparison, since a seed that is unfavourable for the basis
+is difficult for every kernel:
 
 | protocol | window | median ratio | better in |
 |---|---|---|---|
@@ -460,58 +469,60 @@ for every kernel:
 | | σ 2 | 0.822 | 356/450 (79 %) |
 | | σ 4 | **0.664** | **425/450 (94 %)** |
 
-Four things to read off that.
+Four results follow.
 
-**The gain tracks noise, not amplitude.** At 20 % planted and no noise every
-kernel scores 1.03 %; add noise to SNR 20 and the linear split degrades to
-3.43 % while σ 4 holds 1.91 %. That is the behaviour a kernel density estimate
-should have — it is a variance reduction on the counts — and it is invisible to
-`tests/parzen.py`, whose single field is noiseless. It is the reason this sweep
-was worth running rather than reading the analytic tables.
+**The reduction tracks noise rather than amplitude.** At 20 % planted with no
+noise every kernel scores 1.03 %; at SNR 20 the linear split degrades to 3.43 %
+while σ 4 holds 1.91 %. This is the expected behaviour of a kernel density
+estimate, being a variance reduction on the counts, and it is not observable in
+`tests/parzen.py`, whose single field is noiseless. It is the reason for
+running this sweep rather than relying on the analytic tables.
 
-**σ 1 is not worth having.** It loses to N3's own split more often than it wins
-under both protocols. The linear split is already a triangle of standard
-deviation 0.41 bins, so a Gaussian of 1 bin is barely wider — and it is wider in
-the wrong way, since the extra blur is spent before the variance reduction
-arrives.
+**σ 1 does not improve on N3's linear split.** It is worse more often than it
+is better under both protocols. The linear split is already a triangular kernel
+of standard deviation 0.41 bins, so a Gaussian of 1 bin is only marginally
+wider, and the additional blur is incurred before the variance reduction is
+obtained.
 
-**The window's benefit grows with the iteration count, and that is the largest
-effect here.** Under N3's histogram, going from 30 to 50 iterations makes the
-noisy cells *worse* — 20 % at SNR 20 goes 3.43 % → 4.63 % — because the
-alternating iteration keeps feeding a ragged histogram's noise back into the
-mapping. Under σ 4 the same cells keep improving (1.91 % → 1.71 %). So the
-comparison at 30 iterations understates it, which is why `windows.png` draws
-both protocols; the shipped protocol is where the window is worth 94 % of
-trials.
+**The window's benefit increases with the iteration count, which is the largest
+effect measured here.** Under N3's histogram, increasing from 30 to 50
+iterations makes the noisy cells worse — 20 % at SNR 20 moves from 3.43 % to
+4.63 % — because the alternating iteration returns the high-variance
+histogram's noise to the mapping at each pass. Under σ 4 the same cells
+continue to improve (1.91 % → 1.71 %). The comparison at 30 iterations
+therefore understates the effect, which is why `windows.png` draws both
+protocols; under the shipped protocol the window is better on 94 % of trials.
 
-**A wide window can still cost.** At 80 % planted and 30 iterations σ 4 is the
-worst kernel in two of three cells (6.81 % against the linear split's 5.83 % at
-SNR 20). A field that large moves the histogram range enough that the added
-blur — 4 bins, wider than the σ = 0.064 log units `--fwhm 0.15` tells the
-deconvolution to remove — costs more than the smoothing buys. Under the shipped
-protocol that reverses. **σ 2 is the width that never loses badly** at either
-protocol, and the one to reach for without measuring first.
+**A wide window can also degrade the result.** At 80 % planted and 30
+iterations, σ 4 is the worst kernel in two of the three cells (6.81 % against
+the linear split's 5.83 % at SNR 20). A field of that amplitude moves the
+histogram range sufficiently that the added blur — 4 bins, wider than the
+σ = 0.064 log units that `--fwhm 0.15` instructs the deconvolution to remove —
+costs more than the smoothing yields. Under the shipped protocol the ordering
+reverses. **σ 2 is the only width that is not the worst of the four in any
+cell** under either protocol, and is the appropriate default in the absence of
+a measurement.
 
-Iteration counts say nothing here: essentially every trial in both protocols
-runs to its cap (median 50 of 50 under the shipped `-stop`), for every kernel.
-The window changes what the iteration converges *to*, not where it stops. And
-it is close to free: 1.21 s against 1.19 s per estimate at 50 iterations, about
+Iteration counts are uninformative here: essentially every trial under both
+protocols runs to its cap (median 50 of 50 under the shipped `-stop`), for every
+kernel. The window changes what the iteration converges to, not where it stops.
+The cost is small: 1.21 s against 1.19 s per estimate at 50 iterations, about
 1 %.
 
-Caveats, both structural. This is 75 mm knots at `--lambda 1e-7`, which the
-top-level README's tables show is *under-regularized* for that spacing — and
-they also show the window substituting for regularization, so some of this gain
-is a penalty that was set too low. And the planted fields are sums of three
-low-order cosines, smoother than a real coil profile.
+Two structural limitations apply. The measurement is at 75 mm knots with
+`--lambda 1e-7`, which the top-level README's tables show to be
+under-regularized for that spacing, and those tables also show the window
+substituting for regularization, so part of this reduction is attributable to a
+penalty set too low. The planted fields are also sums of three low-order
+cosines, and are smoother than a real coil profile.
 
 ## The four solvers, over 450 trials
 
-`--solver` picks how the B-spline normal equations are solved. All four are
+`--solver` selects how the B-spline normal equations are solved. All four are
 swept at both protocols, on the same trials and the same GPU.
 
-**On accuracy there is nothing to choose between them.** The four score
-distributions lie on top of each other, so the question has to be asked
-*within* a trial:
+**On accuracy there is no difference between them.** The four score
+distributions coincide, so the comparison must be made within a trial:
 
 | against `normal` (brain, `fixed30`) | median | 90th | max | >1 % |
 |---|---|---|---|---|
@@ -519,14 +530,15 @@ distributions lie on top of each other, so the question has to be asked
 | `dr` | 2.0e-5 | 9.5e-5 | 2.9e-2 | 2 of 450 |
 | `blocked` | 2.1e-5 | 9.2e-5 | 3.7e-2 | 2 of 450 |
 
-That is the same size and the same shape as the backend and device
-perturbations below, and it has the same cause: both trials with a >1 % spread
-are at **20 % planted, SNR 20**, the histogram knife-edge cell. Nor is any
-solver systematically better — against `normal` each wins 215–219 of 450
-(about half of the 431 non-ties), which is what a coin does.
+This is the same magnitude and the same distribution as the backend and device
+perturbations below, and has the same cause: both trials with a spread above
+1 % are at **20 % planted, SNR 20**, the cell nearest the histogram's rounding
+boundary. No solver is systematically better either: against `normal` each is
+better on 215–219 of 450 trials, about half of the 431 non-ties, which is
+indistinguishable from chance.
 
-**But they are not four independent implementations, and the data shows the
-split.** How often two solvers agree to every digit written:
+**The four are not independent implementations, and the data shows the
+grouping.** The frequency with which two solvers agree to every digit recorded:
 
 | pair | `fixed30` | `default` |
 |---|---|---|
@@ -535,14 +547,15 @@ split.** How often two solvers agree to every digit written:
 | `dr` vs `blocked` | 70 % | 43 % |
 | any of those vs `normal` | **4 %** | **4–5 %** |
 
-`qr`, `dr` and `blocked` all factorize the *same* stacked system
-`[A; sqrt(lambda N) D]` — CLAUDE.md's point that `dr` is `qr` at its anchor
-weight, and `blocked` is `qr` a band at a time. `normal` forms `AtA` and
-squares the condition number. So the honest grouping is `{normal}` against
-`{qr, dr, blocked}`, and the 4 % figure is the price of the squaring showing
-up in the last digits.
+`qr`, `dr` and `blocked` all factorize the same stacked system
+`[A; sqrt(lambda N) D]`, as CLAUDE.md states: `dr` is `qr` at its anchor weight
+and `blocked` is `qr` one band at a time. `normal` forms `AtA` and squares the
+condition number. The correct grouping is therefore `{normal}` against
+`{qr, dr, blocked}`, and the 4 % figure is the cost of that squaring appearing
+in the last digits.
 
-**On cost the difference is real**, and it is the only difference that is:
+**The difference in cost is substantial**, and is the only substantial
+difference:
 
 | solver | seconds (`fixed30`) | per iteration | vs `normal` |
 |---|---|---|---|
@@ -551,24 +564,24 @@ up in the last digits.
 | `qr` | 2.58 | 85.8 ms | 3.7× |
 | `dr` | 2.62 | 87.3 ms | 3.8× |
 
-At the shipped 75 mm spacing `blocked` has one band and is `qr` plus a sort,
-and `dr` buys nothing until a second `lambda` is asked for — both as CLAUDE.md
-predicts. So on this experiment the ranking is exactly the ranking of work
-done, and `normal`'s 3.8× advantage over `dr` costs nothing measurable in
-accuracy.
+At the shipped 75 mm spacing `blocked` has one band and reduces to `qr` plus a
+sort, and `dr` yields no benefit until a second `lambda` is requested, both as
+CLAUDE.md predicts. In this experiment the ranking is therefore exactly the
+ranking of work performed, and `normal`'s 3.8× advantage over `dr` costs
+nothing measurable in accuracy.
 
-**What this does not measure.** CLAUDE.md's case for `qr` is *cross-platform
-reproducibility* — the fitted field moving 3.0e-13 between CPU and GPU instead
-of 2.5e-9. Only `normal` was run on the CPU here, so that claim is untouched
-by these 3,600 trials: this says the solvers agree with each other on one
-device, not that they would drift equally across two. `python3 -m
-tests.convergence --solver qr` is what tests that.
+**What this does not measure.** CLAUDE.md's argument for `qr` is cross-platform
+reproducibility: the fitted field moving 3.0e-13 between CPU and GPU instead of
+2.5e-9. Only `normal` was run on the CPU here, so that claim is unaddressed by
+these 3,600 trials, which establish that the solvers agree with each other on
+one device rather than that they would drift equally across two. `python3 -m
+tests.convergence --solver qr` tests that.
 
-One more null result, weaker than it looks: under `default` **no trial stopped
-at a different iteration** under a different solver. But 439 of 450 ran to the
-50-iteration cap, so only 11 trials had a stopping decision to make. Read it
-as "the stopping rule did not amplify the solver difference on the 11 trials
-that exercised it", not as a general statement.
+One further null result, weaker than it appears: under `default`, **no trial
+stopped at a different iteration** under a different solver. However, 439 of
+450 ran to the 50-iteration cap, so only 11 trials involved a stopping
+decision. The result states that the stopping rule did not amplify the solver
+difference on the 11 trials that exercised it, and is not a general statement.
 
 ## The two backends, over 450 trials
 
@@ -582,39 +595,39 @@ that exercised it", not as a general statement.
 | `torch` / cpu | 2.3066 / 2.8317 / 4.2413 % | 2.55 |
 | `torch` / cuda | — | 0.69 |
 
-The aggregates agree to four or five significant figures. Per *matched
-trial* the picture is more interesting, and it quantifies what CLAUDE.md
-describes qualitatively:
+The aggregates agree to four or five significant figures. Per matched trial the
+result is more informative, and quantifies what CLAUDE.md describes
+qualitatively:
 
 | relative difference in the score | median | 90th | max |
 |---|---|---|---|
 | backend (legacy/cpu vs torch/cpu) | 2.2e-5 | 9.8e-5 | **1.8e-1** |
 | device (torch/cuda vs torch/cpu) | 2.0e-5 | 8.7e-5 | **1.7e-1** |
 
-**Both perturbations are the same size, and both have the same tail.**
-Typically the two implementations agree to one part in 50,000; on 4 trials
-of 450 they differ by more than 1 %, and on one by 18 %. That is the
-histogram knife-edge, not float noise: a single count crossing a bin
-boundary sends the iteration down a different path. The evidence that it is
-the trial and not the perturbation is that the *same* trial (seed 22, 20 %,
-SNR 20) is the worst case for backend and device alike, and all four
-outliers are at SNR 20, where the noise puts most voxels near a boundary.
+**Both perturbations are of the same magnitude and have the same tail.**
+Typically the two implementations agree to one part in 50,000; on 4 trials of
+450 they differ by more than 1 %, and on one by 18 %. This is the histogram's
+rounding boundary rather than floating-point noise: a single count crossing a
+bin boundary sends the iteration along a different path. The evidence that the
+cause is the trial and not the perturbation is that the same trial (seed 22,
+20 %, SNR 20) is the worst case for backend and device alike, and that all four
+outliers are at SNR 20, where the noise places most voxels near a boundary.
 
-So "which backend" and "which device" are the same question, and neither is
-answerable trial by trial — only in distribution, which is what this
-harness is for.
+The choice of backend and the choice of device are therefore the same question,
+and neither is answerable trial by trial, only in distribution, which is the
+purpose of this harness.
 
-The torch backend is **2.4× faster than legacy on the same CPU**, and the
-GPU is 8.8× faster than legacy.
+The torch backend is **2.4× faster than legacy on the same CPU**, and the GPU is
+8.8× faster than legacy.
 
-## What is in `results/`
+## Contents of `results/`
 
 | file | what |
 |---|---|
 | `recovery.csv` | 9,900 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 2,700 more `n3` at `--solver normal` for the three Gaussian Parzen windows (3 × 2 protocols × 450), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling. Everything but those 2,700 ran under N3's own histogram, which is what an empty `parzen_sigma` means |
-| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
+| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run of several hours, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
-| `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
+| `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, retained as the only CPU sample. Written before `method`/`penalty` existed, so it uses the older column set; `summarize` reads it, and `recovery` refuses to append to it |
 
 ## The grid search
 
@@ -631,12 +644,12 @@ python3 -m experiments.summarize experiments/results/grid.csv \
 The baseline is keyed on `(solver, protocol, distance, lam)`, so a grid pays
 one extra run per cell, not per trial.
 
-## What the pilot said
+## Pilot results
 
-`experiments/results/pilot_grid.csv` is checked in: 3 seeds x 20% planted x
-`{inf, 40}` SNR x 4 spacings x 4 weights, `normal`, `fixed30`, 96 trials in
-five minutes. It is not an answer — 3 seeds is not a distribution — but it is
-what the headline sweep is aimed at, and it already says three things.
+`experiments/results/pilot_grid.csv` is checked in: 3 seeds × 20% planted ×
+`{inf, 40}` SNR × 4 spacings × 4 weights, `normal`, `fixed30`, 96 trials in
+five minutes. It is not conclusive, since 3 seeds is not a distribution, but it
+is what the principal sweep is directed at, and it establishes three points.
 
 **Noise dominates the weight.** Over the brain, pooled across spacings:
 
@@ -649,26 +662,28 @@ lam     snr      n      mean    median          IQR
 ```
 
 Noise costs more than any `--lambda` in the grid recovers, and the best weight
-*depends on the noise*: `1e-4` is the best of the four at SNR 40 and the worst
-at SNR inf. The shipped `1e-7` is fine noiseless and is not what you would
-choose at SNR 40. That trade-off is the reason to run the sweep rather than
-quote `tests/tables.py`.
+depends on the noise: `1e-4` is the best of the four at SNR 40 and the worst at
+SNR inf. The shipped `1e-7` is adequate in the noiseless case and is not the
+appropriate choice at SNR 40. That trade-off is the reason to run the sweep
+rather than cite `tests/tables.py`.
 
-**Spacing barely separates.** All 16 `(distance, lam)` cells sit between 1.06%
-and 1.36% over the brain, and their IQRs overlap almost completely — at 3
-seeds, nothing here is distinguishable from seed-to-seed variation. Whatever
-the grid search concludes will need the seeds to say it.
+**Spacing separates the cells only weakly.** All 16 `(distance, lam)` cells lie
+between 1.06% and 1.36% over the brain, and their interquartile ranges overlap
+almost completely; at 3 seeds nothing here is distinguishable from
+seed-to-seed variation. Any conclusion from the grid search requires the full
+set of seeds.
 
-**The basis is not the limit.** Every cell's `floor` is at most 0.26% and
-usually under 0.05%, against scores above 1%. What the sweep measures is the
+**The basis is not the limiting factor.** Every cell's `floor` is at most 0.26%
+and usually below 0.05%, against scores above 1%. The sweep measures the
 estimation.
 
-## What not to conclude
+## Limitations
 
-- Not from one cell's last digit. CLAUDE.md measures 30 iterations amplifying
-  float64 rounding to 0.3% between algebraically identical solvers, and to
-  1.1e-3 end to end between backends. That is exactly why this reports an IQR.
-- Not across devices without saying so. `device` is a key column for a reason:
-  the same sweep on a GPU is a different sweep.
-- Not about `sparse`. It is not offered here — it does not converge
-  (`PROBLEMS.md` §10).
+- No conclusion should be drawn from a single cell's last digit. CLAUDE.md
+  measures 30 iterations amplifying float64 rounding to 0.3% between
+  algebraically identical solvers, and to 1.1e-3 end to end between backends.
+  That is why an interquartile range is reported here.
+- No conclusion should be drawn across devices without stating so. `device` is
+  a key column: the same sweep on a GPU is a different sweep.
+- No conclusion should be drawn about `sparse`. It is not offered here, because
+  it does not converge (`PROBLEMS.md` §10).
