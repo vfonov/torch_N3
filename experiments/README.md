@@ -375,9 +375,16 @@ trials where two backends disagree by 18 %.
 | figure | what |
 |---|---|
 | `results/recovery.png` | the headline: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
+| `results/cells.png` | the same thing split out — **one panel per (amplitude, SNR)**, with N3's four solvers drawn apart, `hoyer` and `oracle` beside them. Brain only, one shared range across all nine |
 | `results/runtime.png` | wall time per estimate, every configuration in the file |
 | `results/implementation.png` | the three comparisons that should come out flat — solver, backend/device, and the solver's effect on the ceiling |
 | `results/solvers.png` | the solvers asked properly: per-trial difference from `normal` (six decades, log) beside seconds (a factor of 3.8, linear) |
+
+`recovery.png` pools the four solvers into one `n3` violin per cell, which is
+the right summary and the wrong picture for two questions: whether the solvers
+separate anywhere in particular (they do not — nine cells, four violins each,
+all indistinguishable), and how a cell's own spread compares with the gap
+between methods. `cells.png` is those two questions.
 
 Two conventions worth knowing before reading them. **Densities are estimated
 in log space** wherever the axis is logarithmic: a KDE fitted in linear space
@@ -496,7 +503,7 @@ GPU is 8.8× faster than legacy.
 | file | what |
 |---|---|
 | `recovery.csv` | 7,200 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling |
-| `recovery.png`, `runtime.png`, `implementation.png`, `solvers.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
+| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
 

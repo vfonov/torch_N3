@@ -2,7 +2,7 @@
 
     python3 -m experiments.figures
 
-Reads ``results/recovery.csv`` and writes three PNGs beside it.  Violin plots
+Reads ``results/recovery.csv`` and writes five PNGs beside it.  Violin plots
 throughout, because that is what this experiment produces: every cell is 50
 random fields, and the thing worth seeing is the *shape* of the 50 -- whether a
 method's advantage is the whole distribution moving or a few lucky draws, and
@@ -62,7 +62,7 @@ def main(argv=None):
 
     for name, draw in (("recovery", _recovery), ("runtime", _runtime),
                        ("implementation", _implementation),
-                       ("solvers", _solvers)):
+                       ("solvers", _solvers), ("cells", _cells)):
         if args.figure not in ("all", name):
             continue
         figure = draw(rows)
@@ -337,6 +337,72 @@ def _solvers(rows):
     return figure
 
 
+# --------------------------------------------------------------------------
+# Every estimator, one panel per cell.
+# --------------------------------------------------------------------------
+
+#: What each panel holds, left to right: N3 under each solver, then the
+#: descent, then the ceiling.  ``(label, method, extra constraints)``.
+VARIANTS = ([("n3\n%s" % solver, "n3", dict(solver=solver))
+             for solver in SOLVERS]
+            + [("hoyer", "hoyer", {}), ("oracle", "oracle", {})])
+
+
+def _cells(rows):
+    """One panel per (amplitude, SNR), every estimator inside it.
+
+    ``recovery.png`` pools the four solvers into a single ``n3`` violin, which
+    is the right summary and the wrong picture for two questions: whether the
+    solvers separate anywhere in particular, and how each cell's spread
+    compares with the gap between methods.  Both need the cell on its own axis
+    with the solvers drawn apart.
+
+    One shared y range across all nine, because the comparison *between* cells
+    -- the point of sweeping amplitude and SNR at all -- is most of what there
+    is to read here.  The brain only; ``recovery.png`` carries both regions.
+    """
+    figure, axes = pyplot.subplots(len(AMPLITUDES), len(SNRS),
+                                   figsize=(14, 11), sharex=True, sharey=True)
+    drawn = []
+
+    for row_index, amplitude in enumerate(AMPLITUDES):
+        for column_index, snr in enumerate(SNRS):
+            axis = axes[row_index][column_index]
+            cell = dict(amplitude=amplitude, snr=snr)
+            for index, (_, method, extra) in enumerate(VARIANTS):
+                selected = _select(rows, method=method,
+                                   **dict(MATCHED[method], **extra), **cell)
+                _violin(axis, _values(selected, "unexplained_brain_pct"),
+                        index, COLOUR[method], width=0.7, drawn=drawn)
+
+            level = numpy.log10(numpy.median(_values(
+                _select(rows, method="n3", **MATCHED["n3"], **cell),
+                "planted_cv_brain_pct")))
+            drawn.append(numpy.array([level]))
+            axis.axhline(level, color=COLOUR["uncorrected"], linestyle="--",
+                         linewidth=1.4, zorder=1)
+
+            axis.set_title("%d%% planted, SNR %s"
+                           % (float(amplitude) * 100,
+                              "∞" if snr == "inf" else snr), fontsize=11)
+            if column_index == 0:
+                axis.set_ylabel("unexplained, % of mean (brain)")
+
+    for axis in axes[-1]:
+        axis.set_xticks(range(len(VARIANTS)))
+        axis.set_xticklabels([label for label, _, _ in VARIANTS], fontsize=8)
+    for row in axes:
+        for axis in row:
+            _log_axis(axis, drawn)
+
+    figure.suptitle("Every estimator, cell by cell -- colin27, 50 random "
+                    "fields each, 75 mm knots", fontsize=13, y=1.0)
+    figure.tight_layout()
+    figure.legend(handles=_legend(), loc="lower center", ncol=4, fontsize=9,
+                  bbox_to_anchor=(0.5, 1.0), frameon=False)
+    return figure
+
+
 def _trial_key(row):
     return (row["seed"], row["amplitude"], row["snr"])
 
@@ -468,7 +534,7 @@ def _parse(argv):
                         help="directory for the PNGs (default: %(default)s)")
     parser.add_argument("--figure", default="all",
                         choices=("all", "recovery", "runtime",
-                                 "implementation", "solvers"),
+                                 "implementation", "solvers", "cells"),
                         help="which figure to draw (default: all)")
     parser.add_argument("--dpi", type=int, default=150)
     return parser.parse_args(argv)
