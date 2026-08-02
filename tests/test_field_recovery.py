@@ -1,12 +1,12 @@
-"""Can it recover a bias field we planted ourselves?
+"""Recovery of a planted bias field.
 
 Every other test here asks whether the port reproduces the original N3.  This
-one asks the question a user actually has: given a volume with a known
-non-uniformity, does N3 hand the non-uniformity back?
+one asks the question an application has: given a volume with a known
+non-uniformity, does N3 return that non-uniformity?
 
-The substrate is ``brain_nu_ref.mnc`` -- real anatomy that has already been
-through ``nu_correct``, so what little non-uniformity remains in it is small
-compared with what we are about to add.  A smooth multiplicative field of a
+The substrate is ``brain_nu_ref.mnc``, real anatomy that has already been
+processed by ``nu_correct``, so the non-uniformity remaining in it is small
+compared with the field added here.  A smooth multiplicative field of a
 set amplitude goes on top, and three implementations are asked to correct the
 result at each of several knot spacings: the PyTorch blocks, the same pipeline
 running the original C++ blocks, and the installed ``nu_correct`` -- whose
@@ -96,11 +96,11 @@ class Recovery:
 
     log_range: float
     distance: float            # the knot spacing every implementation used
-    planted: torch.Tensor      # the field we put on
+    planted: torch.Tensor      # the field that was applied
     baseline: dict             # what each implementation finds in the reference
     recovered: dict            # what each finds after the field was planted
-    reference: torch.Tensor    # brain_nu_ref, the volume we started from
-    corrected: torch.Tensor    # our correction of the artificial volume
+    reference: torch.Tensor    # brain_nu_ref, the starting volume
+    corrected: torch.Tensor    # this port's correction of the artificial volume
 
     def unexplained(self, source):
         """The part of ``source``'s answer that is not the planted field.
@@ -186,7 +186,7 @@ def recoveries(legacy_output, tmp_path_factory, brain_reference, model_mask,
 
         # ``brain_nu_artificial.mnc``: the same file the recorded run was
         # handed, written the same way, so both see the same quantised
-        # intensities.  No legacy program runs -- this is our own MINC I/O.
+        # intensities.  No legacy program runs; this is the port's own MINC I/O.
         volume = as_stored(directory, "brain_nu_artificial_%d.mnc"
                            % (log_range * 100),
                            brain_reference.like(brain_reference.data * planted),

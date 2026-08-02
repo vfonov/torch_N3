@@ -4,7 +4,7 @@ The programs are deterministic -- re-running ``sharpen_volume`` on the same
 file gives the same bytes -- so there is nothing to be learned from running
 them on every test run, and a good deal to be lost: the suite needs the whole
 MINC toolkit installed, spends most of its time in ``subprocess``, and cannot
-say whether a failure came from a change here or a different build of theirs.
+distinguish a failure of this port from a different build of the original.
 
 So their answers live in ``tests/reference/legacy.npz`` and are loaded from
 there.  ``python3 -m tests.regenerate_reference`` rebuilds the file; if the

@@ -2,32 +2,33 @@
 
     python3 -m tests.convergence
 
-Not a test.  Nothing here asserts; it measures, and prints a table meant to be
-compared against the same table from another machine.  ``tests/margins.py`` is
-the sibling that measures every bound in the suite; this one measures the one
-thing that is a property of the platform rather than of the code.
+Not a test.  Nothing here asserts; it measures and prints a table intended for
+comparison against the same table from another machine.  ``tests/margins.py``
+measures every bound in the suite; this module measures the one quantity that
+is a property of the platform rather than of the code.
 
-**What it is for.**  The spline fit solves normal equations conditioned around
-``1e13`` and calls LAPACK's ``dsysv`` to do it.  Different LAPACKs answer that
-differently -- none of them wrongly -- and the difference is far below anything
-the blocks care about.  The *pipeline* is another matter: N3's histogram range
-is taken from the data and then rounded to the six decimals its text
-interchange prints, so a voxel sitting on a bin boundary can fall either side
-of it.  Feed the loop's output back in and that becomes a step change.
+**Purpose.**  The spline fit solves normal equations conditioned around
+``1e13`` by calling LAPACK's ``dsysv``.  Different LAPACK implementations
+answer that differently, none of them incorrectly, and the difference is far
+below any bound at block level.  The *pipeline* behaves otherwise: N3's
+histogram range is taken from the data and then rounded to the six decimals its
+text interchange prints, so a voxel on a bin boundary can fall either side of
+it.  Once the loop's output is fed back in, that becomes a step change.
 
-So end-to-end agreement between two implementations does not decay.  It holds
-flat, and then goes, all at once, at an iteration count that depends on which
-LAPACK was linked.  Measured on ``brain.mnc`` here, ``legacy`` against
+End-to-end agreement between two implementations therefore does not decay.  It
+holds constant and is then lost entirely, at an iteration count that depends on
+which LAPACK was linked.  Measured on ``brain.mnc`` here, ``legacy`` against
 ``torch``:
 
     iterations        1         2         3         4         5         6
     EBTKS clapack   5.49e-08  5.55e-08  5.65e-08  5.73e-08  5.82e-08  8.37e-04
     system LAPACK   5.52e-08  1.17e-03  2.12e-03  1.69e-03  5.40e-04  5.07e-04
 
-That is the whole point of the exercise: the cliff moved from the sixth
+That is what this module measures: the **divergence threshold**, the iteration
+count at which two implementations cease to agree, moved from the sixth
 iteration to the second because a fitted field moved by ``3.1e-11``.  The same
-shape appears between a CPU and a GPU running identical code, with the cliff on
-the third.
+behaviour appears between a CPU and a GPU running identical code, with the
+threshold at the third.
 
 **The solver moves it too.**  ``--solver qr`` fits the spline through the
 stacked least-squares system rather than the normal equations, which are
@@ -35,28 +36,28 @@ conditioned around ``1e13`` at the shipped knot spacing; the same fit comes out
 of a system conditioned around ``1e6``.  Measured here on ``brain.mnc``, with
 the system LAPACK in the shim:
 
-    cliff at             normal      qr
+    divergence at        normal      qr
     torch cpu vs cuda       3         7
     legacy vs torch         2         4
 
-and the pre-cliff agreement between CPU and GPU tightens from ``6.3e-11`` to
-``1.5e-13``.  Note the second row: the QR tracks the *C++ oracle* for longer
-than the port's own normal equations do, even though the oracle solves the
-normal equations itself -- being the more accurate solve is worth more here
-than matching the other implementation's formulation.  Neither row is a
-property of the code alone; re-measure both columns on any new platform.
+and agreement between CPU and GPU before the threshold tightens from
+``6.3e-11`` to ``1.5e-13``.  Note the second row: the QR formulation tracks the
+*C++ oracle* for longer than the port's own normal equations do, although the
+oracle solves the normal equations itself.  The more accurate solve is worth
+more here than matching the other implementation's formulation.  Neither row is
+a property of the code alone; re-measure both columns on any new platform.
 
-**Reading the output.**  The number to report is the *cliff*: the first
-iteration count at which agreement is lost.  The pre-cliff values are not
-interesting beyond being small, and the post-cliff ones are not comparable
-between machines at all -- they record which side of a rounding boundary one
-voxel fell on, which is not a property anything can be held to.
+**Reading the output.**  The quantity to report is the divergence threshold:
+the first iteration count at which agreement is lost.  The values before it are
+informative only in being small, and those after it are not comparable between
+machines, since they record which side of a rounding boundary one voxel fell
+on, which is not a property anything can be held to.
 
-``tests/inputs.py::PLATFORM_PROTOCOL`` must stay below the smallest cliff of
-any platform this is expected to run on.  It is currently 1.  If this script
-reports a cliff at 2 anywhere, 1 is the only safe count and there is no margin
-left; if every platform reports 6, it could afford to be higher.  That is the
-decision this script exists to inform.
+``tests/inputs.py::PLATFORM_PROTOCOL`` must remain below the smallest
+divergence threshold on any platform this is expected to run on.  It is
+currently 1.  If this script reports a threshold of 2 anywhere, 1 is the only
+safe count and there is no margin; if every platform reports 6, it could be
+raised.  That is the decision this script exists to inform.
 
 See ``README.md`` for how to build against a different LAPACK, and
 ``PROBLEMS.md`` §8 for what moved last time one changed.
@@ -227,15 +228,15 @@ def _parse(argv):
         prog="python3 -m tests.convergence",
         description="Where two backends stop agreeing, as iterations grow.")
     parser.add_argument("--max-iterations", type=int, default=6, metavar="N",
-                        help="sweep 1..N (default 6; the cliff is usually "
-                             "found well before that)")
+                        help="sweep 1..N (default 6; divergence usually "
+                             "occurs well before that)")
     parser.add_argument("--volume", default="brain", choices=["brain", "chunk"],
                         help="brain is the volume the published numbers use; "
                              "chunk is 20x smaller, for a quick check that "
                              "this runs at all (default: brain)")
     parser.add_argument("--device", default="cpu",
                         help="also compare torch on cpu against this device, "
-                             "e.g. cuda (default: cpu, meaning don't)")
+                             "e.g. cuda (default: cpu, which skips it)")
     parser.add_argument("--solver", default="normal", choices=SOLVERS,
                         help="which spline solver the torch runs use; the "
                              "legacy backend always has 'normal' (default: "

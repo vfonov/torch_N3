@@ -44,7 +44,7 @@ COLOUR = {"n3": "#3a6ea5", "hoyer": "#d1701c", "oracle": "#3f8f5b",
 #: that gives every trial the same work.  Anything not listed is free.
 #: ``parzen_sigma=""`` pins ``n3`` to N3's own linear split.  It is not
 #: cosmetic: the file also holds rows run with a Gaussian Parzen window, and
-#: without this constraint every ``n3`` panel would quietly pool four
+#: without this constraint every ``n3`` panel would pool four
 #: histograms into one violin and report four times the trials.
 MATCHED = {
     "n3": dict(backend="torch", solver="normal", protocol="fixed30",
@@ -287,12 +287,12 @@ SOLVERS = ("normal", "qr", "dr", "blocked")
 
 
 def _solvers(rows):
-    """Does the solver change the answer, and what does it cost?
+    """The effect of the solver on the answer, and its cost.
 
     Left: the per-trial relative difference from ``normal``, which is the only
-    honest way to ask -- the four distributions of the score itself lie on top
-    of one another (``implementation.png``), so the difference has to be taken
-    *within* a trial before there is anything to see.  Right: seconds.
+    way the question can be posed.  The four distributions of the score itself
+    coincide (``implementation.png``), so the difference must be taken *within*
+    a trial before anything is resolvable.  Right: seconds.
 
     The point of putting them side by side is that they are on wildly
     different scales: the accuracy panel spans 1e-7 to 1e-1 and is centred at
@@ -303,8 +303,7 @@ def _solvers(rows):
 
     # `parzen_sigma=""` for the same reason MATCHED carries it, and here it
     # matters twice over: the rows are keyed by trial, so a second histogram's
-    # row would not pool into the violin but silently *replace* the one being
-    # compared.
+    # row would not pool into the violin but *replace* the one being compared.
     keyed = {solver: {_trial_key(row): row
                       for row in _select(rows, method="n3", solver=solver,
                                          protocol=protocol, backend="torch",
@@ -376,9 +375,9 @@ def _windows(rows):
 
     Both protocols are drawn, which is the one place this figure departs from
     the rest of the file.  Everything else pins ``fixed30`` so that every
-    trial does the same work; here the *extra* work is half the result, since
-    what a wide window buys grows with the iteration count and at 80% planted
-    it is the difference between a loss and a gain.
+    trial does the same work; here the *additional* work is half the result,
+    since the reduction a wide window yields grows with the iteration count,
+    and at 80% planted it determines whether the window helps or harms.
 
     Same layout and shared range as :func:`_cells`, and the same dashed
     uncorrected level, so the two can be laid side by side.
@@ -528,10 +527,10 @@ def _violin(axis, values, position, colour, width, log=True, drawn=None):
     Drawn against ``log10(values)`` when ``log``, which is what puts the KDE
     in the space the axis is read in -- see the module docstring.  ``drawn``
     collects what was plotted so the axis can be scaled to the data instead of
-    to a limit written down in advance; a hard-coded limit silently swallowed
-    the whole ``oracle`` runtime violin the first time this ran.
+    to a limit fixed in advance; a hard-coded limit removed the whole
+    ``oracle`` runtime violin from view the first time this ran.
 
-    Silently draws nothing for an empty selection: a figure is regenerated
+    Draws nothing, without raising, for an empty selection: a figure is regenerated
     from whatever the CSV holds, and a configuration that has not been swept
     yet should leave a gap rather than raise.  Fewer than two points, or a
     constant, has no density, so those get the marker without the body.
@@ -562,9 +561,9 @@ def _violin(axis, values, position, colour, width, log=True, drawn=None):
 #: Labelled positions within each decade.  1-2-5 rather than the decade alone
 #: so that a violin always has a labelled gridline close to it: these span four
 #: decades, and on decade-only ticks the ``oracle`` runtime violin came out
-#: between an unlabelled 0.1 and the bottom of the frame -- a violin you cannot
-#: read a number off.  Snapping the limits outward to whole decades fixes that
-#: too, but pays up to a decade of empty panel for it.
+#: between an unlabelled 0.1 and the bottom of the frame, from which no number
+#: can be read.  Snapping the limits outward to whole decades also resolves
+#: this, at a cost of up to a decade of empty panel.
 TICKS = (1.0, 2.0, 5.0)
 
 

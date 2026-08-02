@@ -8,7 +8,7 @@ printed; :mod:`experiments.recovery` does both.
 Two things are deliberately *not* shared with ``tests/``:
 
 * the random generators, because ``tests/inputs.py`` says in its own docstring
-  that it holds no random numbers -- a recorded answer is only worth having if
+  that it holds no random numbers: a recorded answer is usable only if
   the question can be asked again exactly, and these questions cannot;
 * the file round trip (``tests.inputs.as_stored``), because that exists so a
   test sees the volume quantised the way ``nu_correct`` saw it through a

@@ -6,7 +6,7 @@ Not a test.  Nothing here asserts; it measures and prints, in the shape
 ``tests/tables.py`` does -- that module asks what the spline solver is worth,
 this one asks what the *histogram kernel* is worth.
 
-**The alternation.**  N3's ``-parzen``/``-window`` is not a Parzen window.
+**The modification.**  N3's ``-parzen``/``-window`` is not a Parzen window.
 ``WHistogram::add`` splits each sample linearly between the two bin centres it
 falls between, which is a triangular kernel exactly one bin wide -- its width
 is set by ``-bins`` and by wherever ``-auto_range`` put the range this
@@ -18,9 +18,9 @@ untouched.
 
 **Why it might matter, and why it might not.**  The histogram is the whole of
 N3's data term, and it is the noisy part: the deconvolution divides by a
-Wiener filter, so ragged counts become a ragged mapping and the field picks up
-whatever survives the spline.  Smoothing the counts before deconvolving is the
-obvious thing to try.  Against that, ``sharpen_hist`` already *assumes* the
+Wiener filter, so high-variance counts become a high-variance mapping and the
+field acquires whatever survives the spline.  Smoothing the counts before
+deconvolving is the obvious remedy.  Against that, ``sharpen_hist`` already *assumes* the
 histogram is a blurred version of the true intensity distribution and undoes a
 Gaussian of ``--fwhm``; a Parzen window adds a second Gaussian blur, of width
 ``sigma`` bins, that the deconvolution was not told about.  So a wide window
@@ -69,7 +69,8 @@ and the best cell in each column once ``--lambda`` is swept as well:
 
 Both halves of that matter.  At a fixed weight the window helps, by a third at
 the shipped setting and by 4x at 50 mm; against a weight that has been tuned
-for the spacing it buys almost nothing at 200 mm and a third at 50 mm.  So
+for the spacing it yields almost no reduction at 200 mm and a third at 50 mm.
+So
 what it mostly does is *substitute for regularization* -- it helps exactly the
 cells that were under-penalised, which is the same axis ``--lambda`` moves
 along, and the two do not add up.  ``sigma 4`` is where that becomes visible
@@ -98,7 +99,7 @@ changes the corrected volume by 6.2e-3 relative RMS at ``sigma 0.5`` and
 8.8e-2 at ``sigma 4``, and moves it away from ``brain_nu_ref.mnc`` (3.0e-3 →
 4.9e-3 → 8.6e-2).  That second number is not an accuracy verdict -- N3
 produced that reference, so anything that changes N3 moves away from it -- but
-it does say the alternation is not cosmetic.
+it does establish that the modification is not cosmetic.
 """
 
 import argparse
@@ -195,7 +196,7 @@ def protocol(sigmas, verbose=False):
     """The shipped protocol on ``brain.mnc``, once per window.
 
     Returns ``{sigma: (iterations, rms_vs_reference, rms_vs_linear)}``.  The
-    iteration count is worth having on its own: ``-stop`` is a threshold on how
+    iteration count is informative on its own: ``-stop`` is a threshold on how
     far the field moved, so a smoother histogram that settles sooner is a
     different run, not just a different answer (CLAUDE.md, "The stopping rule
     quantises everything downstream").

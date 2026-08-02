@@ -30,11 +30,11 @@ fall either side of it.  Measured on ``brain.mnc``, the backends agree to
 ``5.5e-08`` relative RMS after one iteration; at two, one whole count moves
 between bins -- out of the 3,724 samples the shrunken estimation grid
 contributes -- and they end up ``1.17e-3`` apart, four orders of magnitude
-worse.  That is a property of the algorithm -- the legacy has the same
-knife-edge, and this suite's own
-``test_the_iteration_amplifies_small_differences`` is about what happens
-afterwards -- so pinning a converged run to a tight bound is not something any
-implementation could honour.
+worse.  That is a property of the algorithm: the legacy implementation has the
+same divergence threshold, and this suite's own
+``test_the_iteration_amplifies_small_differences`` covers what follows it.
+Holding a converged run to a tight bound is therefore not something any
+implementation could satisfy.
 
 One iteration still runs every stage of the pipeline, and the whole of
 ``nu_evaluate``.  What it does *not* cover is convergence, or a second trip
@@ -43,11 +43,11 @@ digits at a time, in
 ``test_pipeline.py::test_matches_the_legacy_reference_volume``.
 
 This said *two* until 2026-07-31, when the shim stopped linking EBTKS's
-bundled LAPACK: that moved the bin-boundary flip from the sixth iteration to
-the second, so two is now past the knife-edge rather than short of it.  Which
-iteration it lands on is a property of the build, not of the algorithm -- CPU
-against GPU puts it on the third -- so one is the only count that is safe for
-every run this test covers.  ``README.md`` has the measurements,
+bundled LAPACK, which moved the bin-boundary transition from the sixth
+iteration to the second, so two is now past the divergence threshold rather
+than short of it.  The iteration at which it occurs is a property of the build
+rather than of the algorithm -- CPU against GPU places it at the third -- so
+one is the only count safe for every run this test covers.  ``README.md`` has the measurements,
 ``PROBLEMS.md`` §8 the reasoning.
 
 **The converged run is here too, and it is a different kind of evidence.**
@@ -190,7 +190,7 @@ def test_reproduces_the_recorded_converged_volume(brain, model_mask,
 @pytest.mark.parametrize("name,protocol,path,bound", PROTOCOLS)
 def test_the_two_recorded_runs_are_not_the_same_volume(recorded_volumes, name,
                                                        protocol, path, bound):
-    """Guard against the pair silently becoming one file twice over.
+    """Guard against the pair becoming one file recorded twice.
 
     They are produced by the same function from the same input and differ only
     in the iteration count, so a mistake in wiring the protocols through would
@@ -225,10 +225,10 @@ def test_running_it_twice_gives_the_same_bits(brain, model_mask, backend,
     nothing of the platform except that it do the same thing twice.
 
     Asked at both iteration counts, and the converged one is the version that
-    earns its keep: the knife-edge above makes the loop *sensitive*, not
-    random, and thirty trips through it is where any genuine non-determinism
-    -- an unordered reduction, a race in a GPU kernel -- would be amplified
-    into view rather than staying inside the last bits.  Unlike every other
+    is worth running: the divergence threshold above makes the loop *sensitive*
+    rather than random, and thirty passes through it is where any genuine
+    non-determinism -- an unordered reduction, a race in a GPU kernel -- would
+    be amplified into view rather than remaining within the last bits.  Unlike every other
     comparison in this module, this one keeps full strength at thirty.
     """
     once = corrected_brain(brain, model_mask, backend, device, protocol)

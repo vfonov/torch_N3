@@ -91,13 +91,13 @@ def test_fit_matches_the_legacy_spline(chunk, bumpy, distance, subsample,
     """
     values, inside = bumpy
 
-    ours = blocks.BSplineField(chunk, distance, 1e-7, solver=solver).fit(
+    port = blocks.BSplineField(chunk, distance, 1e-7, solver=solver).fit(
         values, inside, subsample)
-    theirs = legacy.BSplineField(chunk, distance, 1e-7).fit(values, inside,
+    oracle = legacy.BSplineField(chunk, distance, 1e-7).fit(values, inside,
                                                             subsample)
 
-    fitted = ours.evaluate()
-    assert_close(fitted, theirs.evaluate(), atol=1e-6 * span(fitted))
+    fitted = port.evaluate()
+    assert_close(fitted, oracle.evaluate(), atol=1e-6 * span(fitted))
 
 
 def test_evaluating_on_a_finer_grid_matches_the_legacy(chunk, bumpy):
@@ -107,13 +107,13 @@ def test_evaluating_on_a_finer_grid_matches_the_legacy(chunk, bumpy):
     coarse_values = chunk.like(values).resample_like(coarse).data
     coarse_inside = chunk.like(inside.to(torch.float64)).resample_like(coarse).data != 0
 
-    ours = blocks.BSplineField(coarse, 200.0, 1e-7).fit(coarse_values,
+    port = blocks.BSplineField(coarse, 200.0, 1e-7).fit(coarse_values,
                                                         coarse_inside)
-    theirs = legacy.BSplineField(coarse, 200.0, 1e-7).fit(coarse_values,
+    oracle = legacy.BSplineField(coarse, 200.0, 1e-7).fit(coarse_values,
                                                           coarse_inside)
 
-    fine = ours.evaluate_on(chunk)
-    assert_close(fine, theirs.evaluate_on(chunk), atol=1e-6 * span(fine))
+    fine = port.evaluate_on(chunk)
+    assert_close(fine, oracle.evaluate_on(chunk), atol=1e-6 * span(fine))
 
 
 @pytest.mark.parametrize("distance", [200.0, 100.0])
@@ -425,7 +425,7 @@ def test_the_dr_diagonal_solve_cannot_divide_by_anything_small(chunk, bumpy,
     Step 5 divides by ``1 + (lambda - lambda_0) * gamma``.  With ``gamma >= 0``
     and ``lambda >= lambda_0`` every one of those is ``>= 1`` -- no cancellation
     is possible and the dynamic range of ``gamma`` (twenty decades at 50 mm)
-    cannot reach the answer.  That is the property the whole construction buys,
+    cannot affect the answer.  That is the property the construction provides,
     so it is asserted directly, across the grid, rather than inferred from the
     fits agreeing.
     """
@@ -505,7 +505,7 @@ def test_the_dr_solver_refuses_a_lambda_below_its_anchor(chunk, bumpy):
 
 
 def test_an_anchor_is_only_meaningful_to_the_dr_solver(chunk):
-    """Passing one to a solver that cannot use it must not be silently ignored."""
+    """Passing one to a solver that cannot use it must raise, not be ignored."""
     with pytest.raises(ValueError, match="anchor"):
         blocks.BSplineField(chunk, 200.0, 1e-7, solver="qr", anchor=1e-9)
 
@@ -630,9 +630,9 @@ def test_regularization_trades_bending_energy_for_fit(solver):
     What this does *not* do is check that ``J`` is right.  The energy is
     measured with the same matrix the fit penalises with, so the property
     holds for any non-degenerate ``J``: mutating the first-derivative cross
-    terms to drop their factor of two leaves this test green (the parity test
-    against the shim catches it).  Zeroing ``J`` altogether, or dropping the
-    second-derivative terms, does fail here -- those make the sweep flat.
+    terms to drop their factor of two leaves this test passing; the parity test
+    against the shim detects it.  Zeroing ``J`` altogether, or dropping the
+    second-derivative terms, does fail here, since those make the sweep flat.
     """
     shape = (24, 24, 24)
     x, _, _ = torch.meshgrid(*[torch.arange(s, dtype=torch.float64)

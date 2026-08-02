@@ -13,7 +13,7 @@ an ``ident`` attribute holding the user, host, time and pid.  Its voxel data is
 reproducible; those few header bytes are not.  Check the data, or restore the
 file, rather than committing the churn.
 
-Every case here is the input side of one test.  If you add a comparison
+Every case here is the input side of one test.  When a comparison is added
 against a legacy program, add the case here and read it back through the
 ``legacy_output`` fixture rather than shelling out from the test.
 """
@@ -63,8 +63,8 @@ PLATFORM_REFERENCE = "brain_nu_ref_legacy.mnc"
 
 #: Its converged twin, thirty iterations rather than one.  Same provenance and
 #: same storage; a different protocol, and a much coarser bound, because past
-#: the histogram knife-edge no two builds agree on a converged run to better
-#: than about a part in a thousand.  See ``tests/test_reproducibility.py``.
+#: the histogram's divergence threshold no two builds agree on a converged run
+#: to better than about a part in a thousand.  See ``tests/test_reproducibility.py``.
 CONVERGED_REFERENCE = "brain_nu_ref_legacy_30.mnc"
 
 
@@ -269,9 +269,9 @@ def platform_reference_case(workspace, arrays, scalars):
     any other implementation can be compared against.
 
     Two of them, at one iteration and at thirty.  They are held to very
-    different bounds and they are not the same kind of evidence: the first is
-    a canary, still short of the histogram knife-edge, and the second is a
-    coarse regression net past it.  ``tests/test_reproducibility.py`` sets out
+    different bounds and are not the same kind of evidence: the first is a
+    sensitive check, still short of the histogram's divergence threshold, and
+    the second is a coarse regression net past it.  ``tests/test_reproducibility.py`` sets out
     which is which.
 
     ``float64``, unlike every other volume here.  N3's own files are 16-bit,

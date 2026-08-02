@@ -73,7 +73,7 @@ def test_it_removes_some_of_the_planted_field(trial, chunk, chunk_mask,
     Doing nothing scores exactly the non-uniformity that was planted.  An
     estimator has to beat that or it is not estimating anything -- and on this
     small crop even N3 barely does (3.25% of a 3.29% field at this spacing),
-    so the bar is deliberately the honest one rather than a tight one.
+    so the bound is deliberately a weak one rather than a tight one.
 
     ``hoyer`` only.  ``tightness`` does not meet this bar with a budget long
     enough to converge -- see the test below, which is where that is recorded.
@@ -193,7 +193,7 @@ def test_the_gauge_is_fixed(trial, chunk_mask, inside):
 
 
 def test_tightness_reports_its_tissue_model(trial, chunk_mask):
-    """The centroids are learned, so they are diagnostics worth having out."""
+    """The centroids are learned, and are therefore useful diagnostics."""
     field = nu_optimize(trial, mask=chunk_mask, objective="tightness",
                         classes=3, **BUDGET)
     info = field.optimize_info
@@ -201,7 +201,8 @@ def test_tightness_reports_its_tissue_model(trial, chunk_mask):
     assert len(info["centroids"]) == 3
     assert len(info["occupancy"]) == 3
     assert math.isclose(sum(info["occupancy"]), 1.0, rel_tol=1e-9)
-    # No cluster may quietly die: that is a fit with fewer classes than asked.
+    # No cluster may lose its mass: that is a fit with fewer classes than
+    # were requested.
     assert min(info["occupancy"]) > 0.01
 
 

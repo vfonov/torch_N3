@@ -28,10 +28,10 @@ def two_tissues():
 def test_matches_the_legacy_deconvolution(two_tissues, deblur):
     value_range = VALUE_RANGE
 
-    ours = blocks.sharpen_lut(two_tissues, value_range, 0.15, 0.01, deblur)
-    theirs = legacy.sharpen_lut(two_tissues, value_range, 0.15, 0.01, deblur)
+    port = blocks.sharpen_lut(two_tissues, value_range, 0.15, 0.01, deblur)
+    oracle = legacy.sharpen_lut(two_tissues, value_range, 0.15, 0.01, deblur)
 
-    assert_close(ours, theirs, atol=1e-11)
+    assert_close(port, oracle, atol=1e-11)
 
 
 def test_matches_the_legacy_on_a_real_histogram(chunk, chunk_mask):

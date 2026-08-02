@@ -15,32 +15,32 @@ method that has to work it out from the intensities can score better.
 
 **Why over many trials.**  ``tests/test_field_recovery.py`` and
 ``tests/tables.py`` plant *one* analytic field on *one* volume with no noise,
-and every number they publish is a single draw.  CLAUDE.md is blunt about what
-that is worth ("If you find yourself relying on a cell, the honest fix is to
-widen ``LAMBDAS`` and assert the shape being claimed").  Fifty seeds give each
-configuration a distribution instead, so the summary can report an IQR and a
-difference between two solvers can be read against the spread within one.
+and every number they publish is a single draw.  CLAUDE.md states the
+consequence: if a result comes to depend on a particular cell, the correct
+remedy is to widen ``LAMBDAS`` and assert the property being claimed.  Fifty
+seeds give each configuration a distribution instead, so that the summary can
+report an interquartile range and a difference between two solvers can be read
+against the spread within one.
 
-**Resumable, by design.**  The full sweep is hours.  Every row is flushed as
-it is produced and a re-run skips any trial already in the file, so the job
-can be killed and restarted, or extended with more seeds, without losing or
-repeating work.  The key is every column that defines a trial -- see
+**Resumable, by design.**  The full sweep takes hours.  Every row is flushed
+as it is produced and a re-run skips any trial already in the file, so the job
+can be interrupted and restarted, or extended with further seeds, without
+losing or repeating work.  The key is every column that defines a trial -- see
 :data:`KEY`.
 
 **Two regions.**  Every trial is scored twice, over the mask the estimation
-ran in and over the brain inside it -- see :func:`_regions` for the measured
-reason why the difference is worth carrying.
+ran in and over the brain within it; see :func:`_regions` for the measured
+reason the distinction is carried.
 
 **Where it runs.**  On the GPU by default, falling back to the CPU on a
 machine without one; ``--device cpu`` forces it.  ``device`` is one of the key
 columns, so the two never mix in a summary and a sweep is resumable only
 against rows from the same device.
 
-**Cost.**  The default sweep is 3,600 trials.  ``--dry-run`` counts them
-before you commit to it, and the ``seconds`` column measures what they
-actually took.  Give the sweep the machine either way: a second job does not
-change the *scores* -- they are deterministic given the seed -- but it does
-make ``seconds`` meaningless.
+**Cost.**  The default sweep is 3,600 trials.  ``--dry-run`` counts them in
+advance, and the ``seconds`` column records what they took.  Run one sweep at a
+time: a second job does not change the *scores*, which are deterministic given
+the seed, but it does invalidate ``seconds``.
 """
 
 import argparse
@@ -85,8 +85,8 @@ PROTOCOLS = {
 #: That keeps those rows resumable rather than orphaning them.
 #: ``penalty`` is here for the same reason ``lam`` is: it changes the answer,
 #: so two rows differing only in it are two experiments.  Leaving it out made
-#: a penalty sweep silently skip every value after the first -- the resume
-#: check matched on everything else and declared the trials already done.
+#: a penalty sweep skip every value after the first without any diagnostic:
+#: the resume check matched on everything else and declared the trials done.
 #: ``sample_size`` and ``max_iterations`` are here for the same reason:
 #: a descent stopped at a different budget is a different experiment, and a
 #: budget sweep would otherwise skip every value after the first.  So is
@@ -149,7 +149,7 @@ DISTANCES = [75.0]
 LAMBDAS = [DEFAULTS["lam"]]
 
 #: Histogram kernels swept by default: N3's own linear split alone.  The
-#: Gaussian Parzen window (``--parzen-sigma``, in bin widths) is an alternation
+#: Gaussian Parzen window (``--parzen-sigma``, in bin widths) is a modification
 #: to the algorithm rather than part of it, and ``tests/parzen.py`` measures it
 #: on one analytic field; this is where it gets a distribution instead.
 WINDOWS = [None]
@@ -494,12 +494,12 @@ def _check_header(path):
     appends under it.  So if :data:`COLUMNS` has changed since -- a column
     added, or moved, as ``method``, ``penalty`` and ``loss`` all were -- the
     new rows are written in the new order beneath the old header, and every
-    field after the first change silently lands in the wrong column.  It is
+    field after the first change lands in the wrong column undetected.  It is
     not detectable by reading the file: the rows parse, the numbers are
     plausible, and the summary is wrong.
 
     It happened here, to 450 rows, and this is the guard that stops it
-    happening quietly again.  The fix for an existing file is to rewrite it
+    recurring undetected.  The remedy for an existing file is to rewrite it
     under the current header, not to widen this check.
     """
     with open(path, newline="") as handle:
@@ -517,7 +517,7 @@ def _completed(path):
     """The keys of every trial already in ``path``.
 
     A row from before a key column existed is read at that column's default,
-    which is what keeps an older sweep resumable instead of silently repeating
+    which is what keeps an older sweep resumable rather than repeating
     all of it under a new key.
     """
     if not os.path.exists(path):
@@ -599,8 +599,7 @@ def _kernel(value):
     width = float(value)
     if not width > 0:
         raise argparse.ArgumentTypeError(
-            "a window width is positive; 'none' is how you ask for N3's "
-            "linear split")
+            "a window width is positive; 'none' selects N3's linear split")
     return width
 
 

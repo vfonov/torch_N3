@@ -9,7 +9,7 @@ from torch_n3.volume import Volume, load_volume, save_volume
 
 
 def test_load_puts_the_volume_in_standard_order(chunk):
-    """chunk.mnc is stored xspace/zspace/yspace; we always see (Z, Y, X)."""
+    """chunk.mnc is stored xspace/zspace/yspace; the port always sees (Z, Y, X)."""
     assert chunk.shape == (52, 50, 91)
     np.testing.assert_allclose(chunk.step, [3.0, 2.0, 2.0])
     np.testing.assert_allclose(chunk.start, [-72.0, -126.0, -90.0])
@@ -72,7 +72,7 @@ def test_resample_like_matches_resample_labels(legacy_output, chunk, model_mask)
 
 
 def test_resample_like_fills_outside_with_zero():
-    """mincresample's default fill value is zero, and so is ours."""
+    """mincresample's default fill value is zero, and so is this port's."""
     source = Volume(torch.ones((4, 4, 4)), start=(0, 0, 0), step=(1.0, 1.0, 1.0))
     grid = Volume(torch.zeros((6, 4, 4)), start=(0, 0, 0), step=(1.0, 1.0, 1.0))
 

@@ -102,9 +102,10 @@ def test_the_basis_reproduces_a_unit_field_exactly(chunk, chunk_mask, inside):
     trial is then divided by whatever that fit produced.  For the division to
     be the no-op the ceiling needs it to be, the fit has to return unity back.
 
-    It does, and not by luck: cubic B-splines are a partition of unity, so a
-    constant is *in* the span, and the bending energy of a constant is zero, so
-    the penalty does not pull the fit off it at any ``lam``.  The bound is
+    It does, and by construction rather than incidentally: cubic B-splines are
+    a partition of unity, so a constant is *in* the span, and the bending
+    energy of a constant is zero, so the penalty cannot pull the fit off it at
+    any ``lam``.  The bound is
     float64 rounding through a solve of a matrix whose condition number
     CLAUDE.md puts at ~5e12, not a measured margin.
     """

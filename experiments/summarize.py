@@ -89,7 +89,7 @@ def _group(rows, columns):
     default -- ``recovery.KEY_DEFAULTS`` -- so an older sweep can still be
     grouped against a newer one instead of raising.  Grouping on a column
     nobody has ever written gives one group labelled ``-``, which is the
-    honest answer to a question the data cannot distinguish.
+    correct answer to a question the data cannot resolve.
     """
     groups = {}
     for row in rows:
@@ -196,7 +196,7 @@ def _parse(argv):
     parser.add_argument("--where", nargs="+", metavar="COLUMN=VALUE",
                         help="keep only rows whose COLUMN is exactly VALUE, "
                              "as written in the file; repeatable.  'x=' keeps "
-                             "the rows whose x is empty -- which is how you "
+                             "the rows whose x is empty, which is how to "
                              "ask for N3's own histogram (parzen_sigma=) or "
                              "for a method that takes no penalty")
     parser.add_argument("--group", nargs="+", default=GROUP,

@@ -10,11 +10,12 @@ does it for the numbers that, as CLAUDE.md puts it, are "the most cited in the
 repository" and are checked by almost nothing.
 
 **Why they need re-measuring rather than adjusting.**  Each cell is two whole
-``nu_estimate`` runs of thirty iterations -- well past the histogram knife-edge
-that makes end-to-end volumes incomparable -- so a change to any block, to the
-spline solver, or to which LAPACK the shim links can move them.  The rule in
+``nu_estimate`` runs of thirty iterations, well past the histogram's
+divergence threshold, which is what makes end-to-end volumes incomparable, so a
+change to any block, to the spline solver, or to the LAPACK the shim links can
+move them.  The rule in
 CLAUDE.md is to re-measure and to change both published copies together, never
-to nudge one.  This module is how you re-measure.
+to adjust one.  This module is what re-measures them.
 
 **What is measured.**  Exactly what ``test_field_recovery.py``'s ``regularized``
 fixture computes, over the full sweep rather than at one spacing: plant a

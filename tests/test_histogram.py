@@ -48,12 +48,12 @@ def test_counts_match_the_legacy_histogram(chunk, chunk_mask, parzen):
     value_range = legacy.histogram_range(values[inside],
                                          initial=(values.max(), values.min()))
 
-    ours = blocks.histogram(values[inside], 200, value_range, parzen)
-    theirs = legacy.histogram(values[inside], 200, value_range, parzen)
+    port = blocks.histogram(values[inside], 200, value_range, parzen)
+    oracle = legacy.histogram(values[inside], 200, value_range, parzen)
 
     # Both add one sample at a time into the same bins; only the order of the
     # additions differs, and 132k of them accumulate about that much rounding.
-    assert_close(ours, theirs, atol=1e-9)
+    assert_close(port, oracle, atol=1e-9)
 
 
 def test_counts_match_the_volume_hist_binary(legacy_output, chunk, chunk_mask):
@@ -90,7 +90,7 @@ def test_samples_beyond_the_outer_centres_are_dropped():
     assert float(counts.sum()) == 3.0
 
 
-# The Gaussian Parzen window is an alternation, not a port, so it has no
+# The Gaussian Parzen window is a modification, not a port, so it has no
 # oracle: what follows states the properties it is supposed to have.  What it
 # does to the pipeline is measured by ``python3 -m tests.parzen``.
 
@@ -111,7 +111,7 @@ def test_gaussian_window_conserves_the_sample_count(chunk, chunk_mask, sigma):
     """Every retained sample contributes exactly 1, as the linear split does.
 
     The kernel is renormalised per sample rather than truncated, so a voxel
-    near the end of the range does not quietly count for less than one.
+    near the end of the range does not count for less than one.
     """
     values, inside = masked_log(chunk, chunk_mask)
     value_range = blocks.histogram_range(values[inside],
@@ -124,7 +124,7 @@ def test_gaussian_window_conserves_the_sample_count(chunk, chunk_mask, sigma):
 
 
 def test_gaussian_window_smooths_more_than_the_linear_split(chunk, chunk_mask):
-    """The point of the exercise: a wider kernel, so a less ragged histogram."""
+    """The purpose of the window: a wider kernel, so a smoother histogram."""
     values, inside = masked_log(chunk, chunk_mask)
     value_range = blocks.histogram_range(values[inside],
                                          initial=(values.max(), values.min()))

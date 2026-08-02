@@ -28,10 +28,10 @@ def ramp_in_a_mask(chunk, chunk_mask):
 def test_matches_the_legacy_solver(chunk, ramp_in_a_mask):
     field, inside = ramp_in_a_mask
 
-    ours = blocks.correct_field(field, inside, chunk.step)
-    theirs = legacy.correct_field(field, inside, chunk.step)
+    port = blocks.correct_field(field, inside, chunk.step)
+    oracle = legacy.correct_field(field, inside, chunk.step)
 
-    assert_close(ours, theirs, atol=1e-4 * span(theirs))
+    assert_close(port, oracle, atol=1e-4 * span(oracle))
 
 
 def test_matches_the_correct_field_binary(legacy_output, chunk, ramp_in_a_mask):

@@ -7,7 +7,7 @@ program was given, so both sides build it from here.
 
 Everything in this module is a deterministic function of the volumes in
 ``legacy/N3/testing/``: no random numbers, because a stored answer is only
-worth having if the question can be asked again exactly.
+usable only if the question can be posed again exactly.
 """
 
 import os
@@ -26,10 +26,10 @@ PLATFORM_PROTOCOL = dict(iterations=(1,), stop=(0.0,))
 
 #: The protocol ``tests/data/brain_nu_ref_legacy_30.mnc`` was produced with:
 #: thirty iterations, again with the early stop disabled so that every run
-#: does the same work.  This one is *past* the knife-edge by design -- it is
-#: the converged pipeline, and no two builds agree on it to better than about
-#: a part in a thousand.  It is a coarse regression net, not a canary; the
-#: bound it is held to says so.  See ``tests/test_reproducibility.py``.
+#: does the same work.  This one is past the divergence threshold by design:
+#: it is the converged pipeline, and no two builds agree on it to better than
+#: about a part in a thousand.  It is a coarse regression net rather than a
+#: sensitive check, and the bound it is held to states as much.  See ``tests/test_reproducibility.py``.
 CONVERGED_PROTOCOL = dict(iterations=(30,), stop=(0.0,))
 
 

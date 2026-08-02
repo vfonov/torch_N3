@@ -3,18 +3,18 @@
     python3 -m tests.margins
 
 Prints the table at the bottom of ``PROBLEMS.md``.  That table is the evidence
-for the claims in it -- which bounds are tight enough to flake, which have so
-much headroom that they have stopped asking a question -- and it is worth
-nothing if nobody can reproduce it, so this is the thing that produces it.
+for the claims made there -- which bounds are tight enough to fail
+intermittently, and which have so much headroom that they no longer constrain
+anything -- and this module is what reproduces it.
 
-Not a test.  Nothing here asserts; it measures, and the assertions live in the
-test modules.  The two are kept in step by hand: when a comparison changes, its
-row here has to change with it.  Each row names the test it mirrors, so a
+Not a test.  Nothing here asserts; it measures, and the assertions are in the
+test modules.  The two are kept consistent by hand: when a comparison changes,
+its row here must change with it.  Each row names the test it mirrors, so a
 mismatch is visible.
 
-Needs no MINC program -- everything the legacy said is read from
-``tests/reference/``, exactly as the tests read it.  It does need the CFFI
-shim, since half the rows are parity against it.
+Requires no MINC program: every answer from the legacy implementation is read
+from ``tests/reference/``, exactly as the tests read it.  It does require the
+CFFI shim, since half the rows are parity comparisons against it.
 """
 
 import torch
@@ -67,10 +67,10 @@ def block_rows(recorded):
 
     # test_histogram.py
     for parzen in (True, False):
-        ours = blocks.histogram(values[inside], 200, log_range, parzen)
-        theirs = legacy.histogram(values[inside], 200, log_range, parzen)
+        port = blocks.histogram(values[inside], 200, log_range, parzen)
+        oracle = legacy.histogram(values[inside], 200, log_range, parzen)
         rows.append(("histogram parzen=%s vs shim" % parzen,
-                     _worst(ours, theirs), 1e-9))
+                     _worst(port, oracle), 1e-9))
 
     # volume_hist was run on the raw intensities, not the log volume.
     raw = chunk.data[inside]
@@ -86,10 +86,10 @@ def block_rows(recorded):
     # test_sharpen.py
     two_tissues = inputs.two_tissue_histogram()
     for deblur in (False, True):
-        ours = blocks.sharpen_lut(two_tissues, (4.0, 6.0), 0.15, 0.01, deblur)
-        theirs = legacy.sharpen_lut(two_tissues, (4.0, 6.0), 0.15, 0.01, deblur)
+        port = blocks.sharpen_lut(two_tissues, (4.0, 6.0), 0.15, 0.01, deblur)
+        oracle = legacy.sharpen_lut(two_tissues, (4.0, 6.0), 0.15, 0.01, deblur)
         rows.append(("sharpen_lut deblur=%s vs shim" % deblur,
-                     _worst(ours, theirs), 1e-11))
+                     _worst(port, oracle), 1e-11))
     # ...and on the log histogram the pipeline itself produces.
     log_counts = blocks.histogram(values[inside], 200, log_range)
     rows.append(("sharpen_lut vs shim (real histogram)",
@@ -120,15 +120,15 @@ def block_rows(recorded):
                         + 0.01 * torch.randn(chunk.shape, dtype=torch.float64),
                         torch.zeros_like(z))
     for distance, subsample in [(200.0, 1), (200.0, 2), (50.0, 1)]:
-        theirs = legacy.BSplineField(chunk, distance, 1e-7).fit(
+        oracle = legacy.BSplineField(chunk, distance, 1e-7).fit(
             bumpy, inside, subsample).evaluate()
         for solver in DIRECT_SOLVERS:
-            ours = blocks.BSplineField(chunk, distance, 1e-7,
+            port = blocks.BSplineField(chunk, distance, 1e-7,
                                        solver=solver).fit(
                 bumpy, inside, subsample).evaluate()
             rows.append(("spline[%s] d=%-3g sub=%d vs shim"
                          % (solver, distance, subsample),
-                         _worst(ours, theirs), 1e-6 * span(ours)))
+                         _worst(port, oracle), 1e-6 * span(port)))
 
     # test_the_qr_fit_is_the_same_on_the_gpu, which only runs where there is
     # one.  Only the QR row appears: the normal equations are not held to this
@@ -148,12 +148,12 @@ def block_rows(recorded):
 
     # test_field.py
     plane = inputs.tilted_plane(chunk, inside)
-    ours = blocks.correct_field(plane, inside, chunk.step)
-    theirs = legacy.correct_field(plane, inside, chunk.step)
-    rows.append(("correct_field vs shim", _worst(ours, theirs),
-                 1e-4 * span(theirs)))
+    port = blocks.correct_field(plane, inside, chunk.step)
+    oracle = legacy.correct_field(plane, inside, chunk.step)
+    rows.append(("correct_field vs shim", _worst(port, oracle),
+                 1e-4 * span(oracle)))
     rows.append(("correct_field vs binary",
-                 _worst(ours, recorded["correct_field.chunk"]),
+                 _worst(port, recorded["correct_field.chunk"]),
                  1e-4 * span(recorded["correct_field.chunk"])))
 
     # test_volume.py
@@ -249,11 +249,11 @@ def platform_rows(recorded):
 
 # ------------------------------------------------------------------ the tools
 
-def _worst(ours, theirs):
+def _worst(port, oracle):
     """The largest absolute difference, whatever the two arrived as."""
-    ours = torch.as_tensor(ours, dtype=torch.float64)
-    theirs = torch.as_tensor(theirs, dtype=torch.float64)
-    return float((ours - theirs).abs().max())
+    port = torch.as_tensor(port, dtype=torch.float64)
+    oracle = torch.as_tensor(oracle, dtype=torch.float64)
+    return float((port - oracle).abs().max())
 
 
 if __name__ == "__main__":
