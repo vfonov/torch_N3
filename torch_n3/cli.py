@@ -129,9 +129,11 @@ def build_parser():
                                 "a 2 mm brain it is some forty times the cost "
                                 "of the whole estimation it feeds (8.3 s "
                                 "against 0.19 s); use --device cuda, where it "
-                                "is 0.21 s.  Measured to help less than "
-                                "--parzen-sigma does -- read the README before "
-                                "turning it on")
+                                "is 0.21 s.  Worth it on noisy data and not "
+                                "otherwise: over 450 random fields it improved "
+                                "95%% of trials at SNR 20 and 15%% at SNR "
+                                "infinity, and it makes the estimate nearly "
+                                "indifferent to noise.  See README.md")
     denoising.add_argument("--denoise-search", type=int,
                            default=DEFAULTS["denoise_search"],
                            help="search radius in voxels; the cost is cubic "

@@ -107,6 +107,7 @@ as posed.
 |---|---|
 | `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `parzen_sigma`, `shrink`, `device` | the key: every parameter that changes the answer. A parameter omitted from it causes a sweep over that parameter to be skipped without any diagnostic, which occurred four times before the list was complete |
 | `parzen_sigma` | the histogram kernel: a Gaussian Parzen window this many bin widths wide, or **empty for N3's own linear split**, which is what every row written before the column existed ran. `--method n3` only; see "Gaussian Parzen window" in the top-level README |
+| `denoise` | `1` if the volume was prefiltered by the non-local-means pass of `blocks/denoise.py` before the field was estimated, **empty if it was not** — which is what every row written before the column existed ran. Applies to every method but `oracle`, which reads no intensities and so cannot be affected by filtering them. See "Non-local means" in the top-level README |
 | `loss` | the loss the descent reached; empty for `n3` |
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |
@@ -305,6 +306,107 @@ diverged to 1316 % non-uniformity).
 `tightness` **does not work**, and not for lack of tuning: its loss falls while
 its estimate deteriorates. See `torch_n3/optimize.py`'s docstring and
 `tests/test_optimize.py::test_tightness_makes_its_own_estimate_worse_as_it_converges`.
+
+### Prefiltering the volume (`--denoise`)
+
+`blocks/denoise.py` filters the volume with one non-local-means pass before the
+field is estimated. On a *single* analytic field it looked barely worthwhile —
+`tests/denoise.py` found it helping less than the histogram window it competes
+with, and the top-level README said so. **Over 450 random fields per
+configuration it is a different story, and the earlier verdict was wrong.**
+
+Median `unexplained_brain_pct`, 50 seeds per cell, `--distance 75 --lambda 1e-7
+--solver normal --protocol fixed30` on the GPU, N3's own linear histogram:
+
+| planted | SNR ∞ | SNR 40 | SNR 20 |
+|---|---|---|---|
+| **`n3`** 20 % | 1.030 → 1.055 (+2 %) | 1.522 → 1.073 (−29 %) | 3.428 → 1.092 (**−68 %**) |
+| 40 % | 2.307 → 2.435 (+6 %) | 2.832 → 2.419 (−15 %) | 4.050 → 2.496 (−38 %) |
+| 80 % | 5.094 → 5.206 (+2 %) | 5.384 → 5.194 (−4 %) | 5.835 → 5.236 (−10 %) |
+| **`hoyer`** 20 % | 0.519 → 0.731 (+41 %) | 0.563 → 0.754 (+34 %) | 2.193 → 0.753 (**−66 %**) |
+| 40 % | 0.513 → 0.723 (+41 %) | 0.652 → 0.725 (+11 %) | 2.179 → 0.741 (−66 %) |
+| 80 % | 1.121 → 1.046 (−7 %) | 1.178 → 1.046 (−11 %) | 2.247 → 0.911 (−59 %) |
+
+Paired per trial, which is the stronger statement — the same seed, the same
+planted field, the same noise draw, filtered and not:
+
+| | SNR ∞ | SNR 40 | SNR 20 |
+|---|---|---|---|
+| `n3` improved on | 15 % of trials | **88 %** | **95 %** |
+| `hoyer` improved on | 37 % | 41 % | **85 %** |
+
+**The result is not "denoising helps" but something sharper: it makes both
+estimators almost indifferent to noise.** Read the `on` numbers across each
+row. N3 at 20 % planted goes 1.055 / 1.073 / 1.092 as the SNR falls from
+infinite to 20 — flat — where unfiltered it goes 1.030 / 1.522 / 3.428, a
+factor of 3.3. `hoyer` likewise holds 0.73 / 0.75 / 0.75 against 0.52 / 0.56 /
+2.19. The filter converts a noise-sensitive estimator into one whose error is
+set by the field and the basis alone.
+
+The cost is paid where the control predicted it. With no noise to remove a
+spatial filter can only take away structure the estimate was using, and both
+methods are slightly worse at SNR ∞ — N3 by 2–6 %, `hoyer` by up to 41 %,
+because `hoyer` is the better estimator there and so has more to lose. The
+break-even is between SNR 40 and ∞ for N3, and between 20 and 40 for `hoyer`.
+
+Two further readings. Denoising helps **most at low field amplitude**: at 80 %
+planted the error is dominated by what the basis can represent, and no amount
+of noise removal reaches it (−10 % for N3 at SNR 20, against −68 % at 20 %
+planted). And it slightly *reduces* the tail — trials scoring above 5 % fall
+from 112 to 97 of 450 for N3 and from 56 to 48 for `hoyer` — so it is not
+buying its median by making the hard draws worse.
+
+`hoyer` beats N3 at every cell on the median, filtered or not, but its mean sits
+far above its median (2.60 against 0.91 at 80 %/SNR 20) and its worst trial
+reaches 16 %, against N3's 7.5 %: the divergence tail documented above is
+unaffected by prefiltering.
+
+Cost on the GPU, per estimate on colin27's 7.1 M voxels: N3 0.7 s → 2.5 s,
+`hoyer` 2.5 s → 4.4 s. The filter itself is the ~1.8 s difference, and it runs
+once per estimate at full resolution.
+
+### Crossed with the histogram window
+
+Both modifications suppress noise-driven variance in the same data term, so the
+question neither measures alone is whether they are **substitutes or
+complements**. `tests/denoise.py` asked it on one analytic field and answered
+*substitutes*; over the same 50 seeds the answer is the opposite. Median
+`unexplained_brain_pct`, `n3`, paired:
+
+| planted | SNR | linear | `sigma 4` | `--denoise` | both |
+|---|---|---|---|---|---|
+| 20 % | ∞ | 1.030 | 1.036 | 1.055 | 1.059 |
+| | 40 | 1.522 | 1.309 | 1.073 | **1.051** |
+| | 20 | 3.428 | 1.912 | **1.092** | 1.136 |
+| 40 % | ∞ | 2.307 | **2.148** | 2.435 | 2.183 |
+| | 40 | 2.832 | 2.443 | 2.419 | **2.204** |
+| | 20 | 4.050 | 3.257 | 2.496 | **2.293** |
+| 80 % | ∞ | 5.094 | **4.923** | 5.206 | 4.965 |
+| | 40 | 5.384 | 5.441 | 5.194 | **5.017** |
+| | 20 | 5.835 | 6.815 | 5.236 | **5.095** |
+
+The median *paired* difference of both against denoising alone is negative in
+all nine cells (−0.032 to −0.333 points) and against the window alone in all six
+noisy cells (−0.224 to −1.674), costing only +0.030 to +0.053 at SNR ∞. Win
+rates for the pair: 96–100 % against the window alone at SNR 40 and 20, and
+58–76 % against the denoiser alone at every SNR.
+
+Note that the median of the paired *differences* and the difference of the
+medians disagree at 20 % planted / SNR 20 — the pair's median (1.136) is above
+the denoiser's (1.092) while its median paired difference is −0.055 with a 60 %
+win rate. The paired statistic is the one that answers the question; the other
+is comparing two different trials' medians.
+
+Which of the two carries a cell depends on the field amplitude. At 20 % planted
+and SNR 20 the denoiser does essentially all the work (3.428 → 1.092) and the
+window adds little on top; at 40 % and 80 % the window is worth 0.2–0.3 points
+*on a denoised volume* in every noisy cell.
+
+One cell deserves singling out: at 80 % planted and SNR 20 the window alone is a
+net **harm** — 6.815 against N3's own 5.835, the only such cell in the sweep —
+and prefiltering removes it, the pair giving 5.095, the best in that row. The
+window's instability at large field amplitude is therefore a noise effect, and
+the two together are more robust than either alone.
 
 ## Protocols
 

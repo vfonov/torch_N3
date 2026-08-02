@@ -518,11 +518,21 @@ drift elsewhere surfaces there.
 
 Two further limits on that measurement, both stated in the script:
 
-- It is **one analytic field, one volume, one seed**. `tests/parzen.py` carries
-  the same caveat and `experiments/` is the answer to it — 450 random fields
-  per configuration. That Monte Carlo **has not been run for `--denoise`**, so
-  the conclusion that it is the weaker of the two noise suppressors rests on
-  the single sweep.
+- It is **one analytic field, one volume, one seed**, and it reached the wrong
+  answer. `tests/parzen.py` carries the same caveat, and `experiments/` is the
+  answer to it: over 450 random fields per configuration, `--denoise` improves
+  95% of trials at SNR 20 and 88% at SNR 40, where the single sweep had
+  suggested it was not worth using at all (`experiments/README.md`,
+  "Prefiltering the volume", 2026-08-02). The single-field number was not
+  *wrong* — it is a different volume, spacing and metric — but it was quoted as
+  a verdict, and it does not support one. It was wrong on the *second* axis
+  too: it concluded that `--denoise` and `--parzen-sigma` are substitutes, and
+  the same 450 trials crossed over both show them to be complements — the pair
+  beats the denoiser alone in all nine cells on the median paired difference,
+  and the window alone in all six noisy cells. This is now the second recorded
+  case of a single analytic field misleading about a modification, after the
+  histogram window, and the general lesson stands: **`tests/*.py` measurement
+  scripts orient, `experiments/` decides.**
 - The filter holds no more than about 119 bytes per voxel, all of it live at
   once: a 512³ volume would need ~15 GB. Above that the loop would have to be
   tiled with a `search + patch` halo, which is **not implemented** and would

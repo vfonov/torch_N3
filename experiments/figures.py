@@ -46,12 +46,18 @@ COLOUR = {"n3": "#3a6ea5", "hoyer": "#d1701c", "oracle": "#3f8f5b",
 #: cosmetic: the file also holds rows run with a Gaussian Parzen window, and
 #: without this constraint every ``n3`` panel would pool four
 #: histograms into one violin and report four times the trials.
+#: ``denoise=""`` is there for exactly the same reason and on every method,
+#: since the prefilter applies to all of them: the file holds filtered rows
+#: too, and pooling them would mix two estimators under one label -- and, since
+#: filtering changes the answer most at low SNR, would flatten the very trend
+#: these figures are drawn to show.
 MATCHED = {
     "n3": dict(backend="torch", solver="normal", protocol="fixed30",
-               device="cuda", parzen_sigma=""),
+               device="cuda", parzen_sigma="", denoise=""),
     "hoyer": dict(backend="torch", solver="normal", device="cuda",
-                  penalty="0.001", max_iterations="400"),
-    "oracle": dict(backend="torch", solver="normal", device="cuda"),
+                  penalty="0.001", max_iterations="400", denoise=""),
+    "oracle": dict(backend="torch", solver="normal", device="cuda",
+                   denoise=""),
 }
 
 #: The sweep's axes, in the order they are drawn.
@@ -106,7 +112,7 @@ def _values(rows, column):
 SUMMARY = (
     ("legacy N3 (C++, cpu)", "#9dbdd8", "n3",
      dict(backend="legacy", solver="normal", protocol="fixed30",
-          device="cpu", parzen_sigma="")),
+          device="cpu", parzen_sigma="", denoise="")),
     ("torch N3 (normal, cuda)", "#3a6ea5", "n3", dict(MATCHED["n3"])),
     ("hoyer (gradient descent, cuda)", "#d1701c", "hoyer",
      dict(MATCHED["hoyer"])),
@@ -416,13 +422,15 @@ def _solvers(rows):
     figure, axes = pyplot.subplots(1, 2, figsize=(12, 5))
     protocol = "fixed30"
 
-    # `parzen_sigma=""` for the same reason MATCHED carries it, and here it
-    # matters twice over: the rows are keyed by trial, so a second histogram's
-    # row would not pool into the violin but *replace* the one being compared.
+    # `parzen_sigma=""` and `denoise=""` for the same reason MATCHED carries
+    # them, and here they matter twice over: the rows are keyed by trial, so a
+    # second histogram's -- or a prefiltered run's -- row would not pool into
+    # the violin but *replace* the one being compared.
     keyed = {solver: {_trial_key(row): row
                       for row in _select(rows, method="n3", solver=solver,
                                          protocol=protocol, backend="torch",
-                                         device="cuda", parzen_sigma="")}
+                                         device="cuda", parzen_sigma="",
+                                         denoise="")}
              for solver in SOLVERS}
     shared = sorted(set.intersection(*(set(rows) for rows in keyed.values())))
 

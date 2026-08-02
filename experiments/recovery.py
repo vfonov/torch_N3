@@ -97,9 +97,14 @@ PROTOCOLS = {
 #: ``parzen_sigma`` is here for the same reason again, and is the one key
 #: column whose *empty* value is a setting rather than a blank: it means N3's
 #: own linear split, which is what every row written before it existed ran.
+#: ``denoise`` is here on the same terms, and is the second key column whose
+#: *empty* value is a setting rather than a blank: it means the volume was not
+#: prefiltered, which is what every row written before it existed ran.  Unlike
+#: ``parzen_sigma`` it applies to the descent methods too, since
+#: ``nu_optimize`` takes the same filtered volume ``nu_estimate`` does.
 KEY = ("seed", "amplitude", "snr", "method", "backend", "solver", "protocol",
        "distance", "lam", "penalty", "sample_size", "max_iterations",
-       "parzen_sigma", "shrink", "device")
+       "parzen_sigma", "denoise", "shrink", "device")
 
 #: How the field is estimated.  ``n3`` is ``pipeline.nu_estimate``, the
 #: shipped alternating iteration; ``hoyer`` and ``tightness`` are
@@ -154,6 +159,14 @@ LAMBDAS = [DEFAULTS["lam"]]
 #: on one analytic field; this is where it gets a distribution instead.
 WINDOWS = [None]
 
+#: Whether the volume is prefiltered, swept by default: not at all.  The
+#: non-local-means filter (``--denoise``, ``blocks/denoise.py``) is the port's
+#: other modification, and ``tests/denoise.py`` measures it on the same single
+#: analytic field the window was measured on; this is where it gets a
+#: distribution.  It is the more expensive of the two to sweep by far, since it
+#: runs once per trial at full resolution.
+DENOISINGS = [False]
+
 
 def main(argv=None):
     args = _parse(argv)
@@ -164,7 +177,7 @@ def main(argv=None):
     protocols = args.protocol or list(PROTOCOLS)
 
     trials = (sum(len(_protocols(method, protocols))
-                  * len(_windows(method, args.parzen_sigma))
+                  * len(_variants(method, args))
                   for method in methods)
               * len(solvers) * len(args.distance)
               * len(args.lam) * len(seeds) * len(args.amplitude)
@@ -190,13 +203,14 @@ def main(argv=None):
         for method in methods:
             for solver in solvers:
                 for protocol in _protocols(method, protocols):
-                    for sigma in _windows(method, args.parzen_sigma):
+                    for sigma, filtered in _variants(method, args):
                         for distance in args.distance:
                             for lam in args.lam:
                                 cell = dict(stamp, method=method, solver=solver,
                                             protocol=protocol, distance=distance,
                                             lam=lam,
                                             parzen_sigma=_window(method, sigma),
+                                            denoise=_denoising(method, filtered),
                                             penalty=_weight(method, args.penalty),
                                             **_budget(method, args))
                                 written += _sweep(write, done, volume, mask,
@@ -245,6 +259,44 @@ def _windows(method, windows):
     exists.
     """
     return windows if method == "n3" else windows[:1]
+
+
+def _variants(method, args):
+    """The ``(parzen_sigma, denoise)`` pairs worth running for one method.
+
+    The port carries two modifications to the algorithm and both are swept
+    here, but they do not apply to the same methods, so pairing them is what
+    keeps the loop from running a cell that differs from another only in a
+    label.  Returned as a list rather than a generator because the trial count
+    is taken from its length before the sweep starts.
+    """
+    return [(sigma, filtered)
+            for sigma in _windows(method, args.parzen_sigma)
+            for filtered in _denoisings(method, args.denoise)]
+
+
+def _denoisings(method, denoisings):
+    """Whether prefiltering is worth sweeping for one method.
+
+    ``--denoise`` filters the volume before anything reads it, so unlike
+    ``--parzen-sigma`` it applies to the descent methods as well as to N3.  It
+    does not apply to the oracle, which is handed the planted field and reads
+    no intensity at all: filtering the volume cannot change an answer that
+    never looked at it, so sweeping it there would write the same trial twice.
+    """
+    return denoisings if method != ORACLE else denoisings[:1]
+
+
+def _denoising(method, filtered):
+    """The prefiltering a cell runs at, resolved so the key records it.
+
+    Empty for a run that was not filtered -- the absence of a filter rather
+    than a setting of it, and what every row written before this column existed
+    ran under -- and for the oracle, which has no such parameter.
+    """
+    if method == ORACLE or not filtered:
+        return ""
+    return 1
 
 
 def _window(method, sigma):
@@ -297,6 +349,10 @@ def _settings(cell, args):
                   solver=cell["solver"])
     if cell["method"] == ORACLE:
         return dict(lam=cell["lam"], **common)
+
+    # "" is "not filtered"; both estimators spell that `denoise=False`.  The
+    # oracle above takes no such argument, and would not be changed by one.
+    common["denoise"] = bool(cell["denoise"])
     if cell["method"] == "n3":
         # "" is the linear split; `nu_estimate` spells that `parzen_sigma=None`.
         return dict(PROTOCOLS[cell["protocol"]], lam=cell["lam"],
@@ -559,15 +615,16 @@ def _label(cell):
     if cell["method"] == ORACLE:
         return ("--method oracle --solver %s --distance %g --lambda %g"
                 % (cell["solver"], cell["distance"], cell["lam"]))
+    filtered = " --denoise" if cell["denoise"] else ""
     if cell["method"] == "n3":
         return ("--method n3 --backend %s --solver %s --protocol %s "
-                "--distance %g --lambda %g --parzen-sigma %s"
+                "--distance %g --lambda %g --parzen-sigma %s%s"
                 % (cell["backend"], cell["solver"], cell["protocol"],
                    cell["distance"], cell["lam"],
-                   cell["parzen_sigma"] or "none"))
-    return ("--method %s --solver %s --distance %g --penalty %g"
+                   cell["parzen_sigma"] or "none", filtered))
+    return ("--method %s --solver %s --distance %g --penalty %g%s"
             % (cell["method"], cell["solver"], cell["distance"],
-               cell["penalty"]))
+               cell["penalty"], filtered))
 
 
 def _provenance(args):
@@ -601,6 +658,16 @@ def _kernel(value):
         raise argparse.ArgumentTypeError(
             "a window width is positive; 'none' selects N3's linear split")
     return width
+
+
+def _filtering(value):
+    """``--denoise`` takes the word for whether the volume is prefiltered."""
+    if value.lower() in ("off", "none", "no", "0", "false"):
+        return False
+    if value.lower() in ("on", "yes", "1", "true"):
+        return True
+    raise argparse.ArgumentTypeError(
+        "expected 'off' or 'on', got %r" % (value,))
 
 
 def _parse(argv):
@@ -666,6 +733,14 @@ def _parse(argv):
                              "widths in bin widths; 'none' is N3's own linear "
                              "split (default: none).  Applies to --method n3 "
                              "alone")
+    parser.add_argument("--denoise", nargs="+", type=_filtering,
+                        default=list(DENOISINGS), metavar="{off,on}",
+                        help="whether to prefilter the volume with the "
+                             "non-local-means pass of blocks/denoise.py "
+                             "before estimating (default: off).  Applies to "
+                             "every method but 'oracle', which reads no "
+                             "intensities.  Expensive: it runs once per trial "
+                             "at full resolution")
 
     parser.add_argument("--shrink", type=int, default=DEFAULTS["shrink"],
                         help="estimation-grid subsampling (default: "
