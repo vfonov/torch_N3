@@ -42,9 +42,13 @@ COLOUR = {"n3": "#3a6ea5", "hoyer": "#d1701c", "oracle": "#3f8f5b",
 #: The matched configuration: what every method is compared at.  ``hoyer`` is
 #: pinned to its converged budget and its swept penalty, ``n3`` to the protocol
 #: that gives every trial the same work.  Anything not listed is free.
+#: ``parzen_sigma=""`` pins ``n3`` to N3's own linear split.  It is not
+#: cosmetic: the file also holds rows run with a Gaussian Parzen window, and
+#: without this constraint every ``n3`` panel would quietly pool four
+#: histograms into one violin and report four times the trials.
 MATCHED = {
     "n3": dict(backend="torch", solver="normal", protocol="fixed30",
-               device="cuda"),
+               device="cuda", parzen_sigma=""),
     "hoyer": dict(backend="torch", solver="normal", device="cuda",
                   penalty="0.001", max_iterations="400"),
     "oracle": dict(backend="torch", solver="normal", device="cuda"),
@@ -62,7 +66,8 @@ def main(argv=None):
 
     for name, draw in (("recovery", _recovery), ("runtime", _runtime),
                        ("implementation", _implementation),
-                       ("solvers", _solvers), ("cells", _cells)):
+                       ("solvers", _solvers), ("cells", _cells),
+                       ("windows", _windows)):
         if args.figure not in ("all", name):
             continue
         figure = draw(rows)
@@ -296,10 +301,14 @@ def _solvers(rows):
     figure, axes = pyplot.subplots(1, 2, figsize=(12, 5))
     protocol = "fixed30"
 
+    # `parzen_sigma=""` for the same reason MATCHED carries it, and here it
+    # matters twice over: the rows are keyed by trial, so a second histogram's
+    # row would not pool into the violin but silently *replace* the one being
+    # compared.
     keyed = {solver: {_trial_key(row): row
                       for row in _select(rows, method="n3", solver=solver,
                                          protocol=protocol, backend="torch",
-                                         device="cuda")}
+                                         device="cuda", parzen_sigma="")}
              for solver in SOLVERS}
     shared = sorted(set.intersection(*(set(rows) for rows in keyed.values())))
 
@@ -334,6 +343,102 @@ def _solvers(rows):
     figure.suptitle("N3's four spline solvers -- 30 iterations, colin27, "
                     "75 mm knots", fontsize=13)
     figure.tight_layout()
+    return figure
+
+
+# --------------------------------------------------------------------------
+# The histogram kernel, one panel per cell.
+# --------------------------------------------------------------------------
+
+#: The windows drawn, in order: N3's own linear split first, then the Gaussian
+#: Parzen widths in bin widths.  ``""`` is the linear split -- see
+#: ``recovery.KEY``.  Spelled as ``recovery._format`` writes them (``"%g"``),
+#: since ``_select`` compares the text: ``"1.0"`` selects nothing.
+WINDOWS = ("", "1", "2", "4")
+
+#: One colour per iteration protocol, light to dark with the work done.  The
+#: protocols are drawn together because their *disagreement* is the finding:
+#: under N3's own histogram more iterations make a noisy cell worse, and under
+#: a wide window they do not.
+PROTOCOL_COLOUR = {"fixed30": "#9dbdd8", "default": "#1f4a75"}
+PROTOCOL_LABEL = {"fixed30": "30 iterations", "default": "50 (the shipped -stop)"}
+
+
+def _windows(rows):
+    """One panel per (amplitude, SNR), one violin pair per histogram kernel.
+
+    The question this figure exists for: N3's ``-parzen`` is linear
+    interpolation into two bins, ``--parzen-sigma`` makes it a real Gaussian
+    kernel, and ``tests/parzen.py`` measures the difference on a single
+    noiseless analytic field.  Here it is 50 random fields per cell, at three
+    amplitudes and three SNRs, so the noise axis -- the one a smoother
+    histogram ought to matter most on -- is swept rather than assumed.
+
+    Both protocols are drawn, which is the one place this figure departs from
+    the rest of the file.  Everything else pins ``fixed30`` so that every
+    trial does the same work; here the *extra* work is half the result, since
+    what a wide window buys grows with the iteration count and at 80% planted
+    it is the difference between a loss and a gain.
+
+    Same layout and shared range as :func:`_cells`, and the same dashed
+    uncorrected level, so the two can be laid side by side.
+    """
+    figure, axes = pyplot.subplots(len(AMPLITUDES), len(SNRS),
+                                   figsize=(14, 11), sharex=True, sharey=True)
+    drawn = []
+    protocols = ("fixed30", "default")
+    offsets = (-0.19, 0.19)
+
+    for row_index, amplitude in enumerate(AMPLITUDES):
+        for column_index, snr in enumerate(SNRS):
+            axis = axes[row_index][column_index]
+            cell = dict(amplitude=amplitude, snr=snr)
+            for index, window in enumerate(WINDOWS):
+                for protocol, offset in zip(protocols, offsets):
+                    selected = _select(
+                        rows, method="n3",
+                        **dict(MATCHED["n3"], parzen_sigma=window,
+                               protocol=protocol), **cell)
+                    _violin(axis, _values(selected, "unexplained_brain_pct"),
+                            index + offset, PROTOCOL_COLOUR[protocol],
+                            width=0.34, drawn=drawn)
+
+            level = numpy.log10(numpy.median(_values(
+                _select(rows, method="n3", **MATCHED["n3"], **cell),
+                "planted_cv_brain_pct")))
+            drawn.append(numpy.array([level]))
+            axis.axhline(level, color=COLOUR["uncorrected"], linestyle="--",
+                         linewidth=1.4, zorder=1)
+
+            axis.set_title("%d%% planted, SNR %s"
+                           % (float(amplitude) * 100,
+                              "∞" if snr == "inf" else snr), fontsize=11)
+            if column_index == 0:
+                axis.set_ylabel("unexplained, % of mean (brain)")
+
+    for axis in axes[-1]:
+        axis.set_xticks(range(len(WINDOWS)))
+        axis.set_xticklabels(["linear\n(N3)"]
+                             + ["sigma %g" % float(window)
+                                for window in WINDOWS[1:]], fontsize=9)
+    for row in axes:
+        for axis in row:
+            _log_axis(axis, drawn)
+
+    figure.suptitle("The histogram kernel, cell by cell -- N3's linear split "
+                    "against a Gaussian Parzen window\ncolin27, 50 random "
+                    "fields each, 75 mm knots, --solver normal",
+                    fontsize=13, y=1.0)
+    figure.tight_layout()
+    figure.legend(handles=[Line2D([], [], color=PROTOCOL_COLOUR[protocol],
+                                  linewidth=8, alpha=0.65,
+                                  label=PROTOCOL_LABEL[protocol])
+                           for protocol in protocols]
+                  + [Line2D([], [], color=COLOUR["uncorrected"],
+                            linestyle="--",
+                            label="uncorrected (what was planted)")],
+                  loc="lower center", ncol=3, fontsize=9,
+                  bbox_to_anchor=(0.5, 1.0), frameon=False)
     return figure
 
 
@@ -534,7 +639,8 @@ def _parse(argv):
                         help="directory for the PNGs (default: %(default)s)")
     parser.add_argument("--figure", default="all",
                         choices=("all", "recovery", "runtime",
-                                 "implementation", "solvers", "cells"),
+                                 "implementation", "solvers", "cells",
+                                 "windows"),
                         help="which figure to draw (default: all)")
     parser.add_argument("--dpi", type=int, default=150)
     return parser.parse_args(argv)

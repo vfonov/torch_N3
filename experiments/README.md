@@ -102,7 +102,8 @@ brain columns for "how well does this correct a brain", the mask columns for
 
 | column | what |
 |---|---|
-| `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `shrink`, `device` | the key: every parameter that changes the answer. Anything left out of it makes a sweep over that parameter silently skip — which happened four times before the list was complete |
+| `seed`, `amplitude`, `snr`, `method`, `backend`, `solver`, `protocol`, `distance`, `lam`, `penalty`, `sample_size`, `max_iterations`, `parzen_sigma`, `shrink`, `device` | the key: every parameter that changes the answer. Anything left out of it makes a sweep over that parameter silently skip — which happened four times before the list was complete |
+| `parzen_sigma` | the histogram kernel: a Gaussian Parzen window this many bin widths wide, or **empty for N3's own linear split**, which is what every row written before the column existed ran. `--method n3` only; see "A real Parzen window" in the top-level README |
 | `loss` | the loss the descent reached — empty for `n3` |
 | `unexplained_pct` | the score above, over the estimation mask. Lower is better |
 | `rms_log` | the same residual as RMS of `log(ratio)` about its mean |
@@ -338,6 +339,11 @@ trials are all present does not even recompute its baseline.
 python3 -m experiments.recovery --dry-run
 python3 -m experiments.recovery --seeds 50 --verbose      # or nohup ... &
 python3 -m experiments.recovery --seeds 80 --verbose      # adds seeds 51-80
+
+# the histogram-kernel sweep below: 'none' is N3's own split, and its 900
+# trials are already in the file, so this adds 2,700 and takes ~50 min
+python3 -m experiments.recovery --method n3 --solver normal \
+    --parzen-sigma none 1 2 4 --verbose
 ```
 
 Give one sweep the machine: two side by side share the same GPU (or, on the
@@ -352,6 +358,12 @@ python3 -m experiments.summarize --group solver snr
 python3 -m experiments.summarize --group amplitude snr --metric rms_log
 python3 -m experiments.summarize --group protocol solver --metric seconds
 python3 -m experiments.summarize --group distance lam --csv > grid.csv
+
+# one file now holds several experiments, so drop the ones not being asked
+# about; `x=` matches an empty column, which is how N3's own histogram is
+# spelled
+python3 -m experiments.summarize --where method=n3 solver=normal \
+    device=cuda protocol=default --group amplitude snr parzen_sigma
 ```
 
 Per group: `n`, mean, median, IQR, extremes, mean run time, and mean `floor`.
@@ -379,6 +391,7 @@ trials where two backends disagree by 18 %.
 | `results/runtime.png` | wall time per estimate, every configuration in the file |
 | `results/implementation.png` | the three comparisons that should come out flat — solver, backend/device, and the solver's effect on the ceiling |
 | `results/solvers.png` | the solvers asked properly: per-trial difference from `normal` (six decades, log) beside seconds (a factor of 3.8, linear) |
+| `results/windows.png` | N3's linear split against the Gaussian Parzen window, one panel per cell — and the one figure here that draws **both protocols**, because how much the window buys depends on how long the iteration runs |
 
 `recovery.png` pools the four solvers into one `n3` violin per cell, which is
 the right summary and the wrong picture for two questions: whether the solvers
@@ -394,6 +407,102 @@ to their own data**, deliberately — those differences are parts in a hundred,
 and on the decade axis the other figures use they would be one flat line,
 which is a picture of the axis rather than of the measurement. Read the spread
 *within* each violin against the gap *between* them.
+
+## The histogram kernel, over 450 trials each
+
+`--parzen-sigma` replaces N3's `-parzen` — linear interpolation into two bins —
+with a Gaussian Parzen window of a stated width in bin widths. The top-level
+README describes it; `tests/parzen.py` measures it on **one** analytic field
+with **no noise**, and this is the same question asked of 450 random fields per
+window at three amplitudes and three SNRs.
+
+Median unexplained non-uniformity over the brain, 50 seeds per cell, 75 mm
+knots, `--lambda 1e-7`, `--solver normal`, on the GPU. Best in each row bold:
+
+*30 iterations (`--protocol fixed30`):*
+
+| planted | SNR | linear (N3) | σ 1 | σ 2 | σ 4 |
+|---|---|---|---|---|---|
+| 20 % | ∞ | 1.03 % | **1.02 %** | **1.02 %** | 1.04 % |
+| 20 % | 40 | **1.52 %** | 1.71 % | 1.75 % | 1.31 % |
+| 20 % | 20 | 3.43 % | 3.63 % | 2.92 % | **1.91 %** |
+| 40 % | ∞ | 2.31 % | 2.32 % | 2.20 % | **2.15 %** |
+| 40 % | 40 | 2.83 % | 2.92 % | 2.68 % | **2.44 %** |
+| 40 % | 20 | 4.05 % | 4.15 % | 3.66 % | **3.26 %** |
+| 80 % | ∞ | 5.09 % | 5.00 % | **4.70 %** | 4.92 % |
+| 80 % | 40 | 5.38 % | 5.31 % | **5.01 %** | 5.44 % |
+| 80 % | 20 | **5.83 %** | 5.86 % | 5.84 % | 6.81 % |
+
+*The shipped protocol (`--protocol default`, 50 iterations and `-stop 0.001`):*
+
+| planted | SNR | linear (N3) | σ 1 | σ 2 | σ 4 |
+|---|---|---|---|---|---|
+| 20 % | ∞ | 0.81 % | 0.80 % | 0.80 % | **0.64 %** |
+| 20 % | 40 | 1.69 % | 2.12 % | 2.01 % | **1.03 %** |
+| 20 % | 20 | 4.63 % | 4.84 % | 3.47 % | **1.71 %** |
+| 40 % | ∞ | 1.75 % | 1.77 % | 1.57 % | **1.32 %** |
+| 40 % | 40 | 2.75 % | 2.92 % | 2.40 % | **1.61 %** |
+| 40 % | 20 | 4.92 % | 4.94 % | 3.58 % | **2.33 %** |
+| 80 % | ∞ | 3.65 % | 3.64 % | 3.02 % | **2.88 %** |
+| 80 % | 40 | 4.22 % | 4.20 % | 3.50 % | **3.18 %** |
+| 80 % | 20 | 5.46 % | 5.28 % | 4.33 % | 4.34 % |
+
+Trial by trial against the linear split on the *same* seed, field and noise —
+the comparison worth making, since a seed that lies badly for the basis is hard
+for every kernel:
+
+| protocol | window | median ratio | better in |
+|---|---|---|---|
+| 30 iterations | σ 1 | 1.003 | 213/450 (47 %) |
+| | σ 2 | 0.942 | 320/450 (71 %) |
+| | σ 4 | 0.919 | 289/450 (64 %) |
+| shipped | σ 1 | 1.014 | 180/450 (40 %) |
+| | σ 2 | 0.822 | 356/450 (79 %) |
+| | σ 4 | **0.664** | **425/450 (94 %)** |
+
+Four things to read off that.
+
+**The gain tracks noise, not amplitude.** At 20 % planted and no noise every
+kernel scores 1.03 %; add noise to SNR 20 and the linear split degrades to
+3.43 % while σ 4 holds 1.91 %. That is the behaviour a kernel density estimate
+should have — it is a variance reduction on the counts — and it is invisible to
+`tests/parzen.py`, whose single field is noiseless. It is the reason this sweep
+was worth running rather than reading the analytic tables.
+
+**σ 1 is not worth having.** It loses to N3's own split more often than it wins
+under both protocols. The linear split is already a triangle of standard
+deviation 0.41 bins, so a Gaussian of 1 bin is barely wider — and it is wider in
+the wrong way, since the extra blur is spent before the variance reduction
+arrives.
+
+**The window's benefit grows with the iteration count, and that is the largest
+effect here.** Under N3's histogram, going from 30 to 50 iterations makes the
+noisy cells *worse* — 20 % at SNR 20 goes 3.43 % → 4.63 % — because the
+alternating iteration keeps feeding a ragged histogram's noise back into the
+mapping. Under σ 4 the same cells keep improving (1.91 % → 1.71 %). So the
+comparison at 30 iterations understates it, which is why `windows.png` draws
+both protocols; the shipped protocol is where the window is worth 94 % of
+trials.
+
+**A wide window can still cost.** At 80 % planted and 30 iterations σ 4 is the
+worst kernel in two of three cells (6.81 % against the linear split's 5.83 % at
+SNR 20). A field that large moves the histogram range enough that the added
+blur — 4 bins, wider than the σ = 0.064 log units `--fwhm 0.15` tells the
+deconvolution to remove — costs more than the smoothing buys. Under the shipped
+protocol that reverses. **σ 2 is the width that never loses badly** at either
+protocol, and the one to reach for without measuring first.
+
+Iteration counts say nothing here: essentially every trial in both protocols
+runs to its cap (median 50 of 50 under the shipped `-stop`), for every kernel.
+The window changes what the iteration converges *to*, not where it stops. And
+it is close to free: 1.21 s against 1.19 s per estimate at 50 iterations, about
+1 %.
+
+Caveats, both structural. This is 75 mm knots at `--lambda 1e-7`, which the
+top-level README's tables show is *under-regularized* for that spacing — and
+they also show the window substituting for regularization, so some of this gain
+is a penalty that was set too low. And the planted fields are sums of three
+low-order cosines, smoother than a real coil profile.
 
 ## The four solvers, over 450 trials
 
@@ -502,8 +611,8 @@ GPU is 8.8× faster than legacy.
 
 | file | what |
 |---|---|
-| `recovery.csv` | 7,200 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling |
-| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
+| `recovery.csv` | 9,900 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 2,700 more `n3` at `--solver normal` for the three Gaussian Parzen windows (3 × 2 protocols × 450), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling. Everything but those 2,700 ran under N3's own histogram, which is what an empty `parzen_sigma` means |
+| `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
 

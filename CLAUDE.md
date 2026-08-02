@@ -102,6 +102,14 @@ at the shipped defaults, nothing at 200 mm once `--lambda` is tuned for the spac
 about `sigma 2` it adds more blur than `--fwhm` tells the deconvolution to remove, which shows
 up as harm in the well-regularized cells.
 
+That measurement is **noiseless**, and `experiments/` (450 random fields per window on colin27,
+`--parzen-sigma`, `experiments/README.md` "The histogram kernel", `results/windows.png`) says
+the window's real gain is against *noise*, not against field amplitude: at 20% planted and
+SNR 20 under the shipped protocol, 4.63% left by N3's split against `sigma 4`'s 1.71%, and
+`sigma 4` better on 94% of trials. It also grows with the iteration count — under N3's own
+histogram more iterations make a noisy cell worse. Don't quote the analytic tables as if they
+covered a real volume.
+
 ### Field smoothing — `legacy/N3/src/Splines/TBSpline.cc`
 
 Tensor product of **cubic B-splines** with uniform knot spacing `distance`, fit by normal

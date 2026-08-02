@@ -46,9 +46,10 @@ FLOOR = {"unexplained_brain_pct": "floor_brain_pct",
 
 def main(argv=None):
     args = _parse(argv)
-    rows = _read(args.path)
+    rows = _select(_read(args.path), args.where)
     if not rows:
-        print("no rows in %s" % args.path)
+        print("no rows in %s" % args.path
+              + (" matching %s" % " ".join(args.where) if args.where else ""))
         return 1
 
     groups = _group(rows, args.group)
@@ -62,6 +63,23 @@ def main(argv=None):
 def _read(path):
     with open(path, newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def _select(rows, constraints):
+    """Rows matching every ``column=value``, compared as written.
+
+    One file now holds several experiments -- four solvers, three devices,
+    three estimators, two histogram kernels -- and a group that pools two of
+    them answers no question at all.  ``--group`` can separate them, but only
+    by printing every combination; this drops the ones that are not being
+    asked about.  Values compare as text, as ``recovery.py`` wrote them, and
+    an empty value is a value: ``--where parzen_sigma=`` selects N3's own
+    linear split.
+    """
+    for constraint in constraints or ():
+        column, _, value = constraint.partition("=")
+        rows = [row for row in rows if row.get(column, "") == value]
+    return rows
 
 
 def _group(rows, columns):
@@ -175,6 +193,12 @@ def _parse(argv):
         description="Mean, median, IQR and run time per configuration.")
     parser.add_argument("path", nargs="?", default=RESULTS,
                         help="the CSV to read (default: %(default)s)")
+    parser.add_argument("--where", nargs="+", metavar="COLUMN=VALUE",
+                        help="keep only rows whose COLUMN is exactly VALUE, "
+                             "as written in the file; repeatable.  'x=' keeps "
+                             "the rows whose x is empty -- which is how you "
+                             "ask for N3's own histogram (parzen_sigma=) or "
+                             "for a method that takes no penalty")
     parser.add_argument("--group", nargs="+", default=GROUP,
                         help="columns that define a group (default: %s)"
                              % " ".join(GROUP))

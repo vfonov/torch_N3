@@ -877,6 +877,37 @@ at `sigma 4`, and correspondingly away from `brain_nu_ref.mnc` (3.0e-3 → 4.9e-
 reference, so anything that changes N3 moves away from it — which is why the
 planted-field sweep is where the question gets answered.
 
+#### And with noise, over 450 random fields per window
+
+Everything above is one analytic field on one volume with **no noise**, which
+turns out to be the case the window does least for. `experiments/` plants
+*random* fields on colin27 and adds Gaussian noise at a stated SNR; the same
+comparison there, 50 seeds × 3 amplitudes × 3 SNRs per window at 75 mm knots,
+`--solver normal`, says something the noiseless tables cannot:
+
+| | linear (N3) | σ 1 | σ 2 | σ 4 |
+|---|---|---|---|---|
+| 20 % planted, SNR ∞ | 0.81 % | 0.80 % | 0.80 % | **0.64 %** |
+| 20 % planted, SNR 20 | 4.63 % | 4.84 % | 3.47 % | **1.71 %** |
+| 80 % planted, SNR 20 | 5.46 % | 5.28 % | **4.33 %** | 4.34 % |
+| better than N3, per trial | — | 40 % | 79 % | **94 %** |
+
+(median unexplained non-uniformity over the brain, shipped protocol; the last
+row is the paired per-trial comparison over all 450)
+
+**The gain tracks noise, not field amplitude** — which is what a kernel density
+estimate should do, and is invisible to a noiseless test. It also *grows with
+the iteration count*: under N3's own histogram, 30 → 50 iterations makes the
+noisy cells worse (3.43 % → 4.63 % at 20 %/SNR 20), because the alternating
+iteration keeps feeding the ragged histogram's noise back into the mapping;
+under σ 4 the same cells keep improving. Cost is about 1 % of run time.
+
+Full tables, the per-cell win rates, `windows.png`, and the two caveats that go
+with them are in [experiments/README.md](experiments/README.md), "The histogram
+kernel". Short version: **σ 2 is the width that never loses badly**; σ 4 is
+better still under the shipped protocol but is the worst kernel of the four at
+80 % planted with only 30 iterations; σ 1 is not worth having.
+
 ## Requirements
 
 Python 3.12, `torch`, `numpy`, `cffi` and `minc2_simple`.

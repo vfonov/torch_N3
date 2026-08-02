@@ -94,9 +94,12 @@ PROTOCOLS = {
 #: of the same arithmetic and do not agree past three digits (CLAUDE.md), so
 #: a row from one is not a row from the other.  Only ``device`` kept those
 #: apart before, and only because the legacy backend happens to be CPU-only.
+#: ``parzen_sigma`` is here for the same reason again, and is the one key
+#: column whose *empty* value is a setting rather than a blank: it means N3's
+#: own linear split, which is what every row written before it existed ran.
 KEY = ("seed", "amplitude", "snr", "method", "backend", "solver", "protocol",
        "distance", "lam", "penalty", "sample_size", "max_iterations",
-       "shrink", "device")
+       "parzen_sigma", "shrink", "device")
 
 #: How the field is estimated.  ``n3`` is ``pipeline.nu_estimate``, the
 #: shipped alternating iteration; ``hoyer`` and ``tightness`` are
@@ -145,6 +148,12 @@ SNRS = [math.inf, 40.0, 20.0]
 DISTANCES = [75.0]
 LAMBDAS = [DEFAULTS["lam"]]
 
+#: Histogram kernels swept by default: N3's own linear split alone.  The
+#: Gaussian Parzen window (``--parzen-sigma``, in bin widths) is an alternation
+#: to the algorithm rather than part of it, and ``tests/parzen.py`` measures it
+#: on one analytic field; this is where it gets a distribution instead.
+WINDOWS = [None]
+
 
 def main(argv=None):
     args = _parse(argv)
@@ -154,7 +163,9 @@ def main(argv=None):
     solvers = args.solver or list(DIRECT_SOLVERS)
     protocols = args.protocol or list(PROTOCOLS)
 
-    trials = (sum(len(_protocols(method, protocols)) for method in methods)
+    trials = (sum(len(_protocols(method, protocols))
+                  * len(_windows(method, args.parzen_sigma))
+                  for method in methods)
               * len(solvers) * len(args.distance)
               * len(args.lam) * len(seeds) * len(args.amplitude)
               * len(args.snr))
@@ -179,16 +190,19 @@ def main(argv=None):
         for method in methods:
             for solver in solvers:
                 for protocol in _protocols(method, protocols):
-                    for distance in args.distance:
-                        for lam in args.lam:
-                            cell = dict(stamp, method=method, solver=solver,
-                                        protocol=protocol, distance=distance,
-                                        lam=lam,
-                                        penalty=_weight(method, args.penalty),
-                                        **_budget(method, args))
-                            written += _sweep(write, done, volume, mask,
-                                              regions, _settings(cell, args),
-                                              cell, seeds, args)
+                    for sigma in _windows(method, args.parzen_sigma):
+                        for distance in args.distance:
+                            for lam in args.lam:
+                                cell = dict(stamp, method=method, solver=solver,
+                                            protocol=protocol, distance=distance,
+                                            lam=lam,
+                                            parzen_sigma=_window(method, sigma),
+                                            penalty=_weight(method, args.penalty),
+                                            **_budget(method, args))
+                                written += _sweep(write, done, volume, mask,
+                                                  regions,
+                                                  _settings(cell, args),
+                                                  cell, seeds, args)
     print("\n%d rows written to %s" % (written, args.out))
     return 0
 
@@ -218,6 +232,32 @@ def _protocols(method, protocols):
     both protocols for N3 without duplicating the ceiling.
     """
     return protocols if method == "n3" else protocols[:1]
+
+
+def _windows(method, windows):
+    """The histogram kernels worth running for one method.
+
+    ``--parzen-sigma`` is a parameter of N3's histogram, and only ``n3`` has
+    one: the descent methods build their own soft histogram
+    (``blocks/sharpness.py``) and the oracle reads no intensities at all.  So
+    sweeping it over them would multiply the work and write the same trial
+    several times under different labels -- the same reason :func:`_protocols`
+    exists.
+    """
+    return windows if method == "n3" else windows[:1]
+
+
+def _window(method, sigma):
+    """The window a cell runs at, resolved so the key records it.
+
+    Empty both for the methods that have no such parameter and for N3's own
+    linear split, which is the absence of a Gaussian window rather than a
+    width of zero -- and is what every row written before this column existed
+    ran under.
+    """
+    if method != "n3" or sigma is None:
+        return ""
+    return float(sigma)
 
 
 def _weight(method, requested):
@@ -258,8 +298,10 @@ def _settings(cell, args):
     if cell["method"] == ORACLE:
         return dict(lam=cell["lam"], **common)
     if cell["method"] == "n3":
+        # "" is the linear split; `nu_estimate` spells that `parzen_sigma=None`.
         return dict(PROTOCOLS[cell["protocol"]], lam=cell["lam"],
-                    backend=args.backend, **common)
+                    backend=args.backend,
+                    parzen_sigma=cell["parzen_sigma"] or None, **common)
     return dict(objective=cell["method"], penalty=cell["penalty"],
                 sample_size=cell["sample_size"],
                 max_iterations=cell["max_iterations"], **common)
@@ -489,6 +531,10 @@ def _completed(path):
 #: What a key column means when an older file does not carry it.
 #: ``n3`` rows carry no penalty at all -- it is not one of its parameters --
 #: so an empty string is the value, not a missing one.
+#: ``parzen_sigma`` is deliberately absent: its default *is* the empty string,
+#: which ``_completed`` already falls back to, and leaving it out means
+#: ``experiments.summarize`` labels those rows ``-`` rather than with a blank
+#: where N3's own histogram should be named.
 KEY_DEFAULTS = {"method": "n3", "penalty": "", "sample_size": "",
                 "max_iterations": "", "backend": "torch"}
 
@@ -515,9 +561,10 @@ def _label(cell):
                 % (cell["solver"], cell["distance"], cell["lam"]))
     if cell["method"] == "n3":
         return ("--method n3 --backend %s --solver %s --protocol %s "
-                "--distance %g --lambda %g"
+                "--distance %g --lambda %g --parzen-sigma %s"
                 % (cell["backend"], cell["solver"], cell["protocol"],
-                   cell["distance"], cell["lam"]))
+                   cell["distance"], cell["lam"],
+                   cell["parzen_sigma"] or "none"))
     return ("--method %s --solver %s --distance %g --penalty %g"
             % (cell["method"], cell["solver"], cell["distance"],
                cell["penalty"]))
@@ -543,6 +590,18 @@ def _commit():
             stderr=subprocess.DEVNULL).decode().strip()
     except (OSError, subprocess.CalledProcessError):
         return ""
+
+
+def _kernel(value):
+    """``--parzen-sigma`` takes a width or the word for not having one."""
+    if value.lower() in ("none", "linear"):
+        return None
+    width = float(value)
+    if not width > 0:
+        raise argparse.ArgumentTypeError(
+            "a window width is positive; 'none' is how you ask for N3's "
+            "linear split")
+    return width
 
 
 def _parse(argv):
@@ -602,6 +661,12 @@ def _parse(argv):
                              % ", ".join(DIRECT_SOLVERS))
     parser.add_argument("--protocol", nargs="+", choices=sorted(PROTOCOLS),
                         help="iteration protocols to sweep (default: both)")
+    parser.add_argument("--parzen-sigma", nargs="+", type=_kernel,
+                        default=list(WINDOWS),
+                        help="histogram kernels to sweep, as Gaussian window "
+                             "widths in bin widths; 'none' is N3's own linear "
+                             "split (default: none).  Applies to --method n3 "
+                             "alone")
 
     parser.add_argument("--shrink", type=int, default=DEFAULTS["shrink"],
                         help="estimation-grid subsampling (default: "

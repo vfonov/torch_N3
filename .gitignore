@@ -10,6 +10,10 @@ __pycache__
 /legacy/
 /minc2-simple/
 
+# The colin27 download experiments/ unpacks into experiments/data/, which is
+# not checked in either
+/mni_colin27_1998_minc2.zip
+
 # Build products of torch_n3/_legacy/build_legacy.py
 /torch_n3/_legacy/build/
 *.o
