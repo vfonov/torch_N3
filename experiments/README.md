@@ -377,6 +377,7 @@ trials where two backends disagree by 18 %.
 | `results/recovery.png` | the headline: `n3`, `hoyer` and the `oracle` ceiling over all nine cells, head and brain, with the uncorrected level as a dashed line |
 | `results/runtime.png` | wall time per estimate, every configuration in the file |
 | `results/implementation.png` | the three comparisons that should come out flat — solver, backend/device, and the solver's effect on the ceiling |
+| `results/solvers.png` | the solvers asked properly: per-trial difference from `normal` (six decades, log) beside seconds (a factor of 3.8, linear) |
 
 Two conventions worth knowing before reading them. **Densities are estimated
 in log space** wherever the axis is logarithmic: a KDE fitted in linear space
@@ -386,6 +387,72 @@ to their own data**, deliberately — those differences are parts in a hundred,
 and on the decade axis the other figures use they would be one flat line,
 which is a picture of the axis rather than of the measurement. Read the spread
 *within* each violin against the gap *between* them.
+
+## The four solvers, over 450 trials
+
+`--solver` picks how the B-spline normal equations are solved. All four are
+swept at both protocols, on the same trials and the same GPU.
+
+**On accuracy there is nothing to choose between them.** The four score
+distributions lie on top of each other, so the question has to be asked
+*within* a trial:
+
+| against `normal` (brain, `fixed30`) | median | 90th | max | >1 % |
+|---|---|---|---|---|
+| `qr` | 2.0e-5 | 9.5e-5 | 3.0e-2 | 2 of 450 |
+| `dr` | 2.0e-5 | 9.5e-5 | 2.9e-2 | 2 of 450 |
+| `blocked` | 2.1e-5 | 9.2e-5 | 3.7e-2 | 2 of 450 |
+
+That is the same size and the same shape as the backend and device
+perturbations below, and it has the same cause: both trials with a >1 % spread
+are at **20 % planted, SNR 20**, the histogram knife-edge cell. Nor is any
+solver systematically better — against `normal` each wins 215–219 of 450
+(about half of the 431 non-ties), which is what a coin does.
+
+**But they are not four independent implementations, and the data shows the
+split.** How often two solvers agree to every digit written:
+
+| pair | `fixed30` | `default` |
+|---|---|---|
+| `qr` vs `dr` | 88 % | 68 % |
+| `qr` vs `blocked` | 69 % | 44 % |
+| `dr` vs `blocked` | 70 % | 43 % |
+| any of those vs `normal` | **4 %** | **4–5 %** |
+
+`qr`, `dr` and `blocked` all factorize the *same* stacked system
+`[A; sqrt(lambda N) D]` — CLAUDE.md's point that `dr` is `qr` at its anchor
+weight, and `blocked` is `qr` a band at a time. `normal` forms `AtA` and
+squares the condition number. So the honest grouping is `{normal}` against
+`{qr, dr, blocked}`, and the 4 % figure is the price of the squaring showing
+up in the last digits.
+
+**On cost the difference is real**, and it is the only difference that is:
+
+| solver | seconds (`fixed30`) | per iteration | vs `normal` |
+|---|---|---|---|
+| `normal` | **0.69** | 22.9 ms | — |
+| `blocked` | 1.74 | 57.8 ms | 2.5× |
+| `qr` | 2.58 | 85.8 ms | 3.7× |
+| `dr` | 2.62 | 87.3 ms | 3.8× |
+
+At the shipped 75 mm spacing `blocked` has one band and is `qr` plus a sort,
+and `dr` buys nothing until a second `lambda` is asked for — both as CLAUDE.md
+predicts. So on this experiment the ranking is exactly the ranking of work
+done, and `normal`'s 3.8× advantage over `dr` costs nothing measurable in
+accuracy.
+
+**What this does not measure.** CLAUDE.md's case for `qr` is *cross-platform
+reproducibility* — the fitted field moving 3.0e-13 between CPU and GPU instead
+of 2.5e-9. Only `normal` was run on the CPU here, so that claim is untouched
+by these 3,600 trials: this says the solvers agree with each other on one
+device, not that they would drift equally across two. `python3 -m
+tests.convergence --solver qr` is what tests that.
+
+One more null result, weaker than it looks: under `default` **no trial stopped
+at a different iteration** under a different solver. But 439 of 450 ran to the
+50-iteration cap, so only 11 trials had a stopping decision to make. Read it
+as "the stopping rule did not amplify the solver difference on the 11 trials
+that exercised it", not as a general statement.
 
 ## The two backends, over 450 trials
 
@@ -429,7 +496,7 @@ GPU is 8.8× faster than legacy.
 | file | what |
 |---|---|
 | `recovery.csv` | 7,200 trials: 3,600 `n3` on the GPU (4 solvers × 2 protocols × 50 seeds × 3 amplitudes × 3 SNRs), 900 `hoyer` (450 at `--penalty 1e-3 --max-iterations 400` plus the budget sweep), 900 on the CPU — 450 `torch` and 450 `legacy` — for the backend comparison above, and 1,800 `oracle` (4 solvers × 450) for the ceiling |
-| `recovery.png`, `runtime.png`, `implementation.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
+| `recovery.png`, `runtime.png`, `implementation.png`, `solvers.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run that is hours long, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, kept as the only CPU sample. Written before `method`/`penalty` existed, so it is in the older column set — `summarize` reads it, `recovery` will refuse to append to it |
 

@@ -61,7 +61,8 @@ def main(argv=None):
     print("%d rows in %s" % (len(rows), args.path))
 
     for name, draw in (("recovery", _recovery), ("runtime", _runtime),
-                       ("implementation", _implementation)):
+                       ("implementation", _implementation),
+                       ("solvers", _solvers)):
         if args.figure not in ("all", name):
             continue
         figure = draw(rows)
@@ -269,6 +270,84 @@ def _implementation(rows):
 
 
 # --------------------------------------------------------------------------
+# The four spline solvers: what they agree on and what they cost.
+# --------------------------------------------------------------------------
+
+#: The order the solvers are drawn in: the normal equations first, then the
+#: three that factorize the stacked system ``[A; sqrt(lambda N) D]``.  That
+#: split is the finding -- the three stacked solvers agree with each other far
+#: more closely than any of them agrees with ``normal``, because they are the
+#: same arithmetic and ``normal`` squares the condition number to form ``AtA``.
+SOLVERS = ("normal", "qr", "dr", "blocked")
+
+
+def _solvers(rows):
+    """Does the solver change the answer, and what does it cost?
+
+    Left: the per-trial relative difference from ``normal``, which is the only
+    honest way to ask -- the four distributions of the score itself lie on top
+    of one another (``implementation.png``), so the difference has to be taken
+    *within* a trial before there is anything to see.  Right: seconds.
+
+    The point of putting them side by side is that they are on wildly
+    different scales: the accuracy panel spans 1e-7 to 1e-1 and is centred at
+    2e-5, the cost panel is a factor of 3.8 top to bottom.
+    """
+    figure, axes = pyplot.subplots(1, 2, figsize=(12, 5))
+    protocol = "fixed30"
+
+    keyed = {solver: {_trial_key(row): row
+                      for row in _select(rows, method="n3", solver=solver,
+                                         protocol=protocol, backend="torch",
+                                         device="cuda")}
+             for solver in SOLVERS}
+    shared = sorted(set.intersection(*(set(rows) for rows in keyed.values())))
+
+    drawn = []
+    for index, solver in enumerate(SOLVERS[1:]):
+        difference = numpy.array(
+            [_relative(float(keyed[solver][key]["unexplained_brain_pct"]),
+                       float(keyed["normal"][key]["unexplained_brain_pct"]))
+             for key in shared])
+        _violin(axes[0], difference, index, COLOUR["n3"], width=0.6,
+                drawn=drawn)
+    axes[0].set_xticks(range(len(SOLVERS) - 1))
+    axes[0].set_xticklabels(SOLVERS[1:])
+    axes[0].set_xlabel("compared against `normal`, per trial")
+    axes[0].set_ylabel("relative difference in the score (brain)")
+    axes[0].set_title("Accuracy: %d matched trials each" % len(shared),
+                      fontsize=11)
+    _log_axis(axes[0], drawn)
+
+    drawn = []
+    for index, solver in enumerate(SOLVERS):
+        _violin(axes[1], numpy.array([float(keyed[solver][key]["seconds"])
+                                      for key in shared]),
+                index, COLOUR["n3"], width=0.6, log=False, drawn=drawn)
+    axes[1].set_xticks(range(len(SOLVERS)))
+    axes[1].set_xticklabels(SOLVERS)
+    axes[1].set_xlabel("spline solver")
+    axes[1].set_ylabel("seconds per estimate")
+    axes[1].set_title("Cost: same trials, same GPU", fontsize=11)
+    _linear_axis(axes[1], drawn)
+
+    figure.suptitle("N3's four spline solvers -- 30 iterations, colin27, "
+                    "75 mm knots", fontsize=13)
+    figure.tight_layout()
+    return figure
+
+
+def _trial_key(row):
+    return (row["seed"], row["amplitude"], row["snr"])
+
+
+def _relative(one, other):
+    """Difference relative to the larger, so it is symmetric and bounded."""
+    largest = max(abs(one), abs(other))
+    return abs(one - other) / largest if largest else 0.0
+
+
+# --------------------------------------------------------------------------
 # Drawing.
 # --------------------------------------------------------------------------
 
@@ -363,10 +442,20 @@ def _grid(axis):
 
 
 def _tick(value):
-    """A tick label without an exponent, at whatever precision it needs."""
+    """A tick label: decimal where that is short, an exponent where it is not.
+
+    ``0.000001`` is nine characters of mostly zeros and hard to tell from
+    ``0.00001`` at a glance, which is the whole difficulty on the solver
+    figure's six-decade axis.  Below a thousandth the labels switch to ``1e-6``
+    -- the ticks are always 1, 2 or 5 times a power of ten, so the mantissa is
+    a single digit and the label stays short.
+    """
     if value >= 1:
         return "%g" % value
-    return "%.*f" % (int(numpy.ceil(-numpy.log10(value))), value)
+    if value >= 1e-3:
+        return "%.*f" % (int(numpy.ceil(-numpy.log10(value))), value)
+    power = int(numpy.floor(numpy.log10(value) + 1e-9))
+    return "%de%d" % (round(value / 10.0 ** power), power)
 
 
 def _parse(argv):
@@ -379,7 +468,7 @@ def _parse(argv):
                         help="directory for the PNGs (default: %(default)s)")
     parser.add_argument("--figure", default="all",
                         choices=("all", "recovery", "runtime",
-                                 "implementation"),
+                                 "implementation", "solvers"),
                         help="which figure to draw (default: all)")
     parser.add_argument("--dpi", type=int, default=150)
     return parser.parse_args(argv)
