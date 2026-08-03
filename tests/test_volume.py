@@ -18,10 +18,10 @@ def test_load_puts_the_volume_in_standard_order(chunk):
 def test_save_then_load_round_trips(tmp_path, chunk):
     """``float64`` storage has to be the identity, not merely close.
 
-    Asserted as bit equality because something now depends on it:
-    ``tests/data/brain_nu_ref_legacy.mnc`` is stored this way precisely so
-    that the reference records what the pipeline computed, and a round trip
-    that lost even a few bits would put an error into every comparison in
+    Asserted as bit equality because something depends on it:
+    ``tests/data/brain_nu_ref_legacy.mnc`` is stored this way so the reference
+    records what the pipeline computed, and a round trip that lost even a few
+    bits would introduce an error into every comparison in
     ``test_reproducibility.py``.
     """
     save_volume(str(tmp_path / "copy.mnc"), chunk, store_dtype="float64")
@@ -86,10 +86,9 @@ def test_resample_like_fills_outside_with_zero():
 def test_gzipped_minc1_input_is_readable():
     """`load_volume` converts MINC1 and gzip on the fly; minc2_simple reads neither.
 
-    The volumes this suite uses were converted once into ``tests/data/`` so
-    that nothing has to, but the conversion path is a feature of the library
-    and this is what still exercises it -- on a file the tests do not
-    otherwise need.
+    The volumes this suite uses were converted once into ``tests/data/``, but
+    the conversion path is a feature of the library, and this exercises it on a
+    file the tests do not otherwise need.
     """
     volume = load_volume(original_data("block.mnc.gz"))
 

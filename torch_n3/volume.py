@@ -1,15 +1,14 @@
 """MINC volumes as plain arrays plus the geometry N3 needs.
 
-N3 only ever asks three things of a volume: the voxel values, the voxel size
-along each axis, and where the grid sits in world space.  :class:`Volume`
-carries exactly that, in *standard order* -- a C-ordered ``torch`` tensor
-whose axes run slowest to fastest with positive steps -- so that the rest of
-the package can be written as ordinary tensor code.  The geometry stays in
-``numpy``: it is three numbers per axis and it describes the grid rather than
-travelling with it to a device.
+N3 requires three things of a volume: the voxel values, the voxel size along
+each axis, and where the grid sits in world space.  :class:`Volume` carries
+exactly that, in *standard order* -- a C-ordered ``torch`` tensor whose axes run
+slowest to fastest with positive steps -- so the rest of the package is written
+as ordinary tensor code.  The geometry stays in ``numpy``: it is three numbers
+per axis and describes the grid rather than travelling with it to a device.
 
-Note that ``minc2_simple`` reads MINC2 (HDF5) files only, while much older MINC
-data -- including ``legacy/N3/testing`` -- is MINC1, optionally gzipped.
+``minc2_simple`` reads MINC2 (HDF5) files only, while older MINC data --
+including ``legacy/N3/testing`` -- is MINC1, optionally gzipped.
 :func:`load_volume` converts those on the fly with ``mincconvert``.
 """
 
@@ -55,10 +54,9 @@ class Volume:
     def resample_like(self, grid):
         """Sample this volume on ``grid``, as ``mincresample -nearest_neighbour``.
 
-        Both grids are axis-aligned and share a world space, so "nearest
-        neighbour" is one rounded index per axis.  Points of ``grid`` that
-        fall outside this volume become zero, which is ``mincresample``'s
-        default fill value.
+        Both grids are axis-aligned and share a world space, so nearest
+        neighbour is one rounded index per axis.  Points of ``grid`` falling
+        outside this volume become zero, ``mincresample``'s default fill value.
         """
         device = self.data.device
         picks, inside = [], []
@@ -119,9 +117,9 @@ def save_volume(path, volume, like=None, store_dtype=None):
     """Write ``volume`` to ``path``.
 
     ``like`` is a MINC file whose header (dimension names, storage type,
-    metadata) the output should copy -- the equivalent of ``mincmath``'s
-    ``-copy_header``, which is what the legacy drivers rely on to keep the
-    output looking like the input.
+    metadata) the output copies: the equivalent of ``mincmath``'s
+    ``-copy_header``, which the legacy drivers use to keep the output's header
+    matching the input's.
     """
     data = np.ascontiguousarray(volume.data.detach().cpu().numpy(),
                                 dtype=np.float64)
@@ -151,8 +149,8 @@ def _set_range_for_integer_storage(handle, data):
     """Give integer-typed output the full dynamic range of the data.
 
     MINC stores integers together with a real range and rescales on read.
-    Without this the values would be clipped to whatever range the template
-    happened to carry -- the same bookkeeping ``mincmath`` does for its output.
+    Without this the values would be clipped to the range the template carries.
+    ``mincmath`` performs the same bookkeeping for its own output.
     """
     if handle.store_dtype() not in ("float32", "float64"):
         handle.set_volume_range(float(data.min()), float(data.max()))

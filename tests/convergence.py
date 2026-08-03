@@ -2,18 +2,18 @@
 
     python3 -m tests.convergence
 
-Not a test.  Nothing here asserts; it measures and prints a table intended for
-comparison against the same table from another machine.  ``tests/margins.py``
-measures every bound in the suite; this module measures the one quantity that
-is a property of the platform rather than of the code.
+Not a test.  Nothing here asserts; it measures and prints a table for comparison
+against the same table from another machine.  ``tests/margins.py`` measures every
+bound in the suite; this module measures the one quantity that is a property of
+the platform rather than of the code.
 
-**Purpose.**  The spline fit solves normal equations conditioned around
-``1e13`` by calling LAPACK's ``dsysv``.  Different LAPACK implementations
-answer that differently, none of them incorrectly, and the difference is far
-below any bound at block level.  The *pipeline* behaves otherwise: N3's
-histogram range is taken from the data and then rounded to the six decimals its
-text interchange prints, so a voxel on a bin boundary can fall either side of
-it.  Once the loop's output is fed back in, that becomes a step change.
+**Purpose.**  The spline fit solves normal equations conditioned around ``1e13``
+by calling LAPACK's ``dsysv``.  Different LAPACK implementations answer that
+differently, none of them incorrectly, and the difference is far below any bound
+at block level.  The *pipeline* behaves otherwise: N3's histogram range is taken
+from the data and then rounded to the six decimals its text interchange prints,
+so a voxel on a bin boundary can fall either side of it.  Once the loop's output
+is fed back in, that becomes a step change.
 
 End-to-end agreement between two implementations therefore does not decay.  It
 holds constant and is then lost entirely, at an iteration count that depends on
@@ -24,13 +24,13 @@ which LAPACK was linked.  Measured on ``brain.mnc`` here, ``legacy`` against
     EBTKS clapack   5.49e-08  5.55e-08  5.65e-08  5.73e-08  5.82e-08  8.37e-04
     system LAPACK   5.52e-08  1.17e-03  2.12e-03  1.69e-03  5.40e-04  5.07e-04
 
-That is what this module measures: the **divergence threshold**, the iteration
-count at which two implementations cease to agree, moved from the sixth
-iteration to the second because a fitted field moved by ``3.1e-11``.  The same
-behaviour appears between a CPU and a GPU running identical code, with the
-threshold at the third.
+This module measures the **divergence threshold**: the iteration count at which
+two implementations cease to agree.  Above, it moved from the sixth iteration to
+the second because a fitted field moved by ``3.1e-11``.  The same behaviour
+appears between a CPU and a GPU running identical code, with the threshold at
+the third.
 
-**The solver moves it too.**  ``--solver qr`` fits the spline through the
+**The solver moves it as well.**  ``--solver qr`` fits the spline through the
 stacked least-squares system rather than the normal equations, which are
 conditioned around ``1e13`` at the shipped knot spacing; the same fit comes out
 of a system conditioned around ``1e6``.  Measured here on ``brain.mnc``, with
@@ -41,26 +41,25 @@ the system LAPACK in the shim:
     legacy vs torch         2         4
 
 and agreement between CPU and GPU before the threshold tightens from
-``6.3e-11`` to ``1.5e-13``.  Note the second row: the QR formulation tracks the
+``6.3e-11`` to ``1.5e-13``.  In the second row, the QR formulation tracks the
 *C++ oracle* for longer than the port's own normal equations do, although the
-oracle solves the normal equations itself.  The more accurate solve is worth
-more here than matching the other implementation's formulation.  Neither row is
-a property of the code alone; re-measure both columns on any new platform.
+oracle solves the normal equations itself: the more accurate solve is worth more
+here than matching the other implementation's formulation.  Neither row is a
+property of the code alone; re-measure both columns on any new platform.
 
-**Reading the output.**  The quantity to report is the divergence threshold:
-the first iteration count at which agreement is lost.  The values before it are
+**Reading the output.**  The quantity to report is the divergence threshold, the
+first iteration count at which agreement is lost.  The values before it are
 informative only in being small, and those after it are not comparable between
-machines, since they record which side of a rounding boundary one voxel fell
-on, which is not a property anything can be held to.
+machines, since they record which side of a rounding boundary one voxel fell on.
 
-``tests/inputs.py::PLATFORM_PROTOCOL`` must remain below the smallest
-divergence threshold on any platform this is expected to run on.  It is
-currently 1.  If this script reports a threshold of 2 anywhere, 1 is the only
-safe count and there is no margin; if every platform reports 6, it could be
-raised.  That is the decision this script exists to inform.
+``tests/inputs.py::PLATFORM_PROTOCOL`` must remain below the smallest divergence
+threshold on any platform this is expected to run on.  It is currently 1.  If
+this script reports a threshold of 2 anywhere, 1 is the only safe count and
+there is no margin; if every platform reports 6, it could be raised.  That is
+the decision this script informs.
 
 See ``README.md`` for how to build against a different LAPACK, and
-``PROBLEMS.md`` §8 for what moved last time one changed.
+``PROBLEMS.md`` §8 for what moved the last time one changed.
 """
 
 import argparse
@@ -143,7 +142,7 @@ def _platform_iterations():
 
 
 def _provenance(solver):
-    """Everything needed to make a reported table reproducible."""
+    """What a reported table needs to be reproducible."""
     lines = ["platform:  %s, python %s, torch %s"
              % (platform.platform(), platform.python_version(),
                 torch.__version__)]
@@ -158,20 +157,19 @@ def _provenance(solver):
 def _linked_libraries():
     """The LAPACK/BLAS the CFFI extension actually resolved against.
 
-    Best effort, and the reason a reported table is worth anything: the
-    library named in the build is not always the one the loader finds.
+    Best effort, and what makes a reported table meaningful: the library named
+    in the build is not always the one the loader finds.
 
-    Only ``N3_LAPACK_LIBS`` overrides give the shim a LAPACK/BLAS dependency
-    of its own -- the default build (see ``build_legacy.py``) links none at
-    all and instead leaves ``dgemm_``/``dsysv_`` undefined, resolved at
-    import time against whatever PyTorch already loaded into the process. So:
-    look for a direct dependency first (an explicit override, e.g. MKL); if
-    there is none, tell the shared-with-PyTorch default apart from an
-    ``N3_LAPACK_LIBS="EBTKS"`` build -- which also shows no dependency here,
-    because it is a static archive -- by whether ``dsysv_`` is *defined* in
-    the shim's own symbol table (statically linked in) or still undefined
-    (left for PyTorch to resolve). Only in the latter case did PyTorch's
-    choice actually run.
+    Only ``N3_LAPACK_LIBS`` overrides give the shim a LAPACK/BLAS dependency of
+    its own.  The default build (see ``build_legacy.py``) links none, leaving
+    ``dgemm_``/``dsysv_`` undefined and resolved at import time against whatever
+    PyTorch already loaded into the process.  So: look for a direct dependency
+    first (an explicit override, e.g. MKL); if there is none, distinguish the
+    shared-with-PyTorch default from an ``N3_LAPACK_LIBS="EBTKS"`` build --
+    which also shows no dependency here, being a static archive -- by whether
+    ``dsysv_`` is *defined* in the shim's own symbol table (statically linked
+    in) or still undefined (left for PyTorch to resolve).  Only in the latter
+    case did PyTorch's choice run.
     """
     from torch_n3._legacy import _n3legacy
 
@@ -204,9 +202,9 @@ def _defines_own_lapack(path):
     """Whether ``dsysv_`` is defined in ``path`` rather than left undefined.
 
     Distinguishes a static LAPACK linked into the shim (e.g.
-    ``N3_LAPACK_LIBS="EBTKS"``) from the shared-with-PyTorch default, which
-    otherwise both look identical to :func:`_linked_libraries`'s first check
-    -- neither has a dynamic dependency to name.
+    ``N3_LAPACK_LIBS="EBTKS"``) from the shared-with-PyTorch default; the two
+    are otherwise identical to :func:`_linked_libraries`'s first check, since
+    neither has a dynamic dependency to name.
     """
     symbol = "_dsysv_" if sys.platform == "darwin" else "dsysv_"
     try:

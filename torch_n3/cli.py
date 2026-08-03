@@ -2,10 +2,10 @@
 
 The options mirror those of ``nu_correct``, so an existing invocation largely
 translates across.  The ``.imp`` mapping file is not implemented:
-:func:`torch_n3.pipeline.nu_estimate` returns the fitted spline as an object,
+:func:`torch_n3.pipeline.nu_estimate` returns the fitted spline as an object
 and ``--field`` writes it as a volume, which is the form usable from Python.
-Writing N3's compact spline format would be required only to return the field
-to the legacy tools.
+N3's compact spline format would be required only to return the field to the
+legacy tools.
 """
 
 import argparse
@@ -18,12 +18,12 @@ from torch_n3.volume import load_volume, save_volume
 
 
 #: Shown after the options.  ``--distance`` and ``--lambda`` jointly set one
-#: quantity, the amount by which the field may bend, and changing either alone
-#: is the most common way of obtaining a worse answer than the defaults give.
+#: quantity, the amount by which the field may bend; changing either alone
+#: commonly gives a worse answer than the defaults.
 SMOOTHNESS_NOTE = """\
 how --distance and --lambda interact:
 
-  They are two halves of one setting.  --distance determines how many
+  These are two halves of one setting.  --distance determines how many
   coefficients describe the field; --lambda determines how much bending is
   permitted between them.  Halving the spacing without raising the penalty
   spends the additional coefficients on tissue contrast, which is returned
@@ -50,7 +50,7 @@ how --distance and --lambda interact:
   Measured on one synthetic field (tests/test_field_recovery.py), which is
   smoother than a real coil profile.  A 40% field gives the same table
   approximately doubled, with the same minima; both are in README.md.  They
-  establish the shape of the trade-off and are not a table to tune from.
+  establish the shape of the trade-off rather than values to tune from.
 """
 
 

@@ -1,17 +1,16 @@
 """Stage 2: :mod:`torch_n3.blocks.spline` against ``TBSplineVolume``.
 
-The B-spline is the block with the most room to be subtly wrong -- knot
-placement, the domain, the bending-energy penalty and the sample weighting all
-have to line up -- so it is checked against the legacy on real data at several
-knot spacings, and separately against things that must be true of any correct
-fit.
+The B-spline has the most scope to be subtly wrong -- knot placement, the
+domain, the bending-energy penalty and the sample weighting all have to agree --
+so it is checked against the legacy on real data at several knot spacings, and
+separately against properties any correct fit must have.
 
-A note on tolerances.  The normal equations N3 solves are close to singular
-(condition number around ``1e13`` at the default 200 mm spacing, where the
-knots are further apart than the volume is wide), so the *coefficients* are
-not determined to anything like full precision by either implementation and
-the two wander apart in the near-null space.  What is well determined, and
-what the pipeline uses, is the fitted field: that is what these compare.
+On tolerances: the normal equations N3 solves are close to singular (condition
+number around ``1e13`` at the default 200 mm spacing, where the knots are
+further apart than the volume is wide), so the *coefficients* are not determined
+to full precision by either implementation and the two diverge in the near-null
+space.  What is well determined, and what the pipeline uses, is the fitted
+field, which is what these tests compare.
 """
 
 import numpy as np
@@ -32,7 +31,7 @@ ROUNDING = 1e-9
 
 
 def unit_grid(shape):
-    """A 1 mm isotropic grid at the origin -- geometry only, no data."""
+    """A 1 mm isotropic grid at the origin: geometry only, no data."""
     return Volume(torch.zeros(shape), start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0))
 
 
@@ -40,10 +39,10 @@ def design_matrix(fitted, inside):
     """``A`` itself, rebuilt from the outside: column ``j`` is the spline of ``e_j``.
 
     The two solvers assemble ``A`` differently -- one folds it straight into
-    ``AtA``, the other writes it out -- so the tests that compare them need a
-    third construction that neither shares.  Evaluating the fitted spline with
-    a single coefficient set to one gives exactly that column, which makes
-    this an independent check of the assembly as well.
+    ``AtA``, the other writes it out -- so tests that compare them need a third
+    construction neither shares.  Evaluating the fitted spline with a single
+    coefficient set to one gives that column, which makes this an independent
+    check of the assembly as well.
     """
     size = int(np.prod(fitted.n))
     unit = torch.zeros(size, dtype=torch.float64)
@@ -84,10 +83,9 @@ def test_fit_matches_the_legacy_spline(chunk, bumpy, distance, subsample,
                                        solver):
     """Every direct solver has to land on the oracle's answer, to one bound.
 
-    The legacy has only the normal equations, so it is built plainly; what is
-    being asked is whether solving the *same* fit a better-conditioned way --
-    and, for ``"blocked"``, a band at a time -- still reproduces the C++.  It
-    does, at every spacing.
+    The legacy has only the normal equations.  The question is whether solving
+    the *same* fit in a better-conditioned way -- and, for ``"blocked"``, a band
+    at a time -- still reproduces the C++.  It does, at every spacing.
     """
     values, inside = bumpy
 
@@ -118,16 +116,16 @@ def test_evaluating_on_a_finer_grid_matches_the_legacy(chunk, bumpy):
 
 @pytest.mark.parametrize("distance", [200.0, 100.0])
 def test_the_direct_solvers_minimise_the_same_objective(chunk, bumpy, distance):
-    """The one property that makes them interchangeable.
+    """The property that makes them interchangeable.
 
     ``[A; sqrt(lambda N) D]`` has the penalised normal equations as its own
-    normal equations, term for term, so all three solvers are answering the
-    same minimisation and none may reach a *higher* value of it than the
-    others.  This is what would catch the penalty being scaled wrongly --
-    ``lambda*N`` where ``sqrt(lambda*N)`` belongs, say -- which no comparison
-    of the fitted fields would, because it stays a perfectly good fit to
-    something else.  The stacked solvers are the more accurate, so they are
-    allowed to win, and at 200 mm they do.
+    normal equations, term for term, so all three solvers answer the same
+    minimisation and none may reach a *higher* value of it than the others.
+    This catches the penalty being scaled wrongly -- ``lambda*N`` where
+    ``sqrt(lambda*N)`` belongs, for instance -- which no comparison of the
+    fitted fields would, since the result remains a good fit to something else.
+    The stacked solvers are the more accurate, so they are allowed to win, and
+    at 200 mm they do.
     """
     values, inside = bumpy
     lam = 1e-7
@@ -154,12 +152,12 @@ def test_the_direct_solvers_minimise_the_same_objective(chunk, bumpy, distance):
 
 @pytest.mark.parametrize("n", [[4, 4, 4], [5, 4, 6]])
 def test_the_bending_energy_factor_squares_back_to_the_tensor(n):
-    """``D`` is only meaningful if ``D'D`` is ``J``: that is the whole contract.
+    """``D`` is meaningful only if ``D'D`` is ``J``, which is its contract.
 
-    ``J`` is singular -- an affine field bends not at all, so four directions
-    of the coefficient space sit in its null space -- which is why ``D`` comes
-    from the eigendecomposition rather than a Cholesky factor.  The clamp that
-    handles those eigenvalues is where a wrong ``D`` would hide.
+    ``J`` is singular -- an affine field does not bend, so four directions of
+    the coefficient space lie in its null space -- which is why ``D`` comes from
+    the eigendecomposition rather than a Cholesky factor.  The clamp handling
+    those eigenvalues is where a wrong ``D`` would hide.
     """
     energy = blocks.spline.bending_energy_tensor(n)
     factor = blocks.spline.bending_energy_factor(n)
@@ -175,13 +173,12 @@ def test_the_stacked_system_is_the_square_root_of_the_normal_equations(
         chunk, bumpy, distance):
     """Why the QR solver exists, as the exact statement rather than a measurement.
 
-    ``AtA + lambda*N*J`` is the Gram matrix of ``[A; sqrt(lambda N) D]``, and
-    a Gram matrix has the square of its factor's condition number.  So the
-    stacked form does not merely happen to be better conditioned here -- it is
-    better conditioned by construction, on any data, and the exponent is what
-    is being checked.  At the shipped 200 mm spacing that turns ``1e13``, where
-    the last digits of a solve belong to the BLAS, into ``1e6``, where they
-    do not.
+    ``AtA + lambda*N*J`` is the Gram matrix of ``[A; sqrt(lambda N) D]``, and a
+    Gram matrix has the square of its factor's condition number.  The stacked
+    form is therefore better conditioned by construction on any data rather than
+    incidentally here, and the exponent is what is checked.  At the shipped
+    200 mm spacing that turns ``1e13``, where the last digits of a solve belong
+    to the BLAS, into ``1e6``, where they do not.
     """
     values, inside = bumpy
     lam = 1e-7
@@ -209,13 +206,13 @@ def test_the_stacked_system_is_the_square_root_of_the_normal_equations(
 def test_the_stacked_fit_is_the_same_on_the_gpu(chunk, bumpy, distance, solver):
     """The reproducibility this solver was added for, stated as a requirement.
 
-    A fit that is determined only to the machine's BLAS is a fit that moves
-    when the device does, and under the normal equations at 200 mm it moves by
-    around ``5e-9`` relative -- above the ``5.5e-8`` at which one histogram
-    count flips and the whole pipeline diverges (see CLAUDE.md).  The bound
-    here is float64 rounding accumulated over the fit, ``sqrt(N) * eps`` with
-    ``N`` around ``1e5``, which is ``1e-13``; ``1e-11`` leaves two decades and
-    is still two orders below where the normal equations sit.
+    A fit determined only to the machine's BLAS moves when the device does, and
+    under the normal equations at 200 mm it moves by around ``5e-9`` relative,
+    above the ``5.5e-8`` at which one histogram count flips and the whole
+    pipeline diverges (see CLAUDE.md).  The bound here is float64 rounding
+    accumulated over the fit, ``sqrt(N) * eps`` with ``N`` around ``1e5``, which
+    is ``1e-13``; ``1e-11`` leaves two decades and is still two orders below
+    where the normal equations sit.
     """
     values, inside = bumpy
 
@@ -233,10 +230,10 @@ def test_the_blocked_solver_reproduces_the_dense_one(chunk, bumpy):
     """The banded sweep is an implementation of ``"qr"``, not an approximation.
 
     Sorting the rows and folding them in a window at a time is the same
-    factorization in a different order, so the two must agree to rounding and
-    not merely to the bound the legacy comparison uses.  Anything looser would
-    mean the windowing had dropped something -- most likely a row of ``R``
-    finalised before it was safe to.
+    factorization in a different order, so the two must agree to rounding rather
+    than merely to the bound the legacy comparison uses.  Anything looser would
+    mean the windowing had dropped something, most likely a row of ``R``
+    finalised prematurely.
     """
     values, inside = bumpy
 
@@ -254,13 +251,12 @@ def test_the_blocked_solver_reproduces_the_dense_one(chunk, bumpy):
 def test_the_sparse_solver_reports_that_it_cannot_converge(chunk, bumpy):
     """What ``"sparse"`` is, asserted rather than left as a footnote.
 
-    It is not held to the other solvers' bound because it does not meet it,
-    and the reason is not a tolerance that could be nudged: LSQR's convergence
-    is governed by the condition number of the stacked system, and it gives up
+    It is not held to the other solvers' bound because it does not meet it, and
+    the cause is not a tolerance that could be adjusted: LSQR's convergence is
+    governed by the condition number of the stacked system, and it terminates
     reporting ``istop=3``, "condition number exceeds ``conlim``".  That is a
-    property of the method against this matrix, so it is what gets asserted --
-    if it ever stops reporting it, something has genuinely improved and this
-    test should be the thing that says so.
+    property of the method against this matrix, so it is what is asserted.  If
+    it stops reporting it, something has improved and this test reports that.
 
     ``istop`` 1 or 2 would mean it had reached ``atol``/``btol``.
     """
@@ -294,11 +290,11 @@ def test_the_dr_solver_reproduces_the_stacked_one_at_its_anchor(chunk, bumpy,
 
     The anchored basis factorises ``[A; sqrt(lambda_0 N) D]`` and writes the
     penalised system as ``R0' (I + (lambda - lambda_0) D~'D~) R0``.  At the
-    anchor that middle factor *is* the identity, so the answer collapses to
-    ``R0^-1 Q0'[f; 0]`` -- exactly what ``"qr"`` back-substitutes.  The two
-    must therefore agree to rounding and not merely to the oracle's bound;
-    anything looser would mean the eigenbasis had lost something it is not
-    allowed to lose.
+    anchor that middle factor is the identity, so the answer collapses to
+    ``R0^-1 Q0'[f; 0]``, which is what ``"qr"`` back-substitutes.  The two must
+    therefore agree to rounding rather than merely to the oracle's bound;
+    anything looser would mean the eigenbasis had lost information it must
+    preserve.
     """
     values, inside = bumpy
 
@@ -317,14 +313,14 @@ def test_the_dr_basis_is_conditioned_like_the_stacked_system(chunk, bumpy,
     """Where the conditioning actually comes from, stated exactly.
 
     ``R0`` is the triangular factor of ``[A; sqrt(lambda_0 N) D]``, so it has
-    that matrix's singular values and therefore its condition number -- not
-    ``A``'s.  The distinction is the whole reason this solver anchors on the
-    stacked matrix: at 50 mm the mask leaves basis functions unsupported and
-    ``A`` alone is rank deficient (``7.5e12``, and singular to working
-    precision), while the stacked matrix stays at ``2.9e5`` because the penalty
-    rows span exactly the directions the data does not.  A Demmler-Reinsch
-    basis built on ``A`` alone inherits the first number and produces negative
-    ``gamma``; this one inherits the second.
+    that matrix's singular values and therefore its condition number rather than
+    ``A``'s.  The distinction is why this solver anchors on the stacked matrix:
+    at 50 mm the mask leaves basis functions unsupported and ``A`` alone is rank
+    deficient (``7.5e12``, singular to working precision), while the stacked
+    matrix stays at ``2.9e5`` because the penalty rows span exactly the
+    directions the data does not.  A Demmler-Reinsch basis built on ``A`` alone
+    inherits the first number and produces negative ``gamma``; this one inherits
+    the second.
     """
     values, inside = bumpy
 
@@ -356,12 +352,12 @@ def test_the_dr_penalty_spectrum_has_the_bending_null_space(chunk, bumpy,
     Demmler-Reinsch basis, and their ``gamma`` are the zeros the diagonal solve
     divides by ``1`` at.
 
-    ``gamma`` must also be non-negative: it is a spectrum of a Gram matrix.
-    Negative entries are the signature of the basis having been built on a
-    singular triangle, which is what happens if the anchor is dropped.
+    ``gamma`` must also be non-negative, being the spectrum of a Gram matrix.
+    Negative entries indicate a basis built on a singular triangle, which is
+    what happens if the anchor is dropped.
 
-    The count is taken at LAPACK's own numerical-rank tolerance, ``k * eps *
-    gamma_max``, and is not a threshold anyone chose: the gap it has to
+    The count is taken at LAPACK's own numerical-rank tolerance,
+    ``k * eps * gamma_max``, rather than at a chosen threshold: the gap it must
     resolve is more than ten decades wide (``1.7e-9`` against ``91`` at 50 mm).
     """
     values, inside = bumpy
@@ -387,19 +383,19 @@ def test_the_dr_basis_diagonalises_the_actual_bending_energy(chunk, bumpy,
                                                              distance):
     """The reparameterization's defining property, with nothing to tune.
 
-    ``gamma`` is not merely *a* spectrum -- it is the bending energy itself,
-    read off in the new basis.  Transforming direction ``i`` back to
-    coefficients gives ``c_i = R0^-1 U e_i``, and
+    ``gamma`` is not merely *a* spectrum: it is the bending energy itself, read
+    off in the new basis.  Transforming direction ``i`` back to coefficients
+    gives ``c_i = R0^-1 U e_i``, and
 
     .. math::  \\gamma_i = c_i^T (N J) c_i,
 
     exactly, because ``U^T \\tilde{D}^T \\tilde{D} U = diag(\\gamma)`` and
-    ``\\tilde{D}^T \\tilde{D} = N R_0^{-T} J R_0^{-1}``.  So this checks the
-    whole chain -- the triangular solve, the eigendecomposition and the
-    anchoring -- against ``J`` as the fit itself penalises it, in one identity
-    that holds in exact arithmetic and needs no threshold.  A wrong ``sqrt(N)``,
-    a transposed solve, or an anchor folded in twice all break it; none of them
-    would be caught by the fits merely agreeing.
+    ``\\tilde{D}^T \\tilde{D} = N R_0^{-T} J R_0^{-1}``.  This checks the whole
+    chain -- the triangular solve, the eigendecomposition and the anchoring --
+    against ``J`` as the fit penalises it, in one identity that holds in exact
+    arithmetic and needs no threshold.  A wrong ``sqrt(N)``, a transposed solve,
+    or an anchor folded in twice all break it; none would be caught by the fits
+    merely agreeing.
     """
     values, inside = bumpy
 
@@ -423,10 +419,10 @@ def test_the_dr_diagonal_solve_cannot_divide_by_anything_small(chunk, bumpy,
     """Why the reparameterization is stable, as a statement rather than a check.
 
     Step 5 divides by ``1 + (lambda - lambda_0) * gamma``.  With ``gamma >= 0``
-    and ``lambda >= lambda_0`` every one of those is ``>= 1`` -- no cancellation
+    and ``lambda >= lambda_0`` every one of those is ``>= 1``: no cancellation
     is possible and the dynamic range of ``gamma`` (twenty decades at 50 mm)
-    cannot affect the answer.  That is the property the construction provides,
-    so it is asserted directly, across the grid, rather than inferred from the
+    cannot affect the answer.  This is the property the construction provides,
+    so it is asserted directly across the grid rather than inferred from the
     fits agreeing.
     """
     values, inside = bumpy
@@ -446,10 +442,10 @@ def test_refitting_a_lambda_grid_matches_fitting_each_one_afresh(chunk, bumpy,
     """The optimization the basis exists for, held to the answer it replaces.
 
     Steps 1-4 -- the QR, the triangular solve and the eigendecomposition -- do
-    not depend on ``lambda``; only the elementwise division does.  So a whole
-    ``lambda`` grid costs one factorization plus a division per point, which is
-    what makes GCV or REML selection affordable here.  What has to be true is
-    that the shortcut is not an approximation: every point of the grid must
+    not depend on ``lambda``; only the elementwise division does.  A whole
+    ``lambda`` grid therefore costs one factorization plus a division per point,
+    which is what makes GCV or REML selection affordable here.  The requirement
+    is that the shortcut is not an approximation: every point of the grid must
     land on the fit a fresh, full solve at that ``lambda`` produces.
     """
     values, inside = bumpy
@@ -472,7 +468,7 @@ def test_refitting_a_lambda_grid_matches_fitting_each_one_afresh(chunk, bumpy,
 def test_the_dr_grid_actually_moves_the_fit(chunk, bumpy):
     """Guard on the test above: a grid that changed nothing would pass it.
 
-    Four decades of ``lambda`` have to be visible in the fitted field, or
+    Four decades of ``lambda`` must be visible in the fitted field, or
     ``test_refitting_a_lambda_grid_matches_fitting_each_one_afresh`` would be
     comparing a constant against itself.
     """
@@ -489,11 +485,11 @@ def test_the_dr_grid_actually_moves_the_fit(chunk, bumpy):
 def test_the_dr_solver_refuses_a_lambda_below_its_anchor(chunk, bumpy):
     """Below the anchor the divisor can reach zero, so it is not offered.
 
-    ``1 + (lambda - lambda_0) * gamma`` is only bounded away from zero for
-    ``lambda >= lambda_0``; underneath it the largest ``gamma`` drives it
-    through zero and the fit blows up.  The basis is anchored at the bottom of
-    the intended grid for that reason, and asking it for anything lower has to
-    fail loudly rather than return a number.
+    ``1 + (lambda - lambda_0) * gamma`` is bounded away from zero only for
+    ``lambda >= lambda_0``; below it the largest ``gamma`` drives it through
+    zero and the fit diverges.  The basis is anchored at the bottom of the
+    intended grid for that reason, and asking it for anything lower must raise
+    rather than return a number.
     """
     values, inside = bumpy
 
@@ -523,16 +519,15 @@ def test_refitting_needs_the_dr_solver(chunk, bumpy):
 def test_the_standalone_dr_fit_solves_the_penalised_system(chunk, bumpy):
     """``fit_penalized_spline_dr`` on matrices, against the equations themselves.
 
-    The volume machinery is not in the way here: the design matrix and the
-    penalty factor are handed in directly, so what is checked is that the
-    reparameterization answers ``(B'B + lam D'D) c = B'y`` and not something
-    adjacent to it.  The residual of those equations is the statement, which
-    makes this the one test that does not measure the solver against another
-    solver.
+    The volume machinery is bypassed: the design matrix and the penalty factor
+    are passed in directly, so what is checked is that the reparameterization
+    answers ``(B'B + lam D'D) c = B'y`` and not something adjacent.  The
+    residual of those equations is the statement, which makes this the one test
+    that does not measure the solver against another solver.
 
-    Scaled by ``||B'y||`` because the equations are not dimensionless; the
-    bound is float64 rounding carried through a solve conditioned at ``3.5e6``,
-    which leaves nine decades of headroom.
+    Scaled by ``||B'y||`` because the equations are not dimensionless; the bound
+    is float64 rounding carried through a solve conditioned at ``3.5e6``, which
+    leaves nine decades of headroom.
     """
     values, inside = bumpy
     lam = 1e-7
@@ -560,10 +555,9 @@ def test_the_standalone_dr_fit_solves_the_penalised_system(chunk, bumpy):
 def test_the_standalone_dr_fit_reuses_one_basis_across_a_grid(chunk, bumpy):
     """Deliverable: one factorization, then a division per ``lambda``.
 
-    The point of returning the basis is that the caller can sweep with it.
-    Each point of the grid must land where a fresh call at that ``lambda``
-    lands -- otherwise the reuse is an approximation and the sweep means
-    nothing.
+    The basis is returned so the caller can sweep with it.  Each point of the
+    grid must land where a fresh call at that ``lambda`` lands; otherwise the
+    reuse is an approximation and the sweep is meaningless.
     """
     values, inside = bumpy
 
@@ -586,7 +580,7 @@ def test_the_standalone_dr_fit_reuses_one_basis_across_a_grid(chunk, bumpy):
 
 
 def test_the_legacy_backend_refuses_a_solver_it_does_not_have(chunk):
-    """The oracle has one solver; asking it for the other must not go quiet."""
+    """The oracle has one solver; asking it for another must raise."""
     with pytest.raises(ValueError, match="legacy backend"):
         legacy.BSplineField(chunk, 200.0, 1e-7, solver="qr")
 
@@ -599,7 +593,7 @@ def test_an_unknown_solver_is_rejected(chunk):
 @pytest.mark.parametrize("size", [4, 5, 6, 9])
 @pytest.mark.parametrize("order", [0, 1, 2])
 def test_bending_energy_is_a_gram_matrix(size, order):
-    """``J`` is built from integrals of products, so it has to look like one.
+    """``J`` is built from integrals of products, so it must look like one.
 
     Symmetric, positive semi-definite, and banded: two basis functions more
     than three knots apart never overlap, so their integral is zero.
@@ -615,23 +609,23 @@ def test_bending_energy_is_a_gram_matrix(size, order):
 
 @pytest.mark.parametrize("solver", DIRECT_SOLVERS)
 def test_regularization_trades_bending_energy_for_fit(solver):
-    """What ``-lambda`` is for, as the exact statement rather than a rule of thumb.
+    """What ``-lambda`` does, as an exact statement rather than a rule of thumb.
 
-    The fit minimises ``||Ac - f||^2 + lambda*N*c'Jc``.  Compare the objective
-    at two weights, each evaluated at the other's minimiser, and the cross
-    terms cancel to give: as ``lambda`` rises the bending energy ``c'Jc`` can
-    only fall and the residual can only rise.  That holds for every pair, with
-    no factor to choose and nothing to tune -- so it is checked at every step
-    of a sweep, in both directions.
+    The fit minimises ``||Ac - f||^2 + lambda*N*c'Jc``.  Comparing the objective
+    at two weights, each evaluated at the other's minimiser, the cross terms
+    cancel to give: as ``lambda`` rises the bending energy ``c'Jc`` can only
+    fall and the residual can only rise.  That holds for every pair, with no
+    factor to choose, so it is checked at every step of a sweep in both
+    directions.
 
     ``c'Jc`` is the integrated squared curvature of the fitted field, which is
-    what "smoother" means here.
+    what smoother means here.
 
-    What this does *not* do is check that ``J`` is right.  The energy is
-    measured with the same matrix the fit penalises with, so the property
-    holds for any non-degenerate ``J``: mutating the first-derivative cross
-    terms to drop their factor of two leaves this test passing; the parity test
-    against the shim detects it.  Zeroing ``J`` altogether, or dropping the
+    This does *not* check that ``J`` is correct.  The energy is measured with
+    the same matrix the fit penalises with, so the property holds for any
+    non-degenerate ``J``: dropping the factor of two from the first-derivative
+    cross terms leaves this test passing, and the parity test against the shim
+    detects it instead.  Zeroing ``J`` altogether, or dropping the
     second-derivative terms, does fail here, since those make the sweep flat.
     """
     shape = (24, 24, 24)
@@ -712,7 +706,7 @@ def test_the_spline_is_zero_outside_its_domain(solver):
 
 @pytest.mark.parametrize("solver", DIRECT_SOLVERS)
 def test_subsampling_barely_changes_a_smooth_fit(solver):
-    """``-subsample`` thins the fit; with a smooth field it costs little."""
+    """``-subsample`` thins the fit; on a smooth field it costs little."""
     shape = (24, 24, 24)
     x, y, _ = torch.meshgrid(*[torch.arange(s, dtype=torch.float64)
                                for s in shape], indexing="ij")

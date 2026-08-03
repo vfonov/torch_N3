@@ -2,7 +2,7 @@
 
 N3 measures the intensity distribution of the volume inside the mask and works
 on that; ``sharpen_hist`` never sees the volume itself.  Two details of the
-legacy histogram matter enough to be reproduced exactly:
+legacy histogram are reproduced exactly:
 
 * the bin *centres* -- not the bin edges -- span the requested range, so a
   histogram of ``n`` bins over ``[lo, hi]`` has bin width ``(hi - lo)/(n - 1)``
@@ -15,12 +15,11 @@ Ported from ``legacy/N3/src/VolumeHist/{DHistogram.cc,WHistogram.h}``.
 One component here is *not* a port.  N3's ``-parzen``/``-window`` is not a
 Parzen kernel density estimate: it is linear interpolation into two bins, a
 triangular kernel exactly one bin wide, determined by the bin spacing rather
-than by any property of the data.  ``sigma=`` replaces it with the estimator
-the name denotes: a Gaussian kernel of a stated width, distributing each
-measurement over as many bins as it reaches.  That is a modification to the
-algorithm rather than a reproduction of it, so it is disabled by default and
-the legacy backend rejects it; its costs and benefits are measured in
-``tests/parzen.py``.
+than by any property of the data.  ``sigma=`` replaces it with the estimator the
+name denotes: a Gaussian kernel of a stated width, distributing each measurement
+over as many bins as it reaches.  This is a modification to the algorithm rather
+than a reproduction of it, so it is disabled by default and the legacy backend
+rejects it.  Its costs and benefits are measured in ``tests/parzen.py``.
 """
 
 import math
@@ -39,17 +38,17 @@ def histogram_range(values, initial=None):
 
     started from the range of the *whole* volume with the bounds **crossed**
     (``lo`` = the volume maximum, ``hi`` = its minimum) and then run over the
-    masked voxels only, so the ``else`` genuinely bites: until some sample
-    fails to be a new minimum, no sample can raise ``hi``.
+    masked voxels only, so the ``else`` takes effect: until some sample fails to
+    be a new minimum, no sample can raise ``hi``.
 
-    That makes the scan order-dependent, so it is reproduced here rather than
-    replaced by ``min``/``max``.  Writing ``j`` for the first sample that is
-    not a new running minimum, the scan is equivalent to taking the minimum
-    over everything and the maximum over the tail from ``j`` -- which
-    vectorises as a cumulative minimum.
+    The scan is therefore order-dependent, and is reproduced here rather than
+    replaced by ``min``/``max``.  Writing ``j`` for the first sample that is not
+    a new running minimum, the scan is equivalent to taking the minimum over
+    everything and the maximum over the tail from ``j``, which vectorises as a
+    cumulative minimum.
 
-    ``initial`` is the ``(lo, hi)`` the scan starts from; the default
-    reproduces an unmasked call.
+    ``initial`` is the ``(lo, hi)`` the scan starts from; the default reproduces
+    an unmasked call.
     """
     values = torch.as_tensor(values).reshape(-1)
     if values.numel() == 0:
@@ -87,11 +86,11 @@ def histogram(values, bins, value_range, parzen=True, sigma=None):
 
     ``sigma`` (requires ``parzen``) replaces that triangle with a Gaussian
     kernel of standard deviation ``sigma`` **bin widths**, evaluated at the bin
-    centres and normalised per sample.  It is the Parzen estimator proper; see
-    the module docstring for why it is not the default.  Note that the width is
-    in bins rather than in intensity units, so it follows ``-auto_range`` as the
-    range moves from iteration to iteration -- multiply by ``(high - low) /
-    (bins - 1)`` for the width in the volume's own units.
+    centres and normalised per sample.  This is the Parzen estimator proper; see
+    the module docstring for why it is not the default.  The width is in bins
+    rather than in intensity units, so it follows ``-auto_range`` as the range
+    moves from iteration to iteration; multiply by ``(high - low) / (bins - 1)``
+    for the width in the volume's own units.
     """
     values = torch.as_tensor(values).reshape(-1)
     bins = int(bins)
@@ -156,16 +155,15 @@ _BLOCK = 1 << 22
 def _add_gaussian(counts, values, low, high, width, bins, sigma):
     """Spread each sample over the bins with a Gaussian kernel.
 
-    The sample-rejection rule is the Parzen one -- outside the outermost
-    centres a sample is dropped, not clipped -- so that this differs from
-    ``_add_split`` only in the shape of the kernel.
+    The sample-rejection rule is the Parzen one -- outside the outermost centres
+    a sample is dropped, not clipped -- so this differs from ``_add_split`` only
+    in the shape of the kernel.
 
     Weights are normalised *per sample*, over the bins present.  Every retained
     sample therefore contributes exactly 1 to the total, as under the linear
     split, rather than losing the part of its kernel falling outside the range.
-    Near the edges the kernel is renormalised rather than truncated, which is
-    the standard reflectionless boundary for a density estimate on a finite
-    support.
+    Near the edges the kernel is renormalised rather than truncated, the
+    standard reflectionless boundary for a density estimate on a finite support.
     """
     if not sigma > 0:
         raise ValueError("histogram: sigma must be positive (got %r)" % sigma)

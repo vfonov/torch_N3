@@ -1,8 +1,8 @@
 """N3's blocks, in PyTorch.
 
 This package is the port proper.  Each module is one step of the algorithm,
-named for the mathematics it performs, and each is pinned against the original
-C++ (through :mod:`torch_n3.backends.legacy`) by a test of its own:
+named for the mathematics it performs, and each is compared against the
+original C++ (through :mod:`torch_n3.backends.legacy`) by a test of its own:
 
 ============================  ==========================================
 :mod:`~torch_n3.blocks.histogram`  the masked histogram, ``volume_hist``
@@ -11,20 +11,20 @@ C++ (through :mod:`torch_n3.backends.legacy`) by a test of its own:
 :mod:`~torch_n3.blocks.field`      the field extension, ``correct_field``
 ============================  ==========================================
 
-Everything takes and returns ``torch`` tensors and stays on whatever device
-those tensors live on.  The names below are exactly the ones
+Everything takes and returns ``torch`` tensors and stays on the device those
+tensors live on.  The names below are the ones
 :mod:`torch_n3.backends.legacy` exports, so the two are interchangeable:
-:func:`torch_n3.backends.resolve` picks between them, and the pipeline is
+:func:`torch_n3.backends.resolve` selects between them and the pipeline is
 written against the pair.
 
 :mod:`~torch_n3.blocks.denoise` is exported alongside them but is **not** one
 of them: it is a modification rather than a port, it has no oracle, and the
-legacy backend answers it with a refusal.  It appears here only so that the
-pipeline can reach it through the same ``resolve`` as the rest, and so that
-asking the oracle for it fails where the request is made rather than
-downstream.  :mod:`~torch_n3.blocks.sharpness` is the other module in this
-package that ports nothing, and is not exported at all -- nothing dispatches
-on it, so :mod:`torch_n3.optimize` imports it by its full path.
+legacy backend refuses it.  It is exported so that the pipeline reaches it
+through the same ``resolve`` as the rest, and so that asking the oracle for it
+fails where the request is made rather than downstream.
+:mod:`~torch_n3.blocks.sharpness` also ports nothing and is not exported:
+nothing dispatches on it, so :mod:`torch_n3.optimize` imports it by its full
+path.
 """
 
 from torch_n3.blocks.denoise import denoise

@@ -2,38 +2,35 @@
 
     python3 -m tests.tables
 
-Not a test.  Nothing here asserts; it measures and prints, and compares what
-it measured against the copies published in ``README.md`` and
-``torch_n3/cli.py`` so that a stale cell shows up as a mismatch.
-``tests/margins.py`` does the same job for ``PROBLEMS.md``'s bounds; this one
-does it for the numbers that, as CLAUDE.md puts it, are "the most cited in the
-repository" and are checked by almost nothing.
+Not a test.  Nothing here asserts; it measures, prints, and compares what it
+measured against the copies published in ``README.md`` and ``torch_n3/cli.py``,
+so a stale cell appears as a mismatch.  ``tests/margins.py`` does the same for
+``PROBLEMS.md``'s bounds; this module does it for the numbers CLAUDE.md
+describes as the most cited in the repository, which almost nothing checks.
 
-**Why they need re-measuring rather than adjusting.**  Each cell is two whole
-``nu_estimate`` runs of thirty iterations, well past the histogram's
-divergence threshold, which is what makes end-to-end volumes incomparable, so a
-change to any block, to the spline solver, or to the LAPACK the shim links can
-move them.  The rule in
-CLAUDE.md is to re-measure and to change both published copies together, never
-to adjust one.  This module is what re-measures them.
+**Why they are re-measured rather than adjusted.**  Each cell is two whole
+``nu_estimate`` runs of thirty iterations, well past the histogram's divergence
+threshold, which is what makes end-to-end volumes incomparable, so a change to
+any block, to the spline solver, or to the LAPACK the shim links can move them.
+CLAUDE.md's rule is to re-measure and to change both published copies together,
+never to adjust one.  This module re-measures them.
 
-**What is measured.**  Exactly what ``test_field_recovery.py``'s ``regularized``
-fixture computes, over the full sweep rather than at one spacing: plant a
-smooth field of a known amplitude on ``brain_nu_ref.mnc``, correct it, and
-report the non-uniformity left in the recovered field once the same
-implementation's answer on the *untouched* reference has been divided out.
-Thirty iterations with the early stop disabled, so every run does the same
-work.  Lower is better.
+**What is measured.**  What ``test_field_recovery.py``'s ``regularized`` fixture
+computes, over the full sweep rather than at one spacing: plant a smooth field
+of a known amplitude on ``brain_nu_ref.mnc``, correct it, and report the
+non-uniformity left in the recovered field once the same implementation's answer
+on the *untouched* reference has been divided out.  Thirty iterations with the
+early stop disabled, so every run does the same work.  Lower is better.
 
 The one departure is that the baseline run is cached on ``(distance, lam,
 solver)`` rather than recomputed per amplitude.  It does not depend on the
-amplitude and the call is deterministic, so the cached value is what the
-fixture would have computed.
+amplitude and the call is deterministic, so the cached value is what the fixture
+would have computed.
 
 **Across solvers.**  Every solver in ``DIRECT_SOLVERS`` minimises the same
-objective, so the tables should not depend on which one ran -- and to two
-decimals they nearly do not.  Measured here on 2026-07-31, against the
-published (``normal``) copies:
+objective, so the tables should not depend on which one ran, and to two decimals
+they nearly do not.  Measured here on 2026-07-31, against the published
+(``normal``) copies:
 
     solver     cells differing at 2 dp   largest relative move
     normal            0 of 24                   --
@@ -41,11 +38,10 @@ published (``normal``) copies:
     dr                2 of 24                  3.2%
     blocked           3 of 24                  4.7%
 
-Every conclusion the prose draws survives all four: the same interior minimum
-in each column (``1e-6`` at 200 mm, ``1e-5`` at 100 and 50 mm), identically at
-both amplitudes, the decade-per-halving rule, and the asymmetry at 50 mm.  The
-mobile cells are the same few each time, and they are the ones sitting on a
-shallow part of the surface.
+Every conclusion the prose draws survives all four: the same interior minimum in
+each column (``1e-6`` at 200 mm, ``1e-5`` at 100 and 50 mm), identically at both
+amplitudes, the decade-per-halving rule, and the asymmetry at 50 mm.  The mobile
+cells are the same few each time, and they sit on a shallow part of the surface.
 
 ``sparse`` is not swept.  It does not converge (``PROBLEMS.md`` §10), and at
 ~18 s per spline fit the sweep would take hours rather than the minute the
@@ -163,10 +159,10 @@ def _table(cells, solver, amplitude):
 def _drift(cells, solver):
     """Cells that would be written down differently from the published copy.
 
-    Only the 2 dp comparison is made against ``PUBLISHED``, because that is
-    all the published copies record -- taking a *relative* difference against a
-    rounded number measures the rounding, not the code.  The relative question
-    is asked of ``normal`` instead, in :func:`_move`.
+    Only the 2 dp comparison is made against ``PUBLISHED``, since that is all
+    the published copies record: a *relative* difference against a rounded
+    number measures the rounding rather than the code.  The relative question is
+    asked of ``normal`` instead, in :func:`_move`.
     """
     moved = []
     for amplitude in AMPLITUDES:
@@ -182,12 +178,12 @@ def _drift(cells, solver):
 def _move(cells, solver):
     """Largest relative move against ``normal``, at full precision.
 
-    This is the cross-solver question: every direct solver minimises the same
-    objective, so how far can the choice of one move a cell?  Measured against
-    ``normal``'s own measurement rather than against the rounded table.
+    The cross-solver question: every direct solver minimises the same objective,
+    so how far can the choice of one move a cell?  Measured against ``normal``'s
+    own measurement rather than against the rounded table.
 
-    Returns ``(0.0, None)`` when ``normal`` was not among the solvers swept:
-    there is then nothing to measure the move against.
+    Returns ``(0.0, None)`` when ``normal`` was not among the solvers swept,
+    since there is then nothing to measure the move against.
     """
     if ("normal", AMPLITUDES[0], DISTANCES[0], LAMBDAS[0]) not in cells:
         return 0.0, None
@@ -205,7 +201,7 @@ def _move(cells, solver):
 
 
 def _minima(cells, solver, amplitude):
-    """The best weight in each column -- the claim the prose actually makes."""
+    """The best weight in each column: the claim the prose makes."""
     return [min(LAMBDAS, key=lambda l: cells[(solver, amplitude, d, l)])
             for d in DISTANCES]
 

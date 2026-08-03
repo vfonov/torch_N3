@@ -1,9 +1,9 @@
 """Stage 2: :mod:`torch_n3.blocks.histogram` against ``volume_hist``.
 
 Two oracles, in order of strictness.  The CFFI shim runs the legacy
-``WHistogram`` class itself, so the port has to match it to the last bit that
+``WHistogram`` class itself, so the port must match it to the last bit
 summation order allows; ``volume_hist``'s recorded output is the end-to-end
-check that the shim is being asked the right question in the first place.
+check that the shim is being asked the right question.
 """
 
 import math
@@ -30,10 +30,9 @@ def test_range_reproduces_the_else_if_on_a_decreasing_run():
     """A strictly decreasing sample never gets to raise the upper bound.
 
     The legacy's ``else if`` means a value that is a new *minimum* cannot also
-    be a new maximum, so a monotonically falling sequence leaves the upper
-    bound at where it started -- the one case where this is not just
-    ``(min, max)``.  It is a quirk, not a feature, but the two implementations
-    have to agree on it.
+    be a new maximum, so a monotonically falling sequence leaves the upper bound
+    where it started: the one case where this is not simply ``(min, max)``.  The
+    two implementations must agree on it.
     """
     falling = torch.arange(10.0, 0.0, -1.0, dtype=torch.float64)
     initial = (100.0, -100.0)
@@ -124,7 +123,7 @@ def test_gaussian_window_conserves_the_sample_count(chunk, chunk_mask, sigma):
 
 
 def test_gaussian_window_smooths_more_than_the_linear_split(chunk, chunk_mask):
-    """The purpose of the window: a wider kernel, so a smoother histogram."""
+    """The window's purpose: a wider kernel, so a smoother histogram."""
     values, inside = masked_log(chunk, chunk_mask)
     value_range = blocks.histogram_range(values[inside],
                                          initial=(values.max(), values.min()))
@@ -142,8 +141,8 @@ def test_gaussian_window_smooths_more_than_the_linear_split(chunk, chunk_mask):
 def test_a_narrow_gaussian_window_becomes_plain_binning():
     """As the kernel shrinks below a bin it degenerates to nearest-centre.
 
-    Which is ``parzen=False``: the sanity check that the kernel is centred on
-    the sample and evaluated at the bin centres, not offset by half a bin.
+    Which is ``parzen=False``: a check that the kernel is centred on the sample
+    and evaluated at the bin centres rather than offset by half a bin.
     """
     values = torch.tensor([1.2, 3.7, 5.4, 8.9], dtype=torch.float64)
 
@@ -156,9 +155,9 @@ def test_a_narrow_gaussian_window_becomes_plain_binning():
 def test_a_sample_exactly_between_two_centres_is_halved():
     """The one place the narrow limit is not ``parzen=False``.
 
-    Both bins are the same distance away, so the kernel gives them the same
-    weight however narrow it is, where the plain binning rounds the tie one
-    way.  Half each is the answer the linear split gives too.
+    Both bins are the same distance away, so the kernel gives them equal weight
+    however narrow it is, where plain binning rounds the tie one way.  Half each
+    is also the linear split's answer.
     """
     counts = blocks.histogram(torch.tensor([5.5], dtype=torch.float64), 11,
                               (0.0, 10.0), sigma=1e-3)

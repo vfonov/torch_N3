@@ -1,60 +1,60 @@
 """Bias correction posed as an optimization rather than a fixed-point iteration.
 
-``pipeline.nu_estimate`` is N3: sharpen the histogram, attribute the residual
-to the field, smooth it, repeat, and terminate when the field ceases to change.
+``pipeline.nu_estimate`` is N3: sharpen the histogram, attribute the residual to
+the field, smooth it, repeat, and terminate when the field ceases to change.
 That loop descends on no stated objective, and CLAUDE.md records the
 consequences: the stopping rule quantises everything downstream, one histogram
-count moving between bins changes the answer by four orders of magnitude, and
-no end-to-end comparison is informative past three digits.
+count moving between bins changes the answer by four orders of magnitude, and no
+end-to-end comparison is informative past three digits.
 
-:func:`nu_optimize` keeps N3's *model* exactly -- a tensor cubic B-spline
-field with a bending-energy penalty, in the log domain -- and replaces the
-loop with gradient descent on a stated objective:
+:func:`nu_optimize` keeps N3's *model* exactly -- a tensor cubic B-spline field
+with a bending-energy penalty, in the log domain -- and replaces the loop with
+gradient descent on a stated objective:
 
     minimise   measure(standardize(v - F_c))  +  penalty * c' J c
 
 over the spline coefficients ``c``, where ``measure`` is one of the two in
-:mod:`torch_n3.blocks.sharpness`.  There is then one number that goes down,
-and it can be watched.
+:mod:`torch_n3.blocks.sharpness`.  There is then a single number that descends,
+and it can be monitored.
 
 It returns what ``nu_estimate`` returns, a fitted
 :class:`~torch_n3.blocks.spline.BSplineField` describing the *multiplicative*
-field, so ``nu_evaluate``, ``evaluate_field`` and everything in
-``experiments/`` accept it without modification.
+field, so ``nu_evaluate``, ``evaluate_field`` and everything in ``experiments/``
+accept it without modification.
 
-**What is not shared with N3.**  ``penalty`` is not ``lambda``.  N3's weighs
-the bending energy against a least-squares residual in log-intensity squared;
-here the data term is a dimensionless measure of order one, so the two are on
+**What is not shared with N3.**  ``penalty`` is not ``lambda``.  N3's weighs the
+bending energy against a least-squares residual in log-intensity squared; here
+the data term is a dimensionless measure of order one, so the two are on
 unrelated scales and the default below was measured rather than inherited.
 
 **What makes this well posed.**  ``standardize``.  Both measures are optimal on
-a constant image, and a smooth field is able to produce one by cancelling the
-volume.  Fixing the first two moments of the corrected intensities before
-measuring them removes that solution, and nothing else here does.  See :mod:`torch_n3.blocks.sharpness` and the collapse tests.
+a constant image, and a smooth field can produce one by cancelling the volume.
+Fixing the first two moments of the corrected intensities before measuring them
+removes that solution, and nothing else here does.  See
+:mod:`torch_n3.blocks.sharpness` and the collapse tests.
 
-**Where the two measures stand, measured.**  On ``tests/tables.py``'s
-experiment -- ``brain_nu_ref.mnc``, the analytic planted field, the score N3's
-own published table reports -- at each side's best weight, 20% planted:
+**Where the two measures stand, measured.**  On ``tests/tables.py``'s experiment
+-- ``brain_nu_ref.mnc``, the analytic planted field, the score N3's own
+published table reports -- at each side's best weight, 20% planted:
 
     knots     N3      hoyer     tightness
     200 mm   0.13%    0.28%     diverges
     100 mm   0.17%    0.21%     diverges
      50 mm   0.25%    0.17%     diverges
 
-``hoyer`` is a working estimator: worse than N3 where N3 is strongest, better
-at 50 mm, and, unlike N3, improving as the field gains freedom, which is the
-opposite trend.
+``hoyer`` is a working estimator: worse than N3 where N3 is strongest, better at
+50 mm, and improving as the field gains freedom, the opposite of N3's trend.
 
 ``tightness`` **does not work, and not for lack of tuning.**  Its loss falls
-monotonically while the estimate gets worse and the field's own
-non-uniformity grows without bound (at 200 mm: loss 0.234 -> 0.185 while the
-field goes from 35% to 55% non-uniform, and at a lighter penalty to 257%).
-The cause is a second degeneracy that ``standardize`` does not address:
-within-cluster variance is also minimised by a distribution concentrated at a
-few widely separated modes, and a smooth field can approach that by
-*amplifying* contrast as well as by flattening it.  Standardizing fixes the
-first two moments; nothing fixes the third.  It is retained here because it is
-implemented, tested and instructive, not because it should be used.
+monotonically while the estimate gets worse and the field's own non-uniformity
+grows without bound (at 200 mm: loss 0.234 -> 0.185 while the field goes from
+35% to 55% non-uniform, and at a lighter penalty to 257%).  The cause is a
+second degeneracy that ``standardize`` does not address: within-cluster variance
+is also minimised by a distribution concentrated at a few widely separated
+modes, and a smooth field can approach that by *amplifying* contrast as well as
+by flattening it.  Standardizing fixes the first two moments; nothing fixes the
+third.  Retained because it is implemented and tested, not because it should be
+used.
 """
 
 import math
@@ -75,8 +75,8 @@ OBJECTIVES = ("hoyer", "tightness")
 FWHM_TO_SIGMA = 1.0 / (2.0 * math.sqrt(2.0 * math.log(2.0)))
 
 #: Bending-energy weight for the final refit, which only has to *represent*
-#: the optimized field rather than smooth anything -- so it is N3's default,
-#: and it is not :data:`DEFAULTS`'s ``penalty``.
+#: the optimized field rather than smooth anything.  It is N3's default, and is
+#: not :data:`DEFAULTS`'s ``penalty``.
 REFIT_LAMBDA = 1e-7
 
 #: Weight the preconditioner is anchored at, and **deliberately not**
@@ -86,33 +86,32 @@ REFIT_LAMBDA = 1e-7
 #: ``R0'R0 = A'A/N + w J`` and ``c = R0^-1 z``, the penalty term in the
 #: reparameterized objective is ``w z'R0^-T J R0^-1 z``, and once ``w J``
 #: dominates the data block that is ``~z'z`` whatever ``w`` is.  Measured on
-#: ``chunk.mnc``: sweeping ``penalty`` over six decades moved the loss by
-#: nothing at all -- identical to six decimals, under two different
-#: optimizers -- because the parameterization was undoing exactly what the
-#: loss was asking for.  A *fixed* anchor is a fixed metric, and leaves
-#: ``penalty`` free to mean something.
+#: ``chunk.mnc``: sweeping ``penalty`` over six decades did not move the loss
+#: at all -- identical to six decimals, under two different optimizers --
+#: because the parameterization was undoing what the loss was asking for.  A
+#: *fixed* anchor is a fixed metric, and leaves ``penalty`` operative.
 #:
-#: It cannot be zero either: anchoring on ``A`` alone is what CLAUDE.md warns
-#: about, since the masked design leaves basis functions with no data under
+#: It cannot be zero either: anchoring on ``A`` alone is the failure CLAUDE.md
+#: describes, since the masked design leaves basis functions with no data under
 #: them and no metric to scale them by.
 PRECONDITION_ANCHOR = 1.0
 
 #: Default bending-energy weight, per objective, used when ``penalty`` is not
-#: given.  Two entries rather than one because the measures are not on a
-#: common scale -- Hoyer sparsity is a number in [0, 1] whose gradient is
-#: gentle, within-cluster variance is a fraction of the total with quite
-#: different curvature -- and a single weight cannot serve both.
+#: given.  Two entries rather than one because the measures are not on a common
+#: scale -- Hoyer sparsity is a number in [0, 1] with a gentle gradient,
+#: within-cluster variance is a fraction of the total with different curvature
+#: -- and a single weight cannot serve both.
 #:
 #: ``hoyer``'s value is the best of ten decades on ``tests/tables.py``'s
 #: experiment -- ``brain_nu_ref.mnc``, the analytic planted field, all three
 #: knot spacings -- where 1e-4 was best at 200 mm (0.28%) and 100 mm (0.21%)
-#: and within a hair of the best at 50 mm.  Below about 1e-5 the fit becomes
+#: and within rounding of the best at 50 mm.  Below about 1e-5 the fit becomes
 #: unstable at fine spacings: at 50 mm and 1e-6 the field ran away to a
 #: non-uniformity of 1316%.
 #:
-#: ``tightness`` has **no good value, at any spacing**, and the entry below is
-#: only the least bad of those tried.  See the module docstring: minimising
-#: that measure makes the estimate worse, so this is not a tuning problem.
+#: ``tightness`` has **no good value at any spacing**, and the entry below is
+#: the least bad of those tried.  See the module docstring: minimising that
+#: measure makes the estimate worse, so this is not a tuning problem.
 PENALTY = {"hoyer": 1e-4, "tightness": 100.0}
 
 #: Default step scale, per optimizer, used when ``learning_rate`` is not given.
@@ -120,21 +119,20 @@ PENALTY = {"hoyer": 1e-4, "tightness": 100.0}
 #: L-BFGS at ``lr=1`` fails on the first line search on ``brain_nu_ref.mnc``:
 #: the loss never leaves its initial value and the gradient stays at 0.289,
 #: while ``lr=0.1`` runs 66 iterations and reaches a gradient of 2e-5.  A
-#: failed line search leaves the parameters exactly where they were, which
-#: looks identical to convergence from the outside -- see :func:`_stopped`
-#: for how the two are told apart now.
+#: failed line search leaves the parameters where they were, which is
+#: indistinguishable from convergence externally; see :func:`_stopped` for how
+#: the two are separated.
 LEARNING_RATE = {"lbfgs": 0.1, "adam": 0.01}
 
 #: How far the gradient must fall, **relative to its value at the start**,
 #: for a settled loss to count as convergence rather than as a stall.
 #:
-#: Relative because the absolute floor is a property of the problem, not of
-#: the run: on ``brain_nu_ref.mnc`` both L-BFGS and Adam plateau at
+#: Relative because the absolute floor is a property of the problem rather than
+#: of the run: on ``brain_nu_ref.mnc`` both L-BFGS and Adam plateau at
 #: ``|grad|inf ~ 4e-5`` having reached the *same* loss to six decimals, so an
-#: absolute 1e-6 would call a converged run stalled.  What a genuine stall
-#: looks like is different in kind -- the failed line search at ``lr=1``
-#: leaves the gradient exactly where it started -- and a relative threshold
-#: separates the two cleanly.
+#: absolute 1e-6 would report a converged run as stalled.  A genuine stall
+#: differs in kind -- the failed line search at ``lr=1`` leaves the gradient
+#: where it started -- and a relative threshold separates the two.
 GRADIENT_TOLERANCE = 1e-3
 
 #: How many times a stalled L-BFGS is restarted at a tenth of the step.
@@ -201,11 +199,11 @@ DEFAULTS = dict(
 def nu_optimize(volume, mask=None, verbose=False, **options):
     """Estimate the bias field by gradient descent.  Returns a ``BSplineField``.
 
-    A drop-in alternative to :func:`torch_n3.pipeline.nu_estimate`: same
-    arguments where they mean the same thing, same return type.  Diagnostics
-    -- the loss history, the iteration count, why it stopped, and for
-    ``objective="tightness"`` the learned centroids and their occupancy --
-    are attached to the returned spline as ``optimize_info``.
+    A drop-in alternative to :func:`torch_n3.pipeline.nu_estimate`: the same
+    arguments where they mean the same thing, and the same return type.
+    Diagnostics -- the loss history, the iteration count, the reason for
+    stopping, and for ``objective="tightness"`` the learned centroids and their
+    occupancy -- are attached to the returned spline as ``optimize_info``.
     """
     opts = dict(DEFAULTS, **options)
     _check(opts)
@@ -251,7 +249,7 @@ class _Problem:
 
     Holds everything that does not change between evaluations -- the design
     rows, the observed intensities, the penalty matrix, the preconditioner --
-    so that a closure is a gather, a measure and a quadratic form.
+    so an evaluation is a gather, a measure and a quadratic form.
     """
 
     def __init__(self, spline, columns, weights, observed, opts):
@@ -281,8 +279,8 @@ class _Problem:
     def coefficients(self, parameter=None):
         """The spline coefficients the current parameters describe.
 
-        Identity without preconditioning; a triangular solve with it, which is
-        differentiable, so the descent sees the whitened problem while the
+        The identity without preconditioning; a triangular solve with it, which
+        is differentiable, so the descent sees the whitened problem while the
         spline sees the coefficients it expects.
         """
         parameter = self.parameter if parameter is None else parameter
@@ -323,17 +321,17 @@ class _Problem:
         """Descend, restarting a stalled line search at a smaller step.
 
         "The loss stopped moving" and "the optimizer converged" are different
-        events, and with a line search the first happens without the second: a
-        failed search leaves the parameters exactly where they were, so the
-        change is zero while the gradient is whatever it was.  Treating that
-        as convergence is how a run reports success having done nothing --
-        measured on ``brain_nu_ref.mnc``, where the shipped ``lr=1`` moved the
-        loss not at all and stopped with a gradient of 0.289.
+        events, and with a line search the first occurs without the second: a
+        failed search leaves the parameters where they were, so the change is
+        zero while the gradient is unchanged.  Treating that as convergence
+        makes a run report success having done nothing; measured on
+        ``brain_nu_ref.mnc``, where the shipped ``lr=1`` did not move the loss
+        at all and stopped with a gradient of 0.289.
 
-        So a stall is diagnosed by the gradient, and answered by restarting
-        with a fresh curvature history at a tenth of the step.  If the
-        restarts run out, ``stopped`` says ``"stalled"`` -- an honest label
-        the caller can see, and one the experiment records.
+        A stall is therefore diagnosed by the gradient and answered by
+        restarting with a fresh curvature history at a tenth of the step.  If
+        the restarts run out, ``stopped`` reports ``"stalled"``, which the
+        caller sees and the experiment records.
         """
         history, gradient = [], 0.0
         rate = float(self.opts["learning_rate"])
@@ -437,9 +435,9 @@ class _Problem:
     def _sigma(self):
         """The soft histogram's width, in standardized units.
 
-        ``fwhm`` is N3's assumed blur in log intensity; dividing by the
-        volume's own spread carries it into the units the measure works in, so
-        that the width this smooths with is the width N3 deconvolves.
+        ``fwhm`` is N3's assumed blur in log intensity; dividing by the volume's
+        own spread carries it into the units the measure works in, so the width
+        this smooths with is the width N3 deconvolves.
         """
         if self.opts["sigma"] is not None:
             sigma = float(self.opts["sigma"])
@@ -460,14 +458,14 @@ class _Problem:
     def _preconditioner(self):
         """``R0`` from the stacked system at a fixed anchor, or ``None``.
 
-        CLAUDE.md measures the normal equations at ``cond ~ 5e12``; the
-        stacked matrix's condition number is its square root by construction,
-        and ``R0`` inherits that.  It is only a metric -- it does not have to
-        be the Hessian of this objective, which is not a least-squares one --
-        so it is built once, from the first batch, and left alone.
+        CLAUDE.md measures the normal equations at ``cond ~ 5e12``; the stacked
+        matrix's condition number is its square root by construction, and
+        ``R0`` inherits that.  It serves only as a metric and need not be the
+        Hessian of this objective, which is not a least-squares one, so it is
+        built once from the first batch and left alone.
 
         The weight is :data:`PRECONDITION_ANCHOR` and *not* ``penalty``; see
-        that constant for the measurement that says why.
+        that constant for the supporting measurement.
         """
         if self.opts["precondition"] != "stacked":
             return None
@@ -488,8 +486,8 @@ class _Problem:
     def _initial(self):
         """The starting parameters: a flat field, or N3's answer.
 
-        ``init="n3"`` asks the more interesting question -- whether descent
-        improves on N3's fixed point when it starts from it.
+        ``init="n3"`` starts from N3's fixed point, which measures whether
+        descent improves on it.
         """
         size = self.penalty.shape[0]
         start = torch.zeros(size, dtype=torch.float64, device=self.device)
@@ -531,8 +529,8 @@ class _Problem:
 def _settled(history, tolerance):
     """Whether the loss has stopped moving, relative to its own size.
 
-    Necessary for convergence and not sufficient for it: a stalled line
-    search settles too.  :meth:`_Problem.run` asks the gradient which it was.
+    Necessary for convergence but not sufficient: a stalled line search settles
+    as well.  :meth:`_Problem.run` uses the gradient to distinguish the two.
     """
     if len(history) < 2:
         return False

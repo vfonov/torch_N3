@@ -1,44 +1,44 @@
 """What ``--denoise`` does to N3, measured against the window it competes with.
 
 Not a test: it asserts nothing and prints tables.  ``--denoise`` is the second
-modification this port carries -- ``--parzen-sigma`` is the first -- and like
+modification this port carries, ``--parzen-sigma`` being the first, and like
 that one it is off by default, has no oracle, and can only be judged by
-measurement.  ``tests/parzen.py`` is its twin and should be read beside it.
+measurement.  ``tests/parzen.py`` is its counterpart and should be read beside
+it.
 
-**Why the two are measured together.**  ``tests/parzen.py`` establishes that
-the histogram window's benefit tracks *noise* rather than field amplitude: with
-no noise the windows are within a few percent of each other, while at SNR 20
-N3's linear split leaves 4.63% against ``sigma 4``'s 1.71%.  The window
-suppresses noise-driven variance in the histogram; this filter suppresses the
-same variance in the volume, before the histogram is ever built.  They are
-therefore **candidate substitutes, not complements**, and the question this
-script exists to answer is whether denoising buys anything over windowing
-alone.  Measuring either without the other would answer a question nobody
-asked.
+**Why the two are measured together.**  ``tests/parzen.py`` establishes that the
+histogram window's benefit tracks *noise* rather than field amplitude: with no
+noise the windows are within a few percent of each other, while at SNR 20 N3's
+linear split leaves 4.63% against ``sigma 4``'s 1.71%.  The window suppresses
+noise-driven variance in the histogram; this filter suppresses the same variance
+in the volume, before the histogram is built.  They are therefore **candidate
+substitutes rather than complements**, and the question this script answers is
+whether denoising gains anything over windowing alone.  Measuring either without
+the other would answer a different question.
 
 **Why noise is planted here and not in ``tests/parzen.py``'s sweep.**  A
-noiseless sweep cannot show this filter in a good light and should not be
-quoted as if it could: with no noise to remove, a spatial filter can only take
-away structure the estimate was using.  A run at ``snr=inf`` is included for
-exactly that reason -- it is the control that says how much the filter costs
-when there is nothing for it to do.
+noiseless sweep cannot show this filter to advantage and must not be quoted as
+if it could: with no noise to remove, a spatial filter can only take away
+structure the estimate was using.  A run at ``snr=inf`` is included as the
+control, which reports how much the filter costs when there is nothing to
+remove.
 
 **What is measured.**  The first table is ``tests/tables.py``'s experiment at
 the shipped spacing: plant a smooth field of known amplitude on
 ``brain_nu_ref.mnc``, add white noise at a stated SNR, correct it, and report
 the non-uniformity left in the recovered field once the same configuration's
 answer on the untouched reference has been divided out.  Lower is better.
-Thirty iterations with the early stop disabled, so that a cell measures the fit
+Thirty iterations with the early stop disabled, so a cell measures the fit
 rather than which side of the stopping rule a run fell on.
 
 The ``off``/``linear (N3)``/``snr inf`` cell is ``tables.py``'s published cell
 at the same spacing and weight, so a mismatch there means something moved
-elsewhere and no other number here should be believed.
+elsewhere and no other number here is reliable.
 
-**What this cannot tell you.**  One analytic field, on one volume, at one seed.
-``tests/parzen.py`` carries the same caveat and ``experiments/`` is the answer
-to it: 450 random fields per configuration, which is what a claim about real
-data needs.  This is the fast orientation, not the verdict.
+**Limits.**  One analytic field, on one volume, at one seed.
+``tests/parzen.py`` carries the same caveat, and ``experiments/`` addresses it:
+450 random fields per configuration, which is what a claim about real data
+requires.  This is a fast orientation rather than a verdict.
 """
 
 import argparse
@@ -157,12 +157,12 @@ def protocol(verbose=False):
 
     Returns ``{denoising: (iterations, rms_vs_reference, rms_vs_plain)}``.  The
     iteration count is reported because ``-stop`` is a threshold on how far the
-    field moved: a volume whose noise has been taken off settles differently,
-    and that is a different run rather than merely a different answer
-    (CLAUDE.md, "The stopping rule quantises everything downstream").
+    field moved: a volume whose noise has been removed settles differently, and
+    that is a different run rather than only a different answer (CLAUDE.md, "The
+    stopping rule quantises everything downstream").
 
     ``rms_vs_reference`` is *not* an accuracy verdict.  N3 produced
-    ``brain_nu_ref.mnc``, so anything that changes N3 moves away from it; the
+    ``brain_nu_ref.mnc``, so anything that changes N3 moves away from it.  The
     number establishes that the option is not cosmetic.
     """
     brain = load_volume(legacy_data("brain.mnc"))
@@ -191,8 +191,8 @@ def protocol(verbose=False):
 def cost():
     """What the filter costs, against the estimation it feeds.
 
-    Reproduced here rather than copied into prose, because it is the number
-    that decides whether the option is usable at all.
+    Measured here rather than copied into prose, since it determines whether the
+    option is usable at all.
     """
     brain = load_volume(legacy_data("brain.mnc"))
     model_mask = load_volume(MODEL_MASK)

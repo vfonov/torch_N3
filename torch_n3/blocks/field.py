@@ -1,16 +1,16 @@
 """Extending the field past the mask (``correct_field``).
 
 The spline N3 fits is exactly zero outside its domain and meaningless outside
-the mask it was fitted in, but ``nu_evaluate`` still has to divide the *whole*
-volume by something.  So before dividing, the masked field is extended
-outwards by solving Laplace's equation on everything the mask does not cover,
-with the fitted values as boundary data: the smoothest possible continuation.
+the mask it was fitted in, but ``nu_evaluate`` divides the *whole* volume by it.
+Before dividing, the masked field is therefore extended outwards by solving
+Laplace's equation on everything the mask does not cover, with the fitted values
+as boundary data: the smoothest continuation.
 
 The solver follows ``legacy/N3/src/CorrectField/correctField.cc``: successive
-over-relaxation, run on a coarse grid first and interpolated down, which is
-what makes it converge in a workable number of sweeps.  The legacy sweeps in
-raster order; sweeping the two checkerboard colours in turn is the same
-Gauss-Seidel iteration in a different order, and is what lets it vectorise.
+over-relaxation, run on a coarse grid first and interpolated down, which is what
+makes it converge in a workable number of sweeps.  The legacy sweeps in raster
+order; sweeping the two checkerboard colours in turn is the same Gauss-Seidel
+iteration in a different order, and vectorises.
 """
 
 import torch
@@ -84,9 +84,9 @@ def _relax(values, free, weight, stride, sweeps):
 def _neighbour_average(values, weight):
     """The weighted sum of each voxel's neighbours, and the weight it carries.
 
-    Voxels on the edge of the grid simply have fewer neighbours -- the legacy
-    leaves the missing ones out of both sums rather than reflecting them,
-    which is a zero-flux boundary.
+    Voxels on the edge of the grid have fewer neighbours.  The legacy leaves the
+    missing ones out of both sums rather than reflecting them, which is a
+    zero-flux boundary.
     """
     total = torch.zeros_like(values)
     count = torch.zeros_like(values)
@@ -108,9 +108,9 @@ def _interpolate(values, free, stride):
     """Fill in the voxels between one level's samples, axis by axis.
 
     The legacy's extension operator (``correctField.cc:126-179``): halve the
-    spacing along the last axis, then the middle one, then the first, taking
-    the mean of the two neighbours already known -- and copying the last
-    known value where the grid runs out before a midpoint does.
+    spacing along the last axis, then the middle one, then the first, taking the
+    mean of the two neighbours already known, and copying the last known value
+    where the grid runs out before a midpoint does.
     """
     half = stride // 2
     coarse = slice(None, None, stride)

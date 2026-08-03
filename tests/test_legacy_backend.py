@@ -1,9 +1,9 @@
 """Stage 1: the legacy backend really is the legacy algorithm.
 
-These tests pin the CFFI shim against the *installed* N3 programs, so that the
-Stage 2 tests can trust it as an oracle.  If the shim ever drifts from what
-`sharpen_hist` and friends actually do, these fail rather than the PyTorch
-tests, which keeps the blame in the right place.
+These tests compare the CFFI shim against the *installed* N3 programs, so the
+Stage 2 tests can treat it as an oracle.  If the shim drifts from what
+`sharpen_hist` and the other programs do, these fail rather than the PyTorch
+tests, which localises the fault.
 """
 
 import pytest
@@ -15,7 +15,7 @@ from torch_n3.volume import Volume
 
 
 def unit_grid(shape):
-    """A 1 mm isotropic grid at the origin -- geometry only, no data."""
+    """A 1 mm isotropic grid at the origin: geometry only, no data."""
     return Volume(torch.zeros(shape), start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0))
 
 
@@ -51,8 +51,8 @@ def test_parzen_smooths_relative_to_plain_binning(gaussian_mixture):
 def test_sharpen_lut_matches_the_installed_sharpen_hist(legacy_output):
     """The shim and the real `sharpen_hist` binary must agree.
 
-    On the histogram the binary was handed, which is recorded next to its
-    answer -- so this compares the deconvolution and nothing else.
+    On the histogram the binary was given, which is recorded next to its answer,
+    so this compares the deconvolution and nothing else.
     """
     counts = legacy_output["sharpen_hist.chunk_counts"]
     value_range = tuple(float(v) for v in legacy_output["sharpen_hist.chunk_range"])

@@ -2,21 +2,21 @@
 
 Everything the driver needs to build one trial and score it: a random smooth
 field, Gaussian noise at a stated SNR, and the residual non-uniformity left
-after the pipeline has had its go.  No files are written here and nothing is
-printed; :mod:`experiments.recovery` does both.
+after the pipeline has run.  No files are written here and nothing is printed;
+:mod:`experiments.recovery` does both.
 
 Two things are deliberately *not* shared with ``tests/``:
 
-* the random generators, because ``tests/inputs.py`` says in its own docstring
-  that it holds no random numbers: a recorded answer is usable only if
-  the question can be asked again exactly, and these questions cannot;
-* the file round trip (``tests.inputs.as_stored``), because that exists so a
-  test sees the volume quantised the way ``nu_correct`` saw it through a
-  16-bit MINC file.  There is no legacy oracle in this experiment, so
-  everything stays float64 in memory.
+* the random generators, because ``tests/inputs.py`` holds no random numbers: a
+  recorded answer is usable only if the question can be asked again exactly, and
+  these questions cannot;
+* the file round trip (``tests.inputs.as_stored``), which exists so a test sees
+  the volume quantised the way ``nu_correct`` saw it through a 16-bit MINC file.
+  There is no legacy oracle in this experiment, so everything stays float64 in
+  memory.
 
-The score, on the other hand, *is* the one ``tests/tables.py`` publishes, so
-the two experiments can be read against each other.
+The score *is* the one ``tests/tables.py`` publishes, so the two experiments can
+be read against each other.
 """
 
 import math
@@ -72,9 +72,9 @@ def random_bias_field(volume, inside, log_range, seed, scale=FIELD_SCALE,
     than in normalised axes so that the difficulty of a trial is a property of
     the field rather than of how big the volume happens to be.
 
-    Deliberately not a B-spline: N3's basis should have to approximate this,
-    not reproduce it.  Normalised to mean 1 inside ``inside``, since a bias
-    field is only ever defined up to a global scale -- the same convention as
+    Deliberately not a B-spline: N3's basis must approximate this rather than
+    reproduce it.  Normalised to mean 1 inside ``inside``, since a bias field is
+    defined only up to a global scale; the same convention as
     ``tests.inputs.synthetic_bias_field``.
 
     The draw happens on the CPU whatever device ``volume`` is on, so a seed
@@ -114,9 +114,9 @@ def noise_sigma(volume, inside, snr):
     """The noise standard deviation that gives ``snr`` inside ``inside``.
 
     SNR is the mean signal over the mask divided by the noise standard
-    deviation, and the mean is taken from the *clean, unbiased* volume so that
-    it does not drift with the amplitude of whatever field is planted:  SNR 20
-    means the same thing in every cell of the sweep.  ``inf`` means no noise.
+    deviation.  The mean is taken from the *clean, unbiased* volume so it does
+    not drift with the amplitude of the planted field: SNR 20 means the same
+    thing in every cell of the sweep.  ``inf`` means no noise.
     """
     if math.isinf(snr):
         return 0.0
@@ -127,7 +127,7 @@ def add_noise(data, sigma, seed):
     """``data`` plus white Gaussian noise, floored at zero.
 
     Drawn on the CPU for the same reason the field is.  The floor is what a
-    magnitude image does anyway; inside the mask it never bites (the mean is
+    magnitude image does anyway; inside the mask it never applies (the mean is
     242702 and the largest sigma here is 12135), and outside it only keeps
     ``log()`` in the pipeline away from negative numbers.
     """
@@ -143,11 +143,11 @@ def unexplained(recovered, baseline, planted):
     """The part of a recovered field that is not the field that was planted.
 
     All three arguments are already restricted to the mask and flattened.
-    Divided by ``baseline`` -- the same configuration's answer on the
-    untouched volume -- because colin27 is not perfectly uniform to begin with
-    and N3 removes that too; without it this would charge the code for
-    non-uniformity it corrected successfully.  Renormalised to mean 1, since
-    only a field's shape means anything.
+    Divided by ``baseline`` -- the same configuration's answer on the untouched
+    volume -- because colin27 is not perfectly uniform and N3 removes that too;
+    without it this would charge the code for non-uniformity it corrected
+    successfully.  Renormalised to mean 1, since only a field's shape is
+    significant.
 
     This is ``tests/tables.py``'s ratio, and :func:`residual_percent` of it is
     the number that file publishes.
@@ -164,15 +164,15 @@ def residual_percent(ratio):
 def log_rms(ratio):
     """The same residual in log units: RMS of ``log(ratio)`` about its mean.
 
-    Differences in log intensity are what N3 actually works in, and unlike the
-    percentage above this one does not care that the ratio was normalised.
+    N3 works in differences of log intensity, and unlike the percentage above
+    this measure is unaffected by the ratio's normalisation.
     """
     logs = torch.log(ratio)
     return float((logs - logs.mean()).pow(2).mean().sqrt())
 
 
 def non_uniformity_percent(field):
-    """A field's coefficient of variation -- what was there to remove."""
+    """A field's coefficient of variation: what there was to remove."""
     return 100.0 * float(field.std(unbiased=False) / field.mean())
 
 
@@ -194,18 +194,19 @@ def basis_spline(volume, mask, planted, distance, lam, solver,
                  shrink=DEFAULTS["shrink"]):
     """``planted`` fitted by the spline the pipeline ends with.
 
-    Same grid, same knot spacing, same weight, same solver, same samples as
-    step 7 of ``nu_estimate`` (``pipeline.py:118-124``) -- so the difference
+    Same grid, same knot spacing, same weight, same solver and same samples as
+    step 7 of ``nu_estimate`` (``pipeline.py:118-124``), so the difference
     between this and ``planted`` is representation error: the part of the field
-    this basis cannot express at all, no matter how well the rest of the
-    pipeline estimates it.
+    this basis cannot express, however well the rest of the pipeline estimates
+    it.
 
-    The fit is of the field, not of its log, because that is what step 7 fits.
+    The fit is of the field rather than its log, because that is what step 7
+    fits.
 
     This is also the *oracle estimator* of ``experiments.recovery``: an
-    estimator handed the answer, which then does nothing but express it in the
-    basis.  Nothing that reads a voxel intensity can do better, so what it
-    scores is the ceiling for a given ``distance`` and ``lam``.
+    estimator given the answer, which only expresses it in the basis.  Nothing
+    that reads a voxel intensity can do better, so what it scores is the ceiling
+    for a given ``distance`` and ``lam``.
     """
     grid, inside_grid = estimation_grid(volume, mask, shrink)
     return BSplineField(grid, distance, lam, solver=solver).fit(
@@ -223,9 +224,9 @@ def basis_floor(volume, mask, planted, inside, distance, lam, solver,
                 shrink=DEFAULTS["shrink"]):
     """The best score the basis could have got on this field, over ``inside``.
 
-    :func:`basis_field` scored the way a trial is scored, against a flat
-    baseline.  A trial sitting near its floor is limited by the basis; one far
-    above it is limited by the estimation.
+    :func:`basis_field` scored as a trial is scored, against a flat baseline.  A
+    trial near its floor is limited by the basis; one far above it is limited by
+    the estimation.
     """
     return score(basis_field(volume, mask, planted, distance, lam, solver,
                              shrink), torch.ones_like(planted), planted,
@@ -235,9 +236,9 @@ def basis_floor(volume, mask, planted, inside, distance, lam, solver,
 def score(recovered, baseline, planted, region):
     """``(unexplained_percent, log_rms)`` over one region.
 
-    All three fields are given on the whole grid and restricted here, so that
-    a single estimate can be scored over several regions -- the head the
-    estimation ran in, and the brain it is actually meant to help.
+    All three fields are given on the whole grid and restricted here, so a
+    single estimate can be scored over several regions: the head the estimation
+    ran in, and the brain the correction is for.
     """
     ratio = unexplained(recovered[region], baseline[region], planted[region])
     return residual_percent(ratio), log_rms(ratio)

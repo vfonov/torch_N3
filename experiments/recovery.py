@@ -2,40 +2,38 @@
 
     python3 -m experiments.recovery --seeds 50
 
-Not a test.  Nothing here asserts; it plants a random smooth field on
-colin27, adds Gaussian noise at a stated SNR, estimates the field, and writes
-one CSV row per trial saying how much of it came back and how long it took.
+Not a test.  Nothing here asserts.  It plants a random smooth field on colin27,
+adds Gaussian noise at a stated SNR, estimates the field, and writes one CSV row
+per trial recording how much of it was recovered and how long it took.
 ``experiments/README.md`` defines every column and ``experiments.summarize``
 reads them.
 
 Four estimators, chosen with ``--method`` (see :data:`METHODS`), the last of
-which is a ceiling rather than an estimator: ``oracle`` is *given* the field
-that was planted and does nothing but express it in the spline basis, so no
-method that has to work it out from the intensities can score better.
+which is a ceiling rather than an estimator: ``oracle`` is *given* the planted
+field and only expresses it in the spline basis, so no method that has to derive
+it from the intensities can score better.
 
 **Why over many trials.**  ``tests/test_field_recovery.py`` and
-``tests/tables.py`` plant *one* analytic field on *one* volume with no noise,
-and every number they publish is a single draw.  CLAUDE.md states the
-consequence: if a result comes to depend on a particular cell, the correct
-remedy is to widen ``LAMBDAS`` and assert the property being claimed.  Fifty
-seeds give each configuration a distribution instead, so that the summary can
-report an interquartile range and a difference between two solvers can be read
-against the spread within one.
+``tests/tables.py`` plant *one* analytic field on *one* volume with no noise, so
+every number they publish is a single draw.  CLAUDE.md states the consequence:
+if a result comes to depend on a particular cell, the remedy is to widen
+``LAMBDAS`` and assert the property being claimed.  Fifty seeds give each
+configuration a distribution, so the summary can report an interquartile range
+and a difference between two solvers can be read against the spread within one.
 
-**Resumable, by design.**  The full sweep takes hours.  Every row is flushed
-as it is produced and a re-run skips any trial already in the file, so the job
-can be interrupted and restarted, or extended with further seeds, without
-losing or repeating work.  The key is every column that defines a trial -- see
-:data:`KEY`.
+**Resumable by design.**  The full sweep takes hours.  Every row is flushed as
+it is produced and a re-run skips any trial already in the file, so the job can
+be interrupted and restarted, or extended with further seeds, without losing or
+repeating work.  The key is every column that defines a trial; see :data:`KEY`.
 
-**Two regions.**  Every trial is scored twice, over the mask the estimation
-ran in and over the brain within it; see :func:`_regions` for the measured
-reason the distinction is carried.
+**Two regions.**  Every trial is scored twice, over the mask the estimation ran
+in and over the brain within it; :func:`_regions` gives the measured reason for
+the distinction.
 
-**Where it runs.**  On the GPU by default, falling back to the CPU on a
-machine without one; ``--device cpu`` forces it.  ``device`` is one of the key
-columns, so the two never mix in a summary and a sweep is resumable only
-against rows from the same device.
+**Where it runs.**  On the GPU by default, falling back to the CPU on a machine
+without one; ``--device cpu`` forces it.  ``device`` is a key column, so the two
+never mix in a summary and a sweep is resumable only against rows from the same
+device.
 
 **Cost.**  The default sweep is 3,600 trials.  ``--dry-run`` counts them in
 advance, and the ``seconds`` column records what they took.  Run one sweep at a
@@ -224,12 +222,12 @@ def main(argv=None):
 def _device(requested):
     """The device to run on: the GPU unless told otherwise.
 
-    Every tensor in this experiment is float64 and the volumes are large, so
-    the machine's GPU is the right default when it has one -- but ``device``
-    is a key column, and a sweep is only comparable within one device (see
-    CLAUDE.md on how far CPU and GPU drift over thirty iterations).  Falls
-    back to the CPU rather than failing when there is no GPU, so the same
-    command works on a machine without one.
+    Every tensor in this experiment is float64 and the volumes are large, so a
+    GPU is the appropriate default where one exists.  ``device`` is a key
+    column, and a sweep is comparable only within one device (see CLAUDE.md on
+    how far CPU and GPU drift over thirty iterations).  Falls back to the CPU
+    rather than failing when there is no GPU, so the same command works on a
+    machine without one.
     """
     if requested:
         return requested
@@ -239,11 +237,11 @@ def _device(requested):
 def _protocols(method, protocols):
     """The protocols worth running for one method.
 
-    ``protocol`` is N3's iteration rule.  A descent does not have one and the
-    oracle does not iterate at all, so sweeping it over them would multiply the
-    work and write the same trial twice under two labels.  Decided per method
-    rather than once for the whole run, so that ``--method n3 oracle`` sweeps
-    both protocols for N3 without duplicating the ceiling.
+    ``protocol`` is N3's iteration rule.  A descent has none and the oracle does
+    not iterate, so sweeping it over them would multiply the work and write the
+    same trial twice under two labels.  Decided per method rather than once for
+    the whole run, so ``--method n3 oracle`` sweeps both protocols for N3
+    without duplicating the ceiling.
     """
     return protocols if method == "n3" else protocols[:1]
 
@@ -253,10 +251,9 @@ def _windows(method, windows):
 
     ``--parzen-sigma`` is a parameter of N3's histogram, and only ``n3`` has
     one: the descent methods build their own soft histogram
-    (``blocks/sharpness.py``) and the oracle reads no intensities at all.  So
-    sweeping it over them would multiply the work and write the same trial
-    several times under different labels -- the same reason :func:`_protocols`
-    exists.
+    (``blocks/sharpness.py``) and the oracle reads no intensities.  Sweeping it
+    over them would multiply the work and write the same trial several times
+    under different labels, for the same reason :func:`_protocols` exists.
     """
     return windows if method == "n3" else windows[:1]
 
@@ -264,11 +261,11 @@ def _windows(method, windows):
 def _variants(method, args):
     """The ``(parzen_sigma, denoise)`` pairs worth running for one method.
 
-    The port carries two modifications to the algorithm and both are swept
-    here, but they do not apply to the same methods, so pairing them is what
-    keeps the loop from running a cell that differs from another only in a
-    label.  Returned as a list rather than a generator because the trial count
-    is taken from its length before the sweep starts.
+    The port carries two modifications to the algorithm and both are swept here,
+    but they do not apply to the same methods, so pairing them prevents the loop
+    from running a cell that differs from another only in a label.  Returned as
+    a list rather than a generator because the trial count is taken from its
+    length before the sweep starts.
     """
     return [(sigma, filtered)
             for sigma in _windows(method, args.parzen_sigma)
@@ -280,9 +277,9 @@ def _denoisings(method, denoisings):
 
     ``--denoise`` filters the volume before anything reads it, so unlike
     ``--parzen-sigma`` it applies to the descent methods as well as to N3.  It
-    does not apply to the oracle, which is handed the planted field and reads
-    no intensity at all: filtering the volume cannot change an answer that
-    never looked at it, so sweeping it there would write the same trial twice.
+    does not apply to the oracle, which is given the planted field and reads no
+    intensity: filtering the volume cannot change an answer that never read it,
+    so sweeping it there would write the same trial twice.
     """
     return denoisings if method != ORACLE else denoisings[:1]
 
@@ -290,9 +287,9 @@ def _denoisings(method, denoisings):
 def _denoising(method, filtered):
     """The prefiltering a cell runs at, resolved so the key records it.
 
-    Empty for a run that was not filtered -- the absence of a filter rather
-    than a setting of it, and what every row written before this column existed
-    ran under -- and for the oracle, which has no such parameter.
+    Empty for a run that was not filtered -- the absence of a filter rather than
+    a setting of it, and what every row written before this column existed ran
+    under -- and for the oracle, which has no such parameter.
     """
     if method == ORACLE or not filtered:
         return ""
@@ -303,9 +300,8 @@ def _window(method, sigma):
     """The window a cell runs at, resolved so the key records it.
 
     Empty both for the methods that have no such parameter and for N3's own
-    linear split, which is the absence of a Gaussian window rather than a
-    width of zero -- and is what every row written before this column existed
-    ran under.
+    linear split, which is the absence of a Gaussian window rather than a width
+    of zero, and is what every row written before this column existed ran under.
     """
     if method != "n3" or sigma is None:
         return ""
@@ -315,12 +311,11 @@ def _window(method, sigma):
 def _weight(method, requested):
     """The penalty a cell actually runs at, resolved so the key records it.
 
-    Empty for the methods in :data:`UNWEIGHTED`, which have no such parameter
-    -- writing ``None`` there would make it look like a value that was left
-    unset.  For a descent, the number that will be used, taken from
-    ``optimize.PENALTY`` when the command line did not say: a key that recorded
-    "the default" rather than the default's value would stop meaning anything
-    the day that changes.
+    Empty for the methods in :data:`UNWEIGHTED`, which have no such parameter;
+    writing ``None`` there would resemble a value left unset.  For a descent,
+    the number that will be used, taken from ``optimize.PENALTY`` when the
+    command line did not supply one: a key recording "the default" rather than
+    the default's value would stop meaning anything the day that changes.
     """
     if method in UNWEIGHTED:
         return ""
@@ -338,12 +333,12 @@ def _budget(method, args):
 def _settings(cell, args):
     """The keyword arguments the estimator named by ``cell["method"]`` takes.
 
-    All three families share ``distance``, ``shrink`` and ``solver`` -- the
-    field model is the same -- and share little else: ``iterations``/``stop``
-    are N3's stopping rule, ``penalty``/``sample_size``/``seed`` belong to the
+    All three families share ``distance``, ``shrink`` and ``solver``, the field
+    model being the same, and share little else: ``iterations``/``stop`` are
+    N3's stopping rule, ``penalty``/``sample_size``/``seed`` belong to the
     descent, and ``lam`` and ``penalty`` are weights on incomparable scales.
-    The oracle takes ``lam``, because it is fitting a spline and that is the
-    weight it fits under; it is the same ``lam`` N3's final fit uses.
+    The oracle takes ``lam`` because it fits a spline and that is the weight it
+    fits under; it is the same ``lam`` N3's final fit uses.
     """
     common = dict(distance=cell["distance"], shrink=args.shrink,
                   solver=cell["solver"])
@@ -366,15 +361,14 @@ def _settings(cell, args):
 def _regions(volume, inside, args):
     """Where a trial is scored: the estimation mask, and the brain inside it.
 
-    N3 estimates over whatever mask it was given -- here the whole head -- but
-    a head mask takes in scalp, skull and neck, where the field is worst
-    determined and where nobody is going to use the correction anyway.
-    Measured at 75 mm on colin27, one field scores 2.1% over the head and
-    0.96% over the brain, and the analytic field of
-    ``tests.inputs.synthetic_bias_field`` splits the same way (1.9% / 0.80%),
-    so it is the region rather than the generator.  Both are recorded: the
-    first is what the estimation was asked to do, the second is what it is
-    for.
+    N3 estimates over the mask it was given, here the whole head, but a head
+    mask includes scalp, skull and neck, where the field is least well
+    determined and where the correction is not used.  Measured at 75 mm on
+    colin27, one field scores 2.1% over the head and 0.96% over the brain, and
+    the analytic field of ``tests.inputs.synthetic_bias_field`` splits the same
+    way (1.9% / 0.80%), so the difference is the region rather than the
+    generator.  Both are recorded: the first is what the estimation was asked to
+    do, the second is its purpose.
     """
     regions = {"mask": inside}
     if args.brain_mask and os.path.exists(args.brain_mask):
@@ -386,12 +380,12 @@ def _regions(volume, inside, args):
 def _sweep(write, done, volume, mask, regions, settings, cell, seeds, args):
     """Every trial at one ``(solver, protocol, distance, lam)``.
 
-    The baseline -- this configuration's answer on the clean, unbiased volume
-    -- does not depend on the seed, the amplitude or the SNR, so it is
-    computed once here and held only for as long as this configuration lasts.
-    That is what fixes the loop order: a grid search over ``--distance`` and
-    ``--lambda`` then pays one baseline per cell rather than one per trial,
-    and never holds more than one masked volume of them at a time.
+    The baseline -- this configuration's answer on the clean, unbiased volume --
+    does not depend on the seed, the amplitude or the SNR, so it is computed
+    once here and held only while this configuration lasts.  That fixes the loop
+    order: a grid search over ``--distance`` and ``--lambda`` then pays one
+    baseline per cell rather than one per trial, and never holds more than one
+    masked volume of them at a time.
     """
     if all(_key(dict(cell, seed=seed, amplitude=amplitude, snr=snr,
                      shrink=args.shrink, device=args.device))
@@ -486,10 +480,10 @@ def _estimate(volume, mask, method, settings, truth=None):
     ``torch_n3/pipeline.py`` for the sake of an experiment; ``nu_optimize``
     reports its own, along with the loss it reached.
 
-    ``truth`` is the planted field, and only :data:`ORACLE` is given it -- that
-    is what makes it the ceiling rather than an estimator.  ``None`` means the
+    ``truth`` is the planted field, and only :data:`ORACLE` is given it, which
+    is what makes it a ceiling rather than an estimator.  ``None`` means the
     untouched volume, whose field is unity by definition, which is how the
-    oracle's baseline is computed on the same terms as everyone else's.  Its
+    oracle's baseline is computed on the same terms as the others'.  Its
     ``iterations`` is 1: one spline fit, no loop.
     """
     buffer = io.StringIO()
@@ -518,9 +512,9 @@ def _estimate(volume, mask, method, settings, truth=None):
 def _rows(path):
     """Append rows to ``path``, flushing each one as it is written.
 
-    Flushed because the sweep is hours long and the interesting failure mode
-    is being killed part way through.  The header is written only when the
-    file is new, so appending to an existing sweep just extends it.
+    Flushed because the sweep is hours long and the expected failure mode is
+    being killed part way through.  The header is written only when the file is
+    new, so appending to an existing sweep extends it.
     """
     directory = os.path.dirname(os.path.abspath(path))
     if directory:
@@ -546,17 +540,15 @@ def _rows(path):
 def _check_header(path):
     """Refuse to append rows in an order the file's header does not describe.
 
-    A header is written once, when the file is created; every later run
-    appends under it.  So if :data:`COLUMNS` has changed since -- a column
-    added, or moved, as ``method``, ``penalty`` and ``loss`` all were -- the
-    new rows are written in the new order beneath the old header, and every
-    field after the first change lands in the wrong column undetected.  It is
-    not detectable by reading the file: the rows parse, the numbers are
-    plausible, and the summary is wrong.
+    A header is written once, when the file is created; every later run appends
+    under it.  If :data:`COLUMNS` has changed since -- a column added or moved,
+    as ``method``, ``penalty`` and ``loss`` all were -- the new rows are written
+    in the new order beneath the old header, and every field after the first
+    change lands in the wrong column.  Reading the file does not reveal it: the
+    rows parse, the numbers are plausible, and the summary is wrong.
 
-    It happened here, to 450 rows, and this is the guard that stops it
-    recurring undetected.  The remedy for an existing file is to rewrite it
-    under the current header, not to widen this check.
+    This occurred once, to 450 rows.  The remedy for an existing file is to
+    rewrite it under the current header, not to widen this check.
     """
     with open(path, newline="") as handle:
         header = next(csv.reader(handle), [])
@@ -573,8 +565,8 @@ def _completed(path):
     """The keys of every trial already in ``path``.
 
     A row from before a key column existed is read at that column's default,
-    which is what keeps an older sweep resumable rather than repeating
-    all of it under a new key.
+    which keeps an older sweep resumable rather than repeating all of it under a
+    new key.
     """
     if not os.path.exists(path):
         return set()
@@ -631,8 +623,8 @@ def _provenance(args):
     """What produced these rows, repeated on every one of them.
 
     Duplicated per row rather than kept in a header because rows from several
-    runs -- and several machines -- end up in the same file, and a summary is
-    only trustworthy if it can tell them apart.
+    runs, and several machines, end up in the same file, and a summary is
+    trustworthy only if it can distinguish them.
     """
     return dict(backend=args.backend, torch_version=torch.__version__,
                 host=socket.gethostname(), git_commit=_commit(),

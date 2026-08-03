@@ -4,30 +4,29 @@ Every other test here asks whether the port reproduces the original N3.  This
 one asks the question an application has: given a volume with a known
 non-uniformity, does N3 return that non-uniformity?
 
-The substrate is ``brain_nu_ref.mnc``, real anatomy that has already been
-processed by ``nu_correct``, so the non-uniformity remaining in it is small
-compared with the field added here.  A smooth multiplicative field of a
-set amplitude goes on top, and three implementations are asked to correct the
-result at each of several knot spacings: the PyTorch blocks, the same pipeline
-running the original C++ blocks, and the installed ``nu_correct`` -- whose
-answers were recorded once, from volumes written out as
-``brain_nu_artificial.mnc``, and are read back from ``tests/reference/``
+The substrate is ``brain_nu_ref.mnc``, real anatomy already processed by
+``nu_correct``, so the non-uniformity remaining in it is small compared with the
+field added here.  A smooth multiplicative field of a set amplitude is applied,
+and three implementations correct the result at each of several knot spacings:
+the PyTorch blocks, the same pipeline running the original C++ blocks, and the
+installed ``nu_correct``, whose answers were recorded once from volumes written
+out as ``brain_nu_artificial.mnc`` and are read back from ``tests/reference/``
 rather than recomputed.
 
-Comparing the two backends is the fairest comparison: same pipeline, same
-input, only the blocks differ.  ``nu_correct`` is the stronger one, because it
-shares no code with either.  Sweeping ``-distance`` is what makes either worth
-much: it is the B-spline block's main parameter, it changes the number of
-coefficients five-fold over the range used here, and a fault in knot placement
-would most likely show at some spacings and not others.
+Comparing the two backends is the most controlled comparison: same pipeline,
+same input, only the blocks differ.  ``nu_correct`` is the stronger one, sharing
+no code with either.  Sweeping ``-distance`` is what makes either informative:
+it is the B-spline block's main parameter, it changes the number of coefficients
+five-fold over the range used here, and a fault in knot placement would most
+likely appear at some spacings and not others.
 
 **Every run is given a fixed iteration count with the early stop disabled.**
-That is not a detail.  Left alone, N3 stops at ``change < 0.001``, and in four
-of the six cells here the two backends land on opposite sides of it and run a
-different number of iterations -- an entire extra field update, which moves
-the answer several times more than any block-level difference.  Holding the
-count fixed makes this a comparison of implementations rather than of where a
-threshold happened to fall; it improves agreement by up to 8x.
+Left alone, N3 stops at ``change < 0.001``, and in four of the six cells here
+the two backends land on opposite sides of it and run a different number of
+iterations: an entire extra field update, which moves the answer several times
+more than any block-level difference.  Holding the count fixed makes this a
+comparison of implementations rather than of where a threshold happened to fall,
+and improves agreement by up to 8x.
 
 Everything below is computed inside the model mask and nowhere else, which is
 also all that is recorded.
@@ -81,8 +80,8 @@ AGREEMENT = 1e-3
 def non_uniformity(field):
     """How much a field varies, as a coefficient of variation.
 
-    This is the number N3 exists to reduce, and comparing it before and after
-    is how the paper reports its own results.
+    The number N3 exists to reduce; comparing it before and after is how the
+    paper reports its own results.
     """
     return float(field.std(unbiased=False) / field.mean())
 
@@ -106,10 +105,10 @@ class Recovery:
         """The part of ``source``'s answer that is not the planted field.
 
         Divided by that implementation's own baseline as well, because the
-        reference is not perfectly uniform to begin with and N3 removes that
-        too; without dividing it out the comparison would charge this code for
-        non-uniformity it corrected successfully.  Renormalised, since only
-        the shape of a field means anything.
+        reference is not perfectly uniform and N3 removes that too; without
+        dividing it out, the comparison would charge this code for
+        non-uniformity it corrected successfully.  Renormalised, since only a
+        field's shape is significant.
         """
         ratio = self.recovered[source] / self.baseline[source] / self.planted
         return ratio / ratio.mean()
@@ -132,9 +131,9 @@ class Recovery:
         """How far apart two implementations' recovered fields are.
 
         Relative RMS over the mask.  Deliberately not the largest single
-        difference: that is an extreme-value statistic over a quarter of a
-        million voxels, dominated by a few on the edge of the mask, and no
-        fixed bound on it would mean much.
+        difference, which is an extreme-value statistic over a quarter of a
+        million voxels, dominated by a few at the mask edge, and which supports
+        no fixed bound.
         """
         difference = self.unexplained(one) - self.unexplained(other)
         return float((difference ** 2).mean().sqrt())
@@ -144,10 +143,10 @@ class Recovery:
 def baseline(legacy_output, tmp_path_factory, brain_reference, model_mask):
     """What each implementation finds in the *untouched* reference volume.
 
-    Not zero: ``brain_nu_ref.mnc`` still carries about 0.5% of non-uniformity,
-    each implementation has its own opinion of what it is, and that opinion
-    depends on the knot spacing like everything else.  Measuring it once per
-    spacing keeps it out of the comparisons below.
+    Not zero: ``brain_nu_ref.mnc`` still carries about 0.5% non-uniformity, each
+    implementation estimates it differently, and that estimate depends on the
+    knot spacing.  Measuring it once per spacing keeps it out of the comparisons
+    below.
     """
     inside = model_mask.resample_like(brain_reference).data != 0
     volume = as_stored(tmp_path_factory.mktemp("baseline"), "reference.mnc",
@@ -174,8 +173,8 @@ def recoveries(legacy_output, tmp_path_factory, brain_reference, model_mask,
     """Every (amplitude, spacing) experiment, built once.
 
     One dictionary rather than a parametrised fixture, because
-    :func:`test_a_stiffer_spline_recovers_a_smooth_field_better` compares
-    across spacings and would otherwise have to redo them all.
+    :func:`test_a_stiffer_spline_recovers_a_smooth_field_better` compares across
+    spacings and would otherwise recompute them all.
     """
     inside = model_mask.resample_like(brain_reference).data != 0
     directory = tmp_path_factory.mktemp("recovery")
@@ -217,7 +216,7 @@ def recovery(request, recoveries):
 def regularized(tmp_path_factory, brain_reference, model_mask):
     """Residual left at the *finest* spacing, as the penalty is raised.
 
-    Torch backend only: this is a claim about what N3 does, not about who
+    Torch backend only: this is a claim about what N3 does rather than about who
     implements it, and the parity of the two backends is established by the
     sweep above.
     """
@@ -253,7 +252,7 @@ def _estimate(volume, mask, backend, distance, inside):
 
 
 def test_the_planted_field_has_the_amplitude_asked_for(recovery):
-    """The experiment is only as good as its setup, so check the setup."""
+    """A check on the experiment's setup."""
     field = recovery.planted
 
     assert math.log(float(field.max() / field.min())) == pytest.approx(
@@ -265,23 +264,22 @@ def test_the_planted_field_has_the_amplitude_asked_for(recovery):
 def test_the_planted_field_is_recovered(recovery, backend):
     """At the very least, the non-uniformity has to be halved.
 
-    A floor on being useful rather than a description of performance: a bias
-    corrector that leaves more than half of a known field behind is not doing
-    its job, whatever the knot spacing.  What N3 actually manages is a good
-    deal better at 200 mm -- it leaves about 7% -- and degrades to 24-37% at
-    50 mm, as the spline is given freedom it does not need.
+    A floor on usefulness rather than a description of performance: a bias
+    corrector that leaves more than half of a known field behind is not working,
+    whatever the knot spacing.  N3 does considerably better at 200 mm, leaving
+    about 7%, and degrades to 24-37% at 50 mm as the spline is given freedom it
+    does not need.
     """
     assert recovery.residual(backend) < non_uniformity(recovery.planted) / 2
 
 
 def test_the_two_backends_recover_the_same_field(recovery):
-    """The fairest comparison: same pipeline, same input, other blocks.
+    """The controlled comparison: same pipeline, same input, other blocks.
 
     The blocks themselves agree to between 1e-13 and 1e-6 (``test_histogram.py``
-    and friends); this asks whether that survives thirty rounds of a loop that
-    feeds its own output back in.  What is left is genuine amplification, now
-    that the iteration count is held fixed -- see the module docstring for why
-    that mattered.
+    and the other block tests); this asks whether that survives thirty rounds of
+    a loop that feeds its own output back in.  What remains is amplification,
+    the iteration count being held fixed; see the module docstring.
     """
     assert recovery.disagreement("torch", "legacy") < AGREEMENT
 
@@ -290,9 +288,9 @@ def test_the_two_backends_recover_the_same_field(recovery):
 def test_it_recovers_as_much_as_nu_correct_did(recovery, backend):
     """The stronger check: no shared code with either implementation.
 
-    N3 leaves about 0.9% of the field behind on this data no matter who runs
-    it, so what an implementation can be held to is not an absolute residual
-    but whether it agrees with the original about which field is there.
+    N3 leaves about 0.9% of the field behind on this data whichever
+    implementation runs it, so an implementation can be held not to an absolute
+    residual but to agreement with the original about which field is present.
     """
     assert recovery.disagreement(backend, BINARY) < AGREEMENT
 
@@ -302,18 +300,16 @@ def test_a_stiffer_spline_recovers_a_smooth_field_better(recoveries, backend):
     """At the default regularization, freedom the field does not need hurts.
 
     The planted field is smooth by construction, as a real one is, so the
-    stiffest spline in the sweep is already able to represent it.  Giving the
-    fit more coefficients cannot help it and does measurably hurt: the extra
-    degrees of freedom go into following tissue contrast, which comes back as
-    field that was never planted.
+    stiffest spline in the sweep can already represent it.  Additional
+    coefficients cannot help and measurably hurt: the extra degrees of freedom
+    follow tissue contrast, which is returned as field that was never planted.
 
-    **At the default lambda.**  This is not a property of B-splines, it is a
-    property of leaving ``-lambda`` at ``1e-7`` while ``-distance`` shrinks;
-    the next test shows the same fit recovering once the penalty is raised to
-    match.  The whole sweep here is run at the default because that is what a
-    user gets.
+    **At the default lambda.**  This is a property of leaving ``-lambda`` at
+    ``1e-7`` while ``-distance`` shrinks, not a property of B-splines; the next
+    test shows the same fit recovering once the penalty is raised to match.  The
+    sweep here runs at the default because that is what a user gets.
 
-    Stated as a bare ordering between the ends of the sweep -- no factor to
+    Stated as a bare ordering between the ends of the sweep, with no factor to
     choose.  It is not monotone at every step and is not asserted to be.
     """
     for log_range in AMPLITUDES:
@@ -328,11 +324,11 @@ def test_more_regularization_recovers_what_a_finer_spline_lost(
         regularized, log_range, lam):
     """The two knobs trade off, so the loss above is not the spline's fault.
 
-    ``-distance`` sets how many coefficients the field is described by;
-    ``-lambda`` sets how much bending they are allowed between them.  Halve
-    the spacing without touching the penalty and the extra freedom goes into
-    anatomy -- but raise the penalty to match and the fit recovers.  Roughly a
-    decade of lambda per halving of distance, on this data:
+    ``-distance`` sets how many coefficients describe the field; ``-lambda``
+    sets how much bending is permitted between them.  Halving the spacing
+    without touching the penalty spends the extra freedom on anatomy; raising
+    the penalty to match recovers the fit.  Roughly a decade of lambda per
+    halving of distance, on this data:
 
     ========  ==========  =========  =========
     residual  d = 200 mm  d = 100 mm  d = 50 mm
@@ -343,8 +339,8 @@ def test_more_regularization_recovers_what_a_finer_spline_lost(
     1e-4        0.0085      0.0054     0.0035
     ========  ==========  =========  =========
 
-    Asserted as a bare ordering, at the finest spacing, for every weight
-    above the default -- not for one hand-picked value.
+    Asserted as a bare ordering, at the finest spacing, for every weight above
+    the default rather than for one selected value.
     """
     assert regularized[(log_range, lam)] < regularized[(log_range, DEFAULT_LAMBDA)]
 
@@ -353,13 +349,12 @@ def test_more_regularization_recovers_what_a_finer_spline_lost(
 def test_the_correction_restores_the_reference_volume(recoveries, log_range):
     """End to end at the shipped protocol, in the terms a user would put it in.
 
-    Correcting the artificial volume has to bring it back towards the volume
-    it was made from.  Asserted as a bare ordering, with no factor: at 200 mm
-    it in fact removes three quarters of the deviation at 20% and seven
-    eighths at 40%.
+    Correcting the artificial volume must bring it back towards the volume it
+    was made from.  Asserted as a bare ordering, with no factor: at 200 mm it
+    removes three quarters of the deviation at 20% and seven eighths at 40%.
 
-    Only at 200 mm, because it is not true at every spacing -- see the next
-    test, which is what that costs.
+    Only at 200 mm, because it does not hold at every spacing; the next test
+    records what that costs.
     """
     recovery = recoveries[(log_range, DEFAULT_DISTANCE)]
 
@@ -379,10 +374,10 @@ def test_too_fine_a_spline_undoes_the_correction(recoveries, log_range):
     field left it -- 1.10x the original deviation at 20%.  N3 removes the
     field and puts back anatomy it mistook for one.
 
-    That is not a defect in this port; it is why ``-distance`` is the knob N3
-    documents most carefully, and why 200 mm is the shipped default.  It is
-    asserted here as a bare ordering so that the sweep records the cost rather
-    than averaging over it -- and it is recoverable, which is the next test.
+    This is not a defect in the port; it is why ``-distance`` is the parameter
+    N3 documents most carefully, and why 200 mm is the shipped default.
+    Asserted as a bare ordering so the sweep records the cost rather than
+    averaging over it.  It is recoverable; see the next test.
     """
     at_default = recoveries[(log_range, DEFAULT_DISTANCE)]
     at_finest = recoveries[(log_range, min(DISTANCES))]

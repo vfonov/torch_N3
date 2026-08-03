@@ -2,19 +2,19 @@
 
     python3 -m tests.regenerate_reference
 
-Needs the MINC toolkit and the N3 programs on ``PATH``; nothing else in the
-suite does.  The programs are deterministic, so running this again when
-nothing has changed leaves ``git diff tests/reference`` empty -- which is the
-check that the recorded answers are still their answers.
+Requires the MINC toolkit and the N3 programs on ``PATH``; nothing else in the
+suite does.  The programs are deterministic, so re-running this when nothing has
+changed leaves ``git diff tests/reference`` empty, which is the check that the
+recorded answers are still their answers.
 
-The one file that will always show as changed is
-``tests/data/brain_nu_ref_legacy.mnc``: MINC stamps every file it writes with
-an ``ident`` attribute holding the user, host, time and pid.  Its voxel data is
-reproducible; those few header bytes are not.  Check the data, or restore the
-file, rather than committing the churn.
+The one file that always shows as changed is
+``tests/data/brain_nu_ref_legacy.mnc``: MINC stamps every file it writes with an
+``ident`` attribute holding the user, host, time and pid.  Its voxel data is
+reproducible; those header bytes are not.  Check the data, or restore the file,
+rather than committing the churn.
 
-Every case here is the input side of one test.  When a comparison is added
-against a legacy program, add the case here and read it back through the
+Every case here is the input side of one test.  When a comparison against a
+legacy program is added, add the case here and read it back through the
 ``legacy_output`` fixture rather than shelling out from the test.
 """
 
@@ -222,10 +222,10 @@ def recovery_cases(workspace, arrays, scalars):
     """``nu_correct`` on the planted-field volumes, at each knot spacing.
 
     ``test_field_recovery`` compares fields over the model mask and nowhere
-    else, so only those voxels are recorded -- a quarter of the volume.  The
-    untouched reference is run too, at every spacing, because what N3 finds in
-    it is the baseline the planted runs are measured against and it depends on
-    the spacing like everything else.
+    else, so only those voxels are recorded: a quarter of the volume.  The
+    untouched reference is run as well, at every spacing, because what N3 finds
+    in it is the baseline the planted runs are measured against, and that
+    depends on the spacing.
     """
     brain = load_volume(legacy_data("brain_nu_ref.mnc"))
     model_mask = load_volume(MODEL_MASK)
@@ -261,29 +261,29 @@ def recovery_cases(workspace, arrays, scalars):
 def platform_reference_case(workspace, arrays, scalars):
     """The volumes every machine has to land on (``test_reproducibility``).
 
-    The odd ones out here: not the answer of an installed program, but *this*
-    pipeline running the original C++ blocks, written out so that another
-    machine, another BLAS, another ``torch`` or a GPU can be held to them.
-    They go to ``tests/data/`` as MINC files rather than into the archive
-    because that is what they are -- volumes, which any MINC tool can open and
-    any other implementation can be compared against.
+    The exception in this file: not the answer of an installed program, but
+    *this* pipeline running the original C++ blocks, written out so that another
+    machine, another BLAS, another ``torch`` or a GPU can be held to them.  They
+    go to ``tests/data/`` as MINC files rather than into the archive because
+    they are volumes, which any MINC tool can open and any other implementation
+    can be compared against.
 
     Two of them, at one iteration and at thirty.  They are held to very
     different bounds and are not the same kind of evidence: the first is a
     sensitive check, still short of the histogram's divergence threshold, and
-    the second is a coarse regression net past it.  ``tests/test_reproducibility.py`` sets out
-    which is which.
+    the second is a coarse regression net past it.
+    ``tests/test_reproducibility.py`` sets out which is which.
 
-    ``float64``, unlike every other volume here.  N3's own files are 16-bit,
-    but these are not a record of what N3 wrote: they record what this
-    pipeline computed, and rounding them to 16 bits would put an error orders
-    of magnitude larger than the thing the tests measure between the reference
-    and the run being checked against it.  They cost 6.7 MB each, and the
-    numbers the tests report are then the implementation's own.
+    ``float64``, unlike every other volume here.  N3's own files are 16-bit, but
+    these record what this pipeline computed rather than what N3 wrote, and
+    rounding them to 16 bits would place an error orders of magnitude larger
+    than the quantity the tests measure between the reference and the run being
+    checked against it.  They cost 6.7 MB each, and the numbers the tests report
+    are then the implementation's own.
 
-    Neither uses ``workspace`` or the archive -- both arguments are here only
-    so that ``main`` can call every case the same way -- so this one can be
-    re-run on its own when only the volumes need rebuilding.
+    Neither uses ``workspace`` or the archive -- both arguments are present only
+    so ``main`` can call every case the same way -- so this case can be re-run
+    on its own when only the volumes need rebuilding.
     """
     brain = load_volume(legacy_data("brain.mnc"))
     model_mask = load_volume(MODEL_MASK)
@@ -303,9 +303,9 @@ def platform_reference_case(workspace, arrays, scalars):
 class Workspace:
     """A temporary directory plus the verbs this script needs there.
 
-    File arguments are always absolute: several of the legacy programs derive
-    their own temporary file names from the output path, and do not
-    consistently resolve a relative one against the working directory.
+    File arguments are always absolute: several legacy programs derive their own
+    temporary file names from the output path, and do not consistently resolve a
+    relative one against the working directory.
     """
 
     def __init__(self, path):
@@ -325,7 +325,7 @@ class Workspace:
         return load_volume(self.at(name))
 
     def run(self, *command):
-        """Run an installed N3/MINC program, failing loudly if it does."""
+        """Run an installed N3/MINC program, raising if it fails."""
         result = subprocess.run([str(c) for c in command], cwd=str(self.path),
                                 capture_output=True, text=True)
         if result.returncode != 0:

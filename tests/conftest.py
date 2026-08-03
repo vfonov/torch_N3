@@ -1,16 +1,16 @@
-"""Shared fixtures: the legacy test data, and what the legacy programs said.
+"""Shared fixtures: the legacy test data, and the legacy programs' answers.
 
 Most tests here are the ones ``legacy/N3/testing/CMakeLists.txt`` defines,
-re-expressed as comparisons -- but against *recorded* answers rather than a
-live subprocess.  The programs are deterministic, so the answers are recorded
-once by ``python3 -m tests.regenerate_reference`` and read back through the
-``legacy_output`` fixture; see :mod:`tests.reference` for why.
+re-expressed as comparisons against *recorded* answers rather than a live
+subprocess.  The programs are deterministic, so the answers are recorded once by
+``python3 -m tests.regenerate_reference`` and read back through the
+``legacy_output`` fixture; see :mod:`tests.reference`.
 
-The volumes themselves are in ``tests/data/``: byte-for-byte the same images
-as ``legacy/N3/testing/`` and the installed model mask, converted once to
-MINC2 so that ``minc2_simple`` can open them directly.  The originals are
-gzipped MINC1, which it cannot, and converting them on every run meant every
-test needed ``mincconvert``.  See ``tests/data/README.md``.
+The volumes are in ``tests/data/``: byte-for-byte the same images as
+``legacy/N3/testing/`` and the installed model mask, converted once to MINC2 so
+``minc2_simple`` can open them directly.  The originals are gzipped MINC1, which
+it cannot open, and converting them on every run required ``mincconvert`` for
+every test.  See ``tests/data/README.md``.
 """
 
 import functools
@@ -64,12 +64,11 @@ def _torch_and_scipy_sparse_coexist():
     together in one process.
 
     On some platforms they do not: PyTorch's wheel bundles its own
-    ``libomp.dylib``, and a wheel-installed ``scipy`` (or, on macOS, one
-    built against a conda/Homebrew OpenBLAS with a *different*
-    ``libomp.dylib``) loads a second copy of LLVM's OpenMP runtime into the
-    same process, which aborts -- an ``import`` cannot be wrapped in
-    ``try/except`` against that, since the interpreter itself dies. Probe it
-    in a subprocess instead, once per test session.
+    ``libomp.dylib``, and a wheel-installed ``scipy`` (or, on macOS, one built
+    against a conda/Homebrew OpenBLAS with a *different* ``libomp.dylib``) loads
+    a second copy of LLVM's OpenMP runtime into the same process, which aborts.
+    An ``import`` cannot be wrapped in ``try/except`` against that, since the
+    interpreter itself dies, so it is probed in a subprocess once per session.
     """
     probe = subprocess.run(
         [sys.executable, "-c", "import torch; import scipy.sparse.linalg"],
@@ -92,9 +91,8 @@ def requires_compatible_scipy_sparse():
 def assert_close(actual, expected, atol=0.0, rtol=0.0):
     """Fail unless two arrays agree, whatever they arrived as.
 
-    Values reach these tests as tensors, as ``numpy`` arrays out of the
-    recorded reference, or as plain Python lists; this puts them on the same
-    footing first.
+    Values reach these tests as tensors, as ``numpy`` arrays out of the recorded
+    reference, or as plain Python lists; this puts them on a common footing.
     """
     torch.testing.assert_close(torch.as_tensor(actual, dtype=torch.float64),
                                torch.as_tensor(expected, dtype=torch.float64),
@@ -110,11 +108,11 @@ def span(values):
 def relative_rms(result, expected):
     """``compare_nu_result.pl``'s measure: RMS difference over mean signal.
 
-    The suite's one measure of whole-volume agreement, and the only one worth
-    a fixed bound.  The obvious alternative -- the largest difference anywhere
-    -- is an extreme-value statistic over hundreds of thousands of voxels,
-    decided by a handful at the mask edge, and it moves for reasons that have
-    nothing to do with whether two implementations agree.
+    The suite's measure of whole-volume agreement, and the only one that
+    supports a fixed bound.  The alternative, the largest difference anywhere,
+    is an extreme-value statistic over hundreds of thousands of voxels, decided
+    by a handful at the mask edge, and it moves for reasons unrelated to whether
+    two implementations agree.
     """
     result = torch.as_tensor(result, dtype=torch.float64)
     expected = torch.as_tensor(expected, dtype=torch.float64)
@@ -129,7 +127,7 @@ def legacy_output():
 
 @pytest.fixture(scope="session")
 def chunk():
-    """The small 91x52x50 volume -- fast enough for per-block tests."""
+    """The small 91x52x50 volume, fast enough for per-block tests."""
     return load_volume(legacy_data("chunk.mnc"))
 
 

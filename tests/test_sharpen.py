@@ -1,8 +1,7 @@
 """Stage 2: :mod:`torch_n3.blocks.sharpen` against ``sharpen_hist``.
 
-The deconvolution is the one place where N3 does something a reader cannot
-check by eye, so it gets both a parity test against the original code and a
-couple of tests that say what the mapping is *for*.
+The deconvolution cannot be checked by inspection, so it carries both a parity
+test against the original code and two tests stating what the mapping does.
 """
 
 import pytest
@@ -58,11 +57,11 @@ def test_matches_the_sharpen_hist_binary(legacy_output, two_tissues):
 
 
 def test_the_mapping_pulls_intensities_towards_the_tissue_peaks(two_tissues):
-    """What "sharpening" means: the mapped range is narrower than the input.
+    """What sharpening means: the mapped range is narrower than the input.
 
-    Each intensity is replaced by the mean of the deconvolved distribution
-    near it, so voxels between the two peaks are pulled onto one of them and
-    the histogram of the result is more sharply peaked than the one measured.
+    Each intensity is replaced by the mean of the deconvolved distribution near
+    it, so voxels between the two peaks are pulled onto one of them and the
+    histogram of the result is more sharply peaked than the one measured.
     """
     value_range = VALUE_RANGE
     lut = blocks.sharpen_lut(two_tissues, value_range, 0.15, 0.01)

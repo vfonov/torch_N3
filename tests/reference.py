@@ -1,25 +1,25 @@
 """What the original N3 programs answered, recorded once.
 
-The programs are deterministic -- re-running ``sharpen_volume`` on the same
-file gives the same bytes -- so there is nothing to be learned from running
-them on every test run, and a good deal to be lost: the suite needs the whole
-MINC toolkit installed, spends most of its time in ``subprocess``, and cannot
-distinguish a failure of this port from a different build of the original.
+The programs are deterministic -- re-running ``sharpen_volume`` on the same file
+gives the same bytes -- so running them on every test run gains nothing and
+costs a good deal: the suite would need the whole MINC toolkit installed, would
+spend most of its time in ``subprocess``, and could not distinguish a failure of
+this port from a different build of the original.
 
-So their answers live in ``tests/reference/legacy.npz`` and are loaded from
-there.  ``python3 -m tests.regenerate_reference`` rebuilds the file; if the
-programs still say what they said, ``git diff`` is empty.
+Their answers therefore live in ``tests/reference/legacy.npz`` and are loaded
+from there.  ``python3 -m tests.regenerate_reference`` rebuilds the file; if the
+programs still give the same answers, ``git diff`` is empty.
 
 Whole volumes are stored as ``float32``: they came out of 16-bit MINC files in
 the first place, and 1e-7 relative is a hundred times finer than the tightest
 tolerance anything here is compared against (``span / 65535``).  The small
-arrays -- lookup tables, histograms, the values probed through ``minclookup``
--- are kept at ``float64``, because those comparisons are held to 1e-6 and
-1e-9 and cost nothing to store exactly.  :func:`as_volume` marks the former.
+arrays -- lookup tables, histograms, the values probed through ``minclookup`` --
+are kept at ``float64``, since those comparisons are held to 1e-6 and 1e-9 and
+cost nothing to store exactly.  :func:`as_volume` marks the former.
 
-``tests/data/brain_nu_ref_legacy.mnc`` is deliberately not in here.  It is not
-an answer of the legacy programs but of this pipeline, it is compared against
-far more tightly than anything above, and it is a volume -- so it lives in
+``tests/data/brain_nu_ref_legacy.mnc`` is deliberately not held here.  It is an
+answer of this pipeline rather than of the legacy programs, it is compared
+against far more tightly than anything above, and it is a volume, so it lives in
 ``tests/data/`` as a ``float64`` MINC file that any tool can open.  See
 :func:`tests.regenerate_reference.platform_reference_case`.
 """

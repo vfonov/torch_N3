@@ -1,20 +1,19 @@
 """N3 itself: ``nu_estimate``, ``nu_evaluate`` and ``nu_correct``.
 
-This is a transcription of the Perl drivers in ``legacy/N3/src/NUcorrect``,
-with each shell-out replaced by a call to one of the blocks in
-:mod:`torch_n3.blocks` or :mod:`torch_n3.minc_tools`.  The structure follows
-``nu_estimate_np_and_em.in`` step by step, so that the two can be read side by
-side.
+A transcription of the Perl drivers in ``legacy/N3/src/NUcorrect``, with each
+shell-out replaced by a call to a block in :mod:`torch_n3.blocks` or
+:mod:`torch_n3.minc_tools`.  The structure follows
+``nu_estimate_np_and_em.in`` step by step, so the two can be read side by side.
 
-The principle of N3: a multiplicative bias field becomes an *additive* one in
+N3's premise: a multiplicative bias field becomes an *additive* one in
 log-intensity space, and blurs the tissue-intensity histogram.  The algorithm
-therefore repeats three steps: (1) estimate the histogram without the blur and
-map every voxel to that sharpened estimate, (2) attribute the remaining
-difference to the field, and (3) retain only its smooth component by fitting a
-B-spline.  What remains after several iterations is the field.
+repeats three steps: (1) estimate the histogram without the blur and map every
+voxel to that sharpened estimate, (2) attribute the remaining difference to the
+field, and (3) retain only its smooth component by fitting a B-spline.  What
+remains after several iterations is the field.
 
-Every block can be supplied either by the PyTorch port or by the original C++;
-``backend`` selects between them, and the default is the port.  See
+Every block is supplied either by the PyTorch port or by the original C++;
+``backend`` selects between them and defaults to the port.  See
 :func:`torch_n3.backends.resolve`.
 """
 
@@ -77,11 +76,11 @@ def nu_correct(volume, mask=None, evaluation_mask=None, field_floor=0.1,
                verbose=False, **options):
     """Estimate the bias field and divide it out.  Returns the corrected volume.
 
-    ``mask`` restricts the *estimation* to a region of interest.  Supplying it
-    is strongly recommended: N3 is a histogram method, and background voxels
+    ``mask`` restricts the *estimation* to a region of interest, and should be
+    supplied wherever possible: N3 is a histogram method, and background voxels
     contribute only noise.  ``evaluation_mask`` restricts where the field is
     used directly before being extrapolated outwards; when omitted, one is
-    derived from the data, exactly as ``nu_evaluate`` does.
+    derived from the data as ``nu_evaluate`` does.
     """
     field = nu_estimate(volume, mask=mask, verbose=verbose, **options)
     return nu_evaluate(volume, field, mask=evaluation_mask,
@@ -97,9 +96,9 @@ def nu_estimate(volume, mask=None, verbose=False, **options):
     grid, including the full-resolution one.
 
     With ``denoise`` the estimate is made on a filtered copy of the volume.
-    Only the estimate: the spline that comes back describes a field on the same
-    grid as ever, and :func:`nu_evaluate` divides the caller's own intensities
-    by it.
+    Only the estimate: the returned spline describes a field on the same grid
+    as before, and :func:`nu_evaluate` divides the caller's own intensities by
+    it.
     """
     opts = dict(DEFAULTS, **options)
     _check_stages(opts)
@@ -166,9 +165,9 @@ def evaluate_field(volume, field, mask=None, field_floor=0.1, backend=None):
     """Sample ``field`` on ``volume``'s grid and make it safe to divide by.
 
     ``field`` is the spline returned by :func:`nu_estimate`.  Evaluation alone
-    is not sufficient: the spline was fitted inside a mask and is meaningless,
-    and may be negative, outside it, so the values outside are discarded and
-    replaced by a smooth extension of those inside, then floored.
+    is not sufficient: the spline was fitted inside a mask, and outside it is
+    meaningless and may be negative.  The values outside are therefore
+    discarded, replaced by a smooth extension of those inside, and floored.
     """
     backend = backends.resolve(backend)
 
@@ -229,16 +228,16 @@ def _smooth(values, inside, grid, opts):
 def _denoised(volume, opts):
     """The volume the *estimation* sees.  The caller's own, unless ``denoise``.
 
-    Full resolution, and before ``shrink``, because
+    Filtered at full resolution and before ``shrink``, because
     :meth:`torch_n3.volume.Volume.shrink` is nearest-neighbour subsampling: it
     aliases noise onto the estimation grid rather than averaging it away, so
-    filtering afterwards would be filtering something the sampling had already
+    filtering afterwards would filter something the sampling had already
     corrupted.
 
-    Returns a *new* ``Volume``, which is what keeps :func:`nu_evaluate`
-    dividing the original intensities rather than the filtered ones.  The
-    filter is reached through the backend so that ``backend="legacy"`` refuses
-    here, where the option was set, instead of silently ignoring it.
+    Returns a *new* ``Volume``, so :func:`nu_evaluate` divides the original
+    intensities rather than the filtered ones.  The filter is reached through
+    the backend, so ``backend="legacy"`` refuses here, where the option was
+    set, rather than ignoring it.
     """
     if not opts["denoise"]:
         return volume
@@ -266,9 +265,9 @@ def _check_stages(opts):
 def _converged(iteration, change, opts):
     """N3's staged stopping rule (``nu_estimate_np_and_em.in:165-180``).
 
-    ``-iterations a b -stop x y`` means: stop as soon as the field stops
-    moving by more than ``x``; after iteration ``a``, the looser threshold
-    ``y`` also counts.
+    ``-iterations a b -stop x y``: stop as soon as the field stops moving by
+    more than ``x``; after iteration ``a``, the looser threshold ``y`` also
+    applies.
     """
     stages, thresholds = opts["iterations"], opts["stop"]
     if change < thresholds[0]:

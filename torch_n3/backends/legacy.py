@@ -1,25 +1,24 @@
 """The *legacy* backend: N3's blocks as implemented by the original C++.
 
 Every function here is a thin wrapper around the CFFI shim in
-``torch_n3._legacy``.  No mathematics happens in this file -- that is the whole
-point: it is the oracle each block in :mod:`torch_n3.blocks` is tested
-against, and it exports the same names so that either can be dropped into the
-pipeline (see :func:`torch_n3.backends.resolve`).
+``torch_n3._legacy``.  No mathematics is performed in this file.  It is the
+oracle each block in :mod:`torch_n3.blocks` is tested against, and it exports
+the same names, so either can be dropped into the pipeline (see
+:func:`torch_n3.backends.resolve`).
 
-Tensors in, tensors out; the conversion to and from ``numpy`` -- and to and
-from the CPU -- happens here, because the C code knows nothing about either.
+Tensors in, tensors out.  Conversion to and from ``numpy``, and to and from
+the CPU, happens here, since the C code handles neither.
 
-**No MINC file is involved.**  That is worth saying because the original N3 is
-a Perl script driving a dozen separate executables, which can only talk to each
-other through files, so every intermediate volume it computes is rounded to a
-12- or 16-bit MINC image on the way out and rescaled on the way back in.  None
-of that applies here: these functions are the same C++ *routines* called
-directly, on ``float64`` buffers, in one process.  So ``backend="legacy"``
-gives the original arithmetic without the original's quantisation, and does
-*not* reproduce the installed programs bit for bit -- on ``brain.mnc`` it lands
-3.7e-3 from ``brain_nu_ref.mnc``, slightly further out than the PyTorch blocks
-do.  What it is for is comparing block against block with nothing rounded in
-between.
+**No MINC file is involved.**  The original N3 is a Perl script driving a dozen
+separate executables, which communicate only through files, so every
+intermediate volume it computes is rounded to a 12- or 16-bit MINC image on the
+way out and rescaled on the way back in.  None of that applies here: these
+functions are the same C++ *routines* called directly, on ``float64`` buffers,
+in one process.  ``backend="legacy"`` is therefore the original arithmetic
+without the original's quantisation, and does *not* reproduce the installed
+programs bit for bit: on ``brain.mnc`` it lands 3.7e-3 from
+``brain_nu_ref.mnc``, marginally further out than the PyTorch blocks.  Its
+purpose is block-against-block comparison with no rounding between stages.
 
 Build the extension first::
 
@@ -40,7 +39,7 @@ def _as_double_array(values):
 
 
 def _as_tensor(values):
-    """Hand a result back in the form the rest of the package expects."""
+    """Return a result in the form the rest of the package expects."""
     return torch.from_numpy(np.ascontiguousarray(values))
 
 
@@ -71,15 +70,15 @@ def _mask_in(array):
 def histogram_range(values, initial=None):
     """Intensity range N3 would choose for ``volume_hist -auto_range``.
 
-    Returns ``(min, max)``.  Note this is *not* simply ``(values.min(),
-    values.max())`` -- the legacy scan uses an ``else if`` that lets a sample
-    update only one bound per visit.  The difference is invisible except on
-    degenerate inputs, but the port reproduces it so the two agree exactly.
+    Returns ``(min, max)``.  This is *not* ``(values.min(), values.max())``:
+    the legacy scan uses an ``else if`` that lets a sample update only one
+    bound per visit.  The difference appears only on degenerate inputs, but the
+    port reproduces it so that the two agree exactly.
 
     ``initial`` is the ``(min, max)`` the scan starts from.  ``volume_hist``
     seeds it with the range of the *whole* volume and then scans only the
-    voxels selected by the mask, so masked calls must pass that in; the
-    default reproduces the unmasked case.
+    voxels selected by the mask, so masked calls must pass that in; the default
+    reproduces the unmasked case.
     """
     values = _as_double_array(values).ravel()
     if initial is None:
@@ -98,11 +97,11 @@ def histogram(values, bins, value_range, parzen=True, sigma=None):
     Bin *centres* are evenly spaced from ``value_range[0]`` to
     ``value_range[1]``; the outermost half-bins are open, so samples beyond
     them are dropped.  With ``parzen=True`` each sample is split linearly
-    between its two neighbouring centres (N3's ``-parzen`` / ``-window``),
-    which is why the counts are floats rather than integers.
+    between its two neighbouring centres (N3's ``-parzen`` / ``-window``), so
+    the counts are floats rather than integers.
 
     ``sigma``, the Gaussian Parzen window, is a modification to the algorithm
-    rather than part of it, so the oracle does not implement it.
+    rather than part of it, and the oracle does not implement it.
     """
     if sigma is not None:
         raise ValueError(
@@ -125,13 +124,13 @@ def bin_centers(bins, value_range):
 
 
 def denoise(values, search=3, patch=1, strength=1.0):
-    """Refuse: N3 has no denoising stage, so the oracle has nothing to offer.
+    """Refuse: N3 has no denoising stage, so the oracle implements none.
 
-    Present only so that asking for one through this backend fails where the
-    request is made.  Were it absent, ``backend="legacy"`` with denoising on
-    would raise an ``AttributeError`` somewhere downstream, or -- worse, had
-    the pipeline been written to skip a missing block -- would quietly return
-    an undenoised estimate under a flag that said otherwise.
+    Present so that asking for one through this backend fails where the request
+    is made.  Without it, ``backend="legacy"`` with denoising enabled would
+    raise an ``AttributeError`` downstream, or, had the pipeline been written to
+    skip a missing block, would return an undenoised estimate under a flag that
+    said otherwise.
     """
     raise ValueError(
         "the legacy backend is N3, and N3 has no denoiser; the non-local-means "
@@ -144,8 +143,8 @@ def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
 
     Deconvolves ``counts`` with a Gaussian of width ``fwhm`` using a Wiener
     filter with constant ``noise``, then returns the conditional expectation
-    ``E[u | v]`` of the true intensity given the measured one.  Applying this
-    as a lookup table is what "sharpens" the histogram.
+    ``E[u | v]`` of the true intensity given the measured one.  Applied as a
+    lookup table, this is what sharpens the histogram.
 
     ``deblur=True`` skips the deconvolution (N3's ``-blur`` flag).
     """
@@ -161,9 +160,9 @@ def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
 def correct_field(field, mask, step):
     """Extend ``field`` from the mask into the rest of the volume.
 
-    The spline that N3 fits is exactly zero outside its domain, so before
-    dividing, ``nu_evaluate`` runs ``correct_field``: a multigrid Gauss-Seidel
-    solve of Laplace's equation that grows the masked field outward smoothly
+    The spline N3 fits is exactly zero outside its domain, so before dividing,
+    ``nu_evaluate`` runs ``correct_field``: a multigrid Gauss-Seidel solve of
+    Laplace's equation that extends the masked field outwards smoothly
     (``torch_n3/_legacy/n3/CorrectField/correctField.cc``).  Returns a new array.
     """
     out = _as_double_array(field)
@@ -190,11 +189,10 @@ class BSplineField:
     zero outside its domain.
 
     The domain is the whole bounding box of the fitting grid, which is what
-    ``spline_smooth -full_support`` uses and what ``nu_estimate`` asks for.
-    Because it is remembered in *world* coordinates, a spline fitted on the
-    coarse estimation grid can be evaluated at full resolution -- exactly the
-    round trip the ``.imp`` mapping file performs between ``nu_estimate`` and
-    ``nu_evaluate``.
+    ``spline_smooth -full_support`` uses and what ``nu_estimate`` requests.
+    It is held in *world* coordinates, so a spline fitted on the coarse
+    estimation grid can be evaluated at full resolution: the round trip the
+    ``.imp`` mapping file performs between ``nu_estimate`` and ``nu_evaluate``.
     """
 
     def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
@@ -219,8 +217,8 @@ class BSplineField:
         """Create a ``TBSplineVolume`` over ``grid`` sharing this domain.
 
         The legacy splines measure position as ``voxel index * step`` with the
-        grid's own origin at zero, so the world-space domain has to be
-        re-expressed relative to whichever grid is being used.
+        grid's own origin at zero, so the world-space domain is re-expressed
+        relative to the grid in use.
         """
         lo, hi = (np.asarray(d) - grid.start for d in self.domain_world)
         domain = ffi.new("double[6]", [float(v) for pair in zip(lo, hi)

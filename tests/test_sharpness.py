@@ -1,13 +1,13 @@
 """The two sharpness measures, held to what :mod:`torch_n3.optimize` assumes.
 
 Every number the optimizer produces rests on these four functions being what
-they claim, so the properties are asserted directly rather than inferred from
-a recovered field: a measure that is subtly wrong still descends, just to the
-wrong place.
+they claim, so the properties are asserted directly rather than inferred from a
+recovered field: a measure that is subtly wrong still descends, to the wrong
+place.
 
-Gradients are checked with ``torch.autograd.gradcheck``, which is exact here
-rather than hopeful -- the whole port is float64, so the finite differences it
-compares against are not fighting the dtype.
+Gradients are checked with ``torch.autograd.gradcheck``, which is reliable here
+because the whole port is float64, so the finite differences it compares against
+are not limited by the dtype.
 """
 
 import math
@@ -43,8 +43,8 @@ def test_standardize_is_what_makes_the_measures_affine_invariant():
     """The anti-collapse property, stated on its own.
 
     A bias field that flattens the volume is an affine change of the
-    intensities.  After standardizing, both measures cannot see it -- which is
-    the whole reason the optimizer cannot win by destroying the image.
+    intensities.  After standardizing, neither measure can see it, which is why
+    the optimizer cannot win by destroying the image.
     """
     values = torch.randn(500, dtype=torch.float64)
     squeezed = values * 0.01 + 5.0        # a field that nearly flattened it
@@ -83,11 +83,11 @@ def test_hoyer_is_one_for_a_spike_and_zero_for_a_flat_histogram():
 
 
 def test_hoyer_ignores_the_scale_of_the_histogram():
-    """Only the shape means anything -- so the mean-vs-sum choice cannot bite.
+    """Only the shape is significant, so the mean-vs-sum choice cannot matter.
 
-    Exact at ``eps=0``, which is the property the ratio of norms actually has.
-    The default ``eps`` guards a zero histogram and costs the invariance a
-    relative ``eps/|h|_2``; the next test is what that guard is for.
+    Exact at ``eps=0``, which is the property the ratio of norms has.  The
+    default ``eps`` guards a zero histogram and costs the invariance a relative
+    ``eps/|h|_2``; the next test covers that guard.
     """
     histogram = torch.rand(BINS, dtype=torch.float64) + 0.1
 
@@ -102,9 +102,9 @@ def test_hoyer_survives_an_empty_histogram():
 
 
 def test_a_sharper_distribution_scores_higher():
-    """The property the optimizer actually exploits.
+    """The property the optimizer exploits.
 
-    Two tissue peaks, blurred by a field, versus the same two peaks unblurred.
+    Two tissue peaks, blurred by a field, against the same two peaks unblurred.
     If this ordering did not hold there would be nothing to descend on.
     """
     generator = torch.Generator().manual_seed(4)
@@ -126,9 +126,9 @@ def test_tightness_is_zero_when_every_sample_sits_on_a_centroid():
 
 
 def test_tightness_is_the_within_cluster_variance_when_clusters_separate():
-    """With well-separated clusters the soft assignment is hard, so the
-    measure reduces to something with a closed form -- which is what makes it
-    interpretable as a fraction of unexplained variance."""
+    """With well-separated clusters the soft assignment is hard, so the measure
+    reduces to a closed form, which is what makes it interpretable as a fraction
+    of unexplained variance."""
     centroids = torch.tensor([-3.0, 3.0], dtype=torch.float64)
     offsets = torch.tensor([-0.2, 0.1, 0.2, -0.1], dtype=torch.float64)
     values = torch.cat([centroids[0] + offsets, centroids[1] + offsets])
@@ -158,8 +158,8 @@ def test_quantile_centroids_start_spread_out_and_occupied():
 
 
 def test_em_step_does_not_increase_the_measure():
-    """The closed form is a minimiser at fixed weights, so it cannot make
-    things worse -- which is what ``centroid_update="em"`` relies on."""
+    """The closed form is a minimiser at fixed weights, so it cannot increase
+    the measure, which is what ``centroid_update="em"`` relies on."""
     generator = torch.Generator().manual_seed(5)
     values = standardize(torch.randn(1000, generator=generator,
                                      dtype=torch.float64))
@@ -211,9 +211,9 @@ def test_the_measures_reject_degenerate_arguments():
 def test_a_collapsed_volume_scores_perfectly_without_standardization():
     """The degeneracy, demonstrated rather than asserted away.
 
-    This is what the optimizer would drive towards if :func:`standardize` were
-    not in the path: a constant image is the global optimum of *both*
-    measures.  ``tests/test_optimize.py`` shows the same thing end to end.
+    What the optimizer would drive towards if :func:`standardize` were not in
+    the path: a constant image is the global optimum of *both* measures.
+    ``tests/test_optimize.py`` shows the same end to end.
     """
     constant = torch.full((500,), 2.0, dtype=torch.float64)
     grid = centers()

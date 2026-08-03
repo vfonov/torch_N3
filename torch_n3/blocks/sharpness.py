@@ -9,8 +9,8 @@ them back to the spline coefficients that produced them
 (:mod:`torch_n3.optimize`).
 
     :func:`hoyer_sparsity` of a :func:`soft_histogram`
-        A blurred histogram is a dispersed one.  This measure is model-free: it
-        assumes nothing about the number of tissues the volume contains.
+        A blurred histogram is a dispersed one.  Model-free: it assumes nothing
+        about the number of tissues the volume contains.
 
     :func:`cluster_tightness`
         A blurred histogram is one whose voxels lie far from their nearest
@@ -21,12 +21,12 @@ them back to the spline coefficients that produced them
 **Both are degenerate in isolation.**  Each is optimised by a *constant* image:
 a single-bin histogram has Hoyer sparsity 1, and voxels lying exactly on their
 centroid have zero within-cluster variance.  A smooth multiplicative field can
-produce exactly that, by cancelling the image.  The only safeguard is
-:func:`standardize`, which fixes the first two moments of the intensities
-before either measure is evaluated, so that flattening the volume yields no
-reduction.  Nothing else in this module or in :mod:`torch_n3.optimize` prevents
-the collapse, which is why ``tests/test_sharpness.py`` demonstrates it
-occurring when the standardization is removed.
+produce that by cancelling the image.  The only safeguard is
+:func:`standardize`, which fixes the first two moments of the intensities before
+either measure is evaluated, so that flattening the volume yields no reduction.
+Nothing else in this module or in :mod:`torch_n3.optimize` prevents the
+collapse; ``tests/test_sharpness.py`` demonstrates it occurring when the
+standardization is removed.
 """
 
 import torch
@@ -37,9 +37,9 @@ def standardize(values):
 
     Applied to the corrected intensities before every measure below, and the
     only safeguard on either of them: both are minimised by a constant image,
-    and a bias field is able to produce one.  After standardization an affine
-    change in the intensities, which is what flattening the volume amounts to,
-    leaves the measure unchanged, so it yields no reduction.
+    which a bias field can produce.  After standardization an affine change in
+    the intensities, which is what flattening the volume amounts to, leaves the
+    measure unchanged and so yields no reduction.
 
     Population standard deviation, ``unbiased=False``, as everywhere else in
     this port (CLAUDE.md: ``torch.std`` defaults the other way).
@@ -52,19 +52,18 @@ def soft_histogram(values, centers, sigma):
 
     ``values`` is a flat tensor of intensities and ``centers`` the bin
     positions.  Each sample contributes ``exp(-d^2 / 2 sigma^2)`` to every
-    centre, so the result is a smooth -- infinitely differentiable -- function
-    of the samples, where an ordinary histogram is a step function of them and
-    the Parzen one in :mod:`torch_n3.blocks.histogram` is only piecewise
-    linear.  That smoothness is what lets a quasi-Newton method work on it.
+    centre, so the result is an infinitely differentiable function of the
+    samples, where an ordinary histogram is a step function of them and the
+    Parzen one in :mod:`torch_n3.blocks.histogram` is piecewise linear.  That
+    smoothness is what allows a quasi-Newton method to work on it.
 
     The result is a mean over samples rather than a sum, and is deliberately
     *not* normalised to sum to one: :func:`hoyer_sparsity` is invariant to the
-    scale of what it is handed, so normalising would change nothing but the
-    reader's expectations.
+    scale of its argument, so normalising would change nothing.
 
     Cost is ``len(values) x len(centers)``, which is why
-    :mod:`torch_n3.optimize` subsamples the volume rather than handing this
-    every voxel.
+    :mod:`torch_n3.optimize` subsamples the volume rather than passing every
+    voxel.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     centers = torch.as_tensor(centers, dtype=torch.float64).reshape(-1)
@@ -82,18 +81,17 @@ def hoyer_sparsity(histogram, eps=1e-8):
     so **larger is better** and :mod:`torch_n3.optimize` minimises the
     negative.
 
-    Scale-invariant by construction -- only the *shape* of the distribution
-    means anything, which is the same reason the pipeline compares fields only
-    after dividing out their means.  Exactly so at ``eps=0``; the default
-    ``eps`` costs a relative ``eps/|h|_2`` and exists to keep an empty
-    histogram finite.
+    Scale-invariant by construction: only the *shape* of the distribution is
+    significant, for the same reason the pipeline compares fields only after
+    dividing out their means.  Exactly so at ``eps=0``; the default ``eps``
+    costs a relative ``eps/|h|_2`` and keeps an empty histogram finite.
 
-    One wart worth knowing, because it looks like a bug when it appears: if
-    every sample fell outside the centres, ``h`` is zero, the guarded ratio is
-    zero, and this returns ``sqrt(bins)/(sqrt(bins) - 1)``, which is *above*
-    one and means nothing.  A value over 1 is therefore a signal that the
-    centres do not cover the data -- which is why :mod:`torch_n3.optimize`
-    standardizes first and puts them at +-4 standard deviations.
+    Degenerate case: if every sample fell outside the centres, ``h`` is zero,
+    the guarded ratio is zero, and this returns ``sqrt(bins)/(sqrt(bins) - 1)``,
+    which is *above* one and is meaningless.  A value over 1 therefore indicates
+    that the centres do not cover the data, which is why
+    :mod:`torch_n3.optimize` standardizes first and places them at +-4 standard
+    deviations.
 
     References
     ----------
@@ -121,15 +119,14 @@ def cluster_tightness(values, centroids, beta=200.0):
 
     ``beta`` sets how hard the assignment is.  Large values approach k-means,
     where a sample belongs to its nearest centroid alone and the gradient is
-    nearly discontinuous where two clusters meet; small values blur the
-    classes into each other until the measure stops distinguishing them.  In
-    standardized units the assignment switches over a scale of
-    ``1/sqrt(beta)``, so the default of 200 is about a fifteenth of a standard
-    deviation.
+    nearly discontinuous where two clusters meet; small values blur the classes
+    into each other until the measure stops distinguishing them.  In
+    standardized units the assignment switches over a scale of ``1/sqrt(beta)``,
+    so the default of 200 is about a fifteenth of a standard deviation.
 
-    ``centroids`` is a tensor of positions, and in :mod:`torch_n3.optimize` it
-    is *learned* alongside the field: the tissue means are not known in
-    advance and are nuisance parameters, not inputs.
+    ``centroids`` is a tensor of positions.  In :mod:`torch_n3.optimize` it is
+    *learned* alongside the field: the tissue means are not known in advance and
+    are nuisance parameters rather than inputs.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     centroids = torch.as_tensor(centroids, dtype=torch.float64).reshape(-1)
@@ -145,10 +142,10 @@ def quantile_centroids(values, classes):
     """``classes`` starting centroids, evenly spaced through the data.
 
     Quantiles rather than a random draw or k-means++, for two reasons: it is
-    deterministic, so it adds no seed to an estimator that already has one;
-    and every centroid starts with mass around it, where a centroid that
-    starts empty stays empty -- its assignment weights are zero, so it
-    receives no gradient and never moves.
+    deterministic, so it adds no seed to an estimator that already has one, and
+    every centroid starts with mass around it.  A centroid that starts empty
+    stays empty: its assignment weights are zero, so it receives no gradient and
+    never moves.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     classes = int(classes)
@@ -163,10 +160,10 @@ def quantile_centroids(values, classes):
 def em_centroids(values, centroids, beta=200.0):
     """The centroids that minimise :func:`cluster_tightness` at fixed weights.
 
-    One EM step: with the assignment weights held, the exact minimiser over
-    the centroids is the weighted mean of the samples assigned to each.  Used
-    by ``centroid_update="em"``, which alternates this closed form with descent
-    on the field instead of learning the centroids by gradient too.
+    One EM step: with the assignment weights held, the exact minimiser over the
+    centroids is the weighted mean of the samples assigned to each.  Used by
+    ``centroid_update="em"``, which alternates this closed form with descent on
+    the field instead of learning the centroids by gradient as well.
 
     An empty cluster would divide by zero; its weight sum is clamped, which
     leaves such a centroid where it was rather than sending it to infinity.
@@ -184,10 +181,10 @@ def em_centroids(values, centroids, beta=200.0):
 def cluster_occupancy(values, centroids, beta=200.0):
     """The share of the samples each centroid holds.
 
-    A diagnostic rather than part of any loss: a centroid that has lost its
-    mass no longer models anything, and the fit has become one with fewer
-    classes than were requested.  :func:`quantile_centroids` makes that
-    unlikely at initialisation; this is how it is detected if it occurs.
+    A diagnostic rather than part of any loss: a centroid that has lost its mass
+    no longer models anything, and the fit has become one with fewer classes
+    than were requested.  :func:`quantile_centroids` makes that unlikely at
+    initialisation; this detects it if it occurs.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     centroids = torch.as_tensor(centroids, dtype=torch.float64).reshape(-1)

@@ -1,18 +1,18 @@
 """The generators behind ``experiments/``, held to what they promise.
 
 The experiment itself is hours long and lives outside the suite (nothing in
-``experiments/`` is collected -- ``pytest.ini`` sets ``testpaths = tests``).
-What *is* worth a fast test is the handful of functions every one of its rows
-depends on: a field of the stated amplitude, noise of the stated sigma, and a
-score that is zero when nothing was left behind.  If any of those is wrong,
-every number in the sweep is wrong in a way no amount of averaging shows.
+``experiments/`` is collected: ``pytest.ini`` sets ``testpaths = tests``).  What
+a fast test covers is the handful of functions every one of its rows depends on:
+a field of the stated amplitude, noise of the stated sigma, and a score that is
+zero when nothing was left behind.  If any of those is wrong, every number in
+the sweep is wrong in a way no amount of averaging reveals.
 
-Randomness is fine to test as long as it is seeded: each case fixes a seed and
-asks for a property that must hold at that seed, and one asks that a different
-seed gives a different field, which is the other half of the promise.
+Randomness is testable as long as it is seeded: each case fixes a seed and
+asserts a property that must hold at that seed, and one asserts that a different
+seed gives a different field.
 
-``chunk.mnc`` throughout, because these are properties of the arithmetic and
-the small volume makes them instant.
+``chunk.mnc`` throughout: these are properties of the arithmetic, and the small
+volume makes them fast.
 """
 
 import math
@@ -41,8 +41,8 @@ def test_planted_field_has_the_amplitude_it_was_asked_for(chunk, inside,
                                                           log_range):
     """Log peak-to-peak inside the mask is the amplitude, exactly.
 
-    Exactly, because the field is rescaled to it by construction -- this is
-    the definition the whole sweep's ``--amplitude`` axis rests on.
+    Exactly, because the field is rescaled to it by construction.  This is the
+    definition the sweep's ``--amplitude`` axis rests on.
     """
     field = simulation.random_bias_field(chunk, inside, log_range, seed=1)
     values = field[inside]
@@ -70,7 +70,7 @@ def test_a_seed_names_one_field(chunk, inside):
 
 
 def test_different_seeds_name_different_fields(chunk, inside):
-    """The other half of the promise: fifty seeds are fifty experiments."""
+    """Fifty seeds are fifty experiments."""
     first = simulation.random_bias_field(chunk, inside, 0.4, seed=7)
     other = simulation.random_bias_field(chunk, inside, 0.4, seed=8)
     assert not torch.equal(first, other)
@@ -97,17 +97,16 @@ def test_a_smoother_field_is_easier_for_the_basis(chunk, chunk_mask, inside):
 def test_the_basis_reproduces_a_unit_field_exactly(chunk, chunk_mask, inside):
     """What ``recovery``'s oracle baseline rests on.
 
-    The oracle method is handed the planted field and fits it; on the untouched
-    volume there is no planted field, so it is handed unity, and every oracle
-    trial is then divided by whatever that fit produced.  For the division to
-    be the no-op the ceiling needs it to be, the fit has to return unity back.
+    The oracle method is given the planted field and fits it; on the untouched
+    volume there is no planted field, so it is given unity, and every oracle
+    trial is divided by whatever that fit produced.  For that division to be the
+    no-op the ceiling requires, the fit must return unity.
 
-    It does, and by construction rather than incidentally: cubic B-splines are
-    a partition of unity, so a constant is *in* the span, and the bending
-    energy of a constant is zero, so the penalty cannot pull the fit off it at
-    any ``lam``.  The bound is
-    float64 rounding through a solve of a matrix whose condition number
-    CLAUDE.md puts at ~5e12, not a measured margin.
+    It does, by construction: cubic B-splines are a partition of unity, so a
+    constant is in the span, and the bending energy of a constant is zero, so
+    the penalty cannot pull the fit off it at any ``lam``.  The bound is float64
+    rounding through a solve of a matrix whose condition number CLAUDE.md puts
+    at ~5e12, not a measured margin.
     """
     unit = torch.ones_like(chunk.data)
     fitted = simulation.basis_field(chunk, chunk_mask, unit, distance=75.0,
@@ -145,8 +144,8 @@ def test_a_seed_names_one_noise_draw(chunk):
 def test_a_perfect_recovery_scores_zero(chunk, inside):
     """The score is zero when the recovered field is the planted one.
 
-    Zero to rounding, and it has to be: every cell of the sweep is read as a
-    distance from this.
+    Zero to rounding, necessarily: every cell of the sweep is read as a distance
+    from this.
     """
     planted = simulation.random_bias_field(chunk, inside, 0.4, seed=17)[inside]
     baseline = torch.ones_like(planted)

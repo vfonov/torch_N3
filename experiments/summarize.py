@@ -6,18 +6,18 @@ Reads the CSV, groups the trials, and reports the distribution of one metric
 per group: how many trials, mean, median, the interquartile range, and the
 extremes, alongside the run time.  Plain stdlib -- no pandas, no plotting.
 
-**Why the IQR and not a standard deviation.**  Every group here is a sample of
-random fields, and what is being asked of it is "would another draw have said
-something different".  The quartiles answer that without assuming the spread
-is symmetric, which across seeds it is not: a seed whose field happens to lie
-badly for the basis produces an outlier the mean feels and the median does
-not.  Both are printed, and a gap between them is the signal that a
-configuration's average is being set by a few hard draws.
+**Why the IQR rather than a standard deviation.**  Every group here is a sample
+of random fields, and the question asked of it is whether another draw would
+give a different answer.  The quartiles answer that without assuming the spread
+is symmetric, which across seeds it is not: a seed whose field lies badly for
+the basis produces an outlier that moves the mean and not the median.  Both are
+printed, and a gap between them indicates that a configuration's average is set
+by a few hard draws.
 
-``floor`` is carried alongside as the mean of the per-trial basis floor -- the
-score the spline could not have beaten on those fields at that knot spacing.
-A group sitting near its floor is limited by the basis; one far above it is
-limited by the estimation.
+``floor`` is carried alongside as the mean of the per-trial basis floor: the
+score the spline could not have beaten on those fields at that knot spacing.  A
+group near its floor is limited by the basis; one far above it is limited by the
+estimation.
 """
 
 import argparse
@@ -68,13 +68,12 @@ def _read(path):
 def _select(rows, constraints):
     """Rows matching every ``column=value``, compared as written.
 
-    One file now holds several experiments -- four solvers, three devices,
-    three estimators, two histogram kernels -- and a group that pools two of
-    them answers no question at all.  ``--group`` can separate them, but only
-    by printing every combination; this drops the ones that are not being
-    asked about.  Values compare as text, as ``recovery.py`` wrote them, and
-    an empty value is a value: ``--where parzen_sigma=`` selects N3's own
-    linear split.
+    One file holds several experiments -- four solvers, three devices, three
+    estimators, two histogram kernels -- and a group pooling two of them answers
+    no question.  ``--group`` can separate them, but only by printing every
+    combination; this drops the ones not being asked about.  Values compare as
+    text, as ``recovery.py`` wrote them, and an empty value is a value:
+    ``--where parzen_sigma=`` selects N3's own linear split.
     """
     for constraint in constraints or ():
         column, _, value = constraint.partition("=")
@@ -86,10 +85,10 @@ def _group(rows, columns):
     """``{(value, ...): [row, ...]}``, in the order the keys first appear.
 
     A row written before a column existed is read at that column's documented
-    default -- ``recovery.KEY_DEFAULTS`` -- so an older sweep can still be
-    grouped against a newer one instead of raising.  Grouping on a column
-    nobody has ever written gives one group labelled ``-``, which is the
-    correct answer to a question the data cannot resolve.
+    default (``recovery.KEY_DEFAULTS``), so an older sweep can be grouped
+    against a newer one instead of raising.  Grouping on a column never written
+    gives one group labelled ``-``, which is the correct answer to a question
+    the data cannot resolve.
     """
     groups = {}
     for row in rows:
@@ -102,9 +101,9 @@ def _group(rows, columns):
 def _statistics(rows, metric):
     """``n``, mean, median, quartiles and extremes of one column.
 
-    Quartiles by ``statistics.quantiles``, which interpolates -- with fewer
-    than two trials there is nothing to interpolate, so the IQR is reported as
-    the single value repeated rather than as an error.
+    Quartiles by ``statistics.quantiles``, which interpolates.  With fewer than
+    two trials there is nothing to interpolate, so the IQR is reported as the
+    single value repeated rather than as an error.
     """
     # ``get``, because a file may hold rows from a run that predates a column
     # -- an older sweep is still worth summarising over the columns it has.

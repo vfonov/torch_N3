@@ -13,9 +13,9 @@ from torch_n3.minc_tools import apply_lut, bimodal_threshold
 def test_apply_lut_matches_minclookup(legacy_output):
     """Our continuous lookup is `minclookup -continuous`.
 
-    The table and the intensities are the ones the program was given -- a few
-    thousand real voxels out of the masked log volume, spread across the
-    domain -- so this checks the interpolation rule and nothing else.
+    The table and the intensities are the ones the program was given: a few
+    thousand real voxels out of the masked log volume, spread across the domain.
+    This checks the interpolation rule and nothing else.
     """
     values = legacy_output["minclookup.values"]
     table = legacy_output["minclookup.lut"]
@@ -39,12 +39,11 @@ def test_apply_lut_clamps_outside_the_domain():
 def test_bimodal_threshold_matches_mincstats(legacy_output, chunk):
     """`nu_evaluate`'s automatic mask comes from `mincstats -biModalT`.
 
-    The bound is the last digit ``mincstats`` printed: it reports four
-    decimals, so ``1e-4`` is the finest agreement it can be asked for.  (This
-    was a *relative* ``1e-3`` until 2026-07-31, which on a value in the
-    hundreds of thousands allowed a difference of 238 -- some two million
-    times looser than the number it was comparing against, and enough for the
-    threshold to land in a different tissue.)
+    The bound is the last digit ``mincstats`` printed: it reports four decimals,
+    so ``1e-4`` is the finest agreement obtainable.  (This was a *relative*
+    ``1e-3`` until 2026-07-31, which on a value in the hundreds of thousands
+    allowed a difference of 238, some two million times looser than the number
+    being compared, and enough for the threshold to land in a different tissue.)
     """
     recorded = legacy_output.scalar("mincstats.bimodal_threshold_chunk")
 

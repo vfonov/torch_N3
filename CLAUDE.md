@@ -190,6 +190,37 @@ One pitfall: a program handed a *file* saw its contents quantised, and modelling
 scaling in Python is wrong by a whole quantisation step. Round-trip through
 `inputs.as_stored()` instead, which both the script and the test call.
 
+## Documentation style
+
+`README.md` and every docstring in `torch_n3/`, `tests/` and `experiments/` were rewritten on
+2026-08-02 into a **concise, factual, technical-report register**. Write new prose the same way,
+and do not reintroduce the earlier essayistic voice when editing existing text.
+
+What that means in practice:
+
+- State findings declaratively. "N3 leaves about 7% of the planted field at 200 mm", not "what
+  N3 actually manages is a good deal better".
+- No rhetorical framing: drop "the whole point is", "worth saying because", "that is not a
+  detail", "the interesting failure mode", "which is the useful part", "at a glance", "a good
+  deal to be lost". If a sentence exists only to tell the reader how to feel about the next
+  one, delete it.
+- Do not address the reader. "See `experiments/README.md`", not "read
+  `experiments/README.md` before concluding anything".
+- Prefer a colon or a full stop to a parenthetical em-dash aside. One em-dash pair per
+  paragraph at most.
+- Reserve **bold** for operational warnings a reader must not miss (a solver that does not
+  converge, a table that must not be quoted as a verdict, an option that is off by default).
+  Not for emphasis within an argument.
+- Keep every number, table, file path, code reference and caveat. This is a change of register
+  only: no measurement, bound or qualification may be dropped in the course of shortening a
+  sentence, and none may be added without being measured.
+- Section headings, anchors and the `README.md` heading structure are load-bearing (internal
+  links, `tests/tables.py`'s comparison against the published tables). Do not rename them
+  incidentally.
+
+The same register applies to `PROBLEMS.md` and `experiments/README.md`, which have not yet been
+converted.
+
 ## Test tolerances
 
 Known weaknesses in the current suite — thresholds fitted to the measurement, one that is far

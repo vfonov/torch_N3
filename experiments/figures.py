@@ -3,22 +3,22 @@
     python3 -m experiments.figures
 
 Reads ``results/recovery.csv`` and writes seven PNGs beside it.  Violin plots
-throughout, because that is what this experiment produces: every cell is 50
-random fields, and the thing worth seeing is the *shape* of the 50 -- whether a
-method's advantage is the whole distribution moving or a few lucky draws, and
-whether a tail reaches somewhere the median does not say.  A bar of medians
-would hide exactly the two findings the sweep is for (``hoyer``'s failure tail,
-and the outlier trials where two backends disagree by 18%).
+throughout: every cell is 50 random fields, and what matters is the *shape* of
+the 50 -- whether a method's advantage is the whole distribution moving or a few
+favourable draws, and whether a tail reaches somewhere the median does not
+report.  A bar of medians would hide the two findings the sweep exists for
+(``hoyer``'s failure tail, and the outlier trials where two backends disagree by
+18%).
 
-**Densities are estimated in log space** wherever the axis is logarithmic --
+**Densities are estimated in log space** wherever the axis is logarithmic:
 ``numpy.log10`` of the scores, with the ticks relabelled afterwards.  Violins
-are kernel density estimates, so a KDE fitted in linear space and then drawn on
-a log axis is a picture of the wrong distribution; at these dynamic ranges
-(0.002% to 15%, four decades) it is badly wrong.
+are kernel density estimates, so a KDE fitted in linear space and drawn on a log
+axis depicts the wrong distribution; at these dynamic ranges (0.002% to 15%,
+four decades) it is badly wrong.
 
 Nothing here computes a number that is not already in the CSV, and nothing is
-smoothed beyond the KDE.  ``experiments.summarize`` remains the place to read
-an actual value off.
+smoothed beyond the KDE.  ``experiments.summarize`` is where an individual value
+should be read.
 """
 
 import argparse
@@ -122,25 +122,25 @@ SUMMARY = (
 def _summary(rows):
     """The three estimators side by side: what they leave, and what they cost.
 
-    One figure for the two questions a reader arrives with.  Left: the
-    non-uniformity remaining in the brain after correction, over all nine
-    cells, so that the comparison is read across the amplitude and noise axes
-    rather than at one operating point.  Right: wall time for the same trials.
+    One figure for two questions.  Left: the non-uniformity remaining in the
+    brain after correction, over all nine cells, so the comparison is read
+    across the amplitude and noise axes rather than at one operating point.
+    Right: wall time for the same trials.
 
     The two N3 rows are the same algorithm computed twice -- the original C++
     blocks through the CFFI shim, and the PyTorch port -- and their violins
-    coincide at every cell, to the width of the line.  That coincidence is the
-    result the figure carries: the port reproduces the implementation it was
-    derived from, and the separation visible below both of them belongs to the
-    change of objective rather than to the change of implementation.  The
-    per-trial statement of the same agreement, which a violin cannot resolve,
-    is in ``experiments/README.md``, "The two backends, over 450 trials".
+    coincide at every cell to the width of the line.  That is the figure's
+    result: the port reproduces the implementation it was derived from, and the
+    separation below both belongs to the change of objective rather than to the
+    change of implementation.  The per-trial statement of the same agreement,
+    which a violin cannot resolve, is in ``experiments/README.md``, "The two
+    backends, over 450 trials".
 
     The cost panel is linear and the score panel logarithmic, for the reason
-    given in the module docstring: the scores span four decades and the times
-    a factor of nine.  The devices differ between rows and are stated in the
-    labels; the panel therefore reports the cost of each configuration as it
-    was run, not the cost of the arithmetic on equal hardware, for which
+    given in the module docstring: the scores span four decades and the times a
+    factor of nine.  The devices differ between rows and are stated in the
+    labels, so the panel reports the cost of each configuration as it was run
+    rather than the cost of the arithmetic on equal hardware, for which
     ``runtime.png`` carries the torch-on-CPU control.
     """
     figure, axes = pyplot.subplots(
@@ -223,8 +223,8 @@ def _recovery(rows):
     """Score per method over the nine cells, with the ceiling under them.
 
     Two panels because the region changes the answer by about 2x and the
-    experiment records both: the head is the problem as posed to the
-    estimation, the brain is what a correction is for.
+    experiment records both: the head is the problem as posed to the estimation,
+    the brain is what the correction is for.
     """
     figure, axes = pyplot.subplots(2, 1, figsize=(12, 9), sharex=True)
 
@@ -345,18 +345,17 @@ def _runtime(rows):
 # --------------------------------------------------------------------------
 
 def _implementation(rows):
-    """Three questions the sweep answers negatively, which is the useful part.
+    """Three questions the sweep answers negatively.
 
     Does the spline solver change what N3 recovers; does the backend or the
     device; and does the solver move the ceiling?  All at one cell, so 50
     violins are 50 answers to the same question.
 
-    Every panel is on a **linear axis scaled to its own data**, and both of
-    those choices are the point.  These differences are parts in a hundred or
-    smaller; on the decade axis the other figures use they are one flat line,
-    which would be a picture of the axis and not of the measurement.  Read the
-    spread *within* a violin against the gap *between* them: that ratio is the
-    whole answer, and it is why the axis is allowed to be this tight.
+    Every panel is on a **linear axis scaled to its own data**.  These
+    differences are parts in a hundred or smaller; on the decade axis the other
+    figures use they are one flat line, which would depict the axis rather than
+    the measurement.  The spread *within* a violin against the gap *between*
+    them is the answer, and is why the axis is this tight.
     """
     figure, axes = pyplot.subplots(1, 3, figsize=(13, 4.6))
     cell = dict(amplitude="0.4", snr="40")
@@ -415,9 +414,9 @@ def _solvers(rows):
     coincide (``implementation.png``), so the difference must be taken *within*
     a trial before anything is resolvable.  Right: seconds.
 
-    The point of putting them side by side is that they are on wildly
-    different scales: the accuracy panel spans 1e-7 to 1e-1 and is centred at
-    2e-5, the cost panel is a factor of 3.8 top to bottom.
+    They are placed side by side despite being on very different scales: the
+    accuracy panel spans 1e-7 to 1e-1 and is centred at 2e-5, while the cost
+    panel is a factor of 3.8 top to bottom.
     """
     figure, axes = pyplot.subplots(1, 2, figsize=(12, 5))
     protocol = "fixed30"
@@ -489,21 +488,20 @@ PROTOCOL_LABEL = {"fixed30": "30 iterations", "default": "50 (the shipped -stop)
 def _windows(rows):
     """One panel per (amplitude, SNR), one violin pair per histogram kernel.
 
-    The question this figure exists for: N3's ``-parzen`` is linear
-    interpolation into two bins, ``--parzen-sigma`` makes it a real Gaussian
-    kernel, and ``tests/parzen.py`` measures the difference on a single
-    noiseless analytic field.  Here it is 50 random fields per cell, at three
-    amplitudes and three SNRs, so the noise axis -- the one a smoother
-    histogram ought to matter most on -- is swept rather than assumed.
+    N3's ``-parzen`` is linear interpolation into two bins, ``--parzen-sigma``
+    makes it a Gaussian kernel, and ``tests/parzen.py`` measures the difference
+    on a single noiseless analytic field.  Here it is 50 random fields per cell,
+    at three amplitudes and three SNRs, so the noise axis -- where a smoother
+    histogram should matter most -- is swept rather than assumed.
 
-    Both protocols are drawn, which is the one place this figure departs from
-    the rest of the file.  Everything else pins ``fixed30`` so that every
-    trial does the same work; here the *additional* work is half the result,
-    since the reduction a wide window yields grows with the iteration count,
-    and at 80% planted it determines whether the window helps or harms.
+    Both protocols are drawn, which is where this figure departs from the rest
+    of the file.  Everything else pins ``fixed30`` so every trial does the same
+    work; here the *additional* work is half the result, since the reduction a
+    wide window yields grows with the iteration count, and at 80% planted it
+    determines whether the window helps or harms.
 
     Same layout and shared range as :func:`_cells`, and the same dashed
-    uncorrected level, so the two can be laid side by side.
+    uncorrected level, so the two can be placed side by side.
     """
     figure, axes = pyplot.subplots(len(AMPLITUDES), len(SNRS),
                                    figsize=(14, 11), sharex=True, sharey=True)
@@ -579,14 +577,14 @@ def _cells(rows):
     """One panel per (amplitude, SNR), every estimator inside it.
 
     ``recovery.png`` pools the four solvers into a single ``n3`` violin, which
-    is the right summary and the wrong picture for two questions: whether the
-    solvers separate anywhere in particular, and how each cell's spread
-    compares with the gap between methods.  Both need the cell on its own axis
-    with the solvers drawn apart.
+    is the right summary but the wrong picture for two questions: whether the
+    solvers separate anywhere in particular, and how each cell's spread compares
+    with the gap between methods.  Both need the cell on its own axis with the
+    solvers drawn apart.
 
-    One shared y range across all nine, because the comparison *between* cells
-    -- the point of sweeping amplitude and SNR at all -- is most of what there
-    is to read here.  The brain only; ``recovery.png`` carries both regions.
+    One shared y range across all nine, because the comparison *between* cells,
+    which is the reason amplitude and SNR are swept, is most of what is read
+    here.  The brain only; ``recovery.png`` carries both regions.
     """
     figure, axes = pyplot.subplots(len(AMPLITUDES), len(SNRS),
                                    figsize=(14, 11), sharex=True, sharey=True)
@@ -635,7 +633,7 @@ def _trial_key(row):
 
 
 def _relative(one, other):
-    """Difference relative to the larger, so it is symmetric and bounded."""
+    """Difference relative to the larger value: symmetric and bounded."""
     largest = max(abs(one), abs(other))
     return abs(one - other) / largest if largest else 0.0
 
@@ -647,16 +645,16 @@ def _relative(one, other):
 def _violin(axis, values, position, colour, width, log=True, drawn=None):
     """One violin, with its median and its full extent marked.
 
-    Drawn against ``log10(values)`` when ``log``, which is what puts the KDE
-    in the space the axis is read in -- see the module docstring.  ``drawn``
-    collects what was plotted so the axis can be scaled to the data instead of
-    to a limit fixed in advance; a hard-coded limit removed the whole
-    ``oracle`` runtime violin from view the first time this ran.
+    Drawn against ``log10(values)`` when ``log``, which puts the KDE in the
+    space the axis is read in; see the module docstring.  ``drawn`` collects
+    what was plotted so the axis can be scaled to the data rather than to a
+    limit fixed in advance; a hard-coded limit removed the whole ``oracle``
+    runtime violin from view the first time this ran.
 
-    Draws nothing, without raising, for an empty selection: a figure is regenerated
-    from whatever the CSV holds, and a configuration that has not been swept
-    yet should leave a gap rather than raise.  Fewer than two points, or a
-    constant, has no density, so those get the marker without the body.
+    Draws nothing, without raising, for an empty selection: a figure is
+    regenerated from whatever the CSV holds, and a configuration not yet swept
+    should leave a gap rather than raise.  Fewer than two points, or a constant,
+    has no density, so those get the marker without the body.
     """
     if log:
         values = values[values > 0]
@@ -694,9 +692,9 @@ def _log_axis(axis, drawn, pad=0.05):
     """A 1-2-5 log axis over data that is already ``log10``, scaled to fit it.
 
     The KDE is fitted in log space, so the data on this axis is logarithms and
-    the ticks have to be put back by hand.  The range comes from what was
-    actually drawn -- so a figure regenerated from a longer sweep, or from one
-    method fewer, still shows all of it.
+    the ticks are restored by hand.  The range comes from what was drawn, so a
+    figure regenerated from a longer sweep, or from one method fewer, still
+    shows all of it.
     """
     values = numpy.concatenate(drawn)
     low, high = float(values.min()), float(values.max())
@@ -718,9 +716,9 @@ def _log_axis(axis, drawn, pad=0.05):
 def _linear_axis(axis, drawn, pad=0.12):
     """Scaled to the data, for panels whose whole point is a small difference.
 
-    Four solvers on colin27 differ by less than a part in a hundred; on a
-    decade axis wide enough to hold the oracle as well they are one flat line,
-    which is a picture of the axis rather than of the measurement.
+    Four solvers on colin27 differ by less than a part in a hundred; on a decade
+    axis wide enough to hold the oracle as well they are one flat line, which
+    depicts the axis rather than the measurement.
     """
     values = numpy.concatenate(drawn)
     low, high = float(values.min()), float(values.max())
@@ -737,11 +735,11 @@ def _grid(axis):
 def _tick(value):
     """A tick label: decimal where that is short, an exponent where it is not.
 
-    ``0.000001`` is nine characters of mostly zeros and hard to tell from
-    ``0.00001`` at a glance, which is the whole difficulty on the solver
-    figure's six-decade axis.  Below a thousandth the labels switch to ``1e-6``
-    -- the ticks are always 1, 2 or 5 times a power of ten, so the mantissa is
-    a single digit and the label stays short.
+    ``0.000001`` is nine characters of mostly zeros and hard to distinguish from
+    ``0.00001``, which is the difficulty on the solver figure's six-decade axis.
+    Below a thousandth the labels switch to ``1e-6``; the ticks are always 1, 2
+    or 5 times a power of ten, so the mantissa is a single digit and the label
+    stays short.
     """
     if value >= 1:
         return "%g" % value

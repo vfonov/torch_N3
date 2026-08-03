@@ -1,21 +1,21 @@
 """The tests ``legacy/N3/testing/CMakeLists.txt`` defines, as comparisons.
 
-The legacy suite mostly checks that its programs *run*; the one test with a
+The legacy suite mostly checks that its programs *run*.  The one test with a
 numerical target is ``nu_reference_1``, which re-runs ``nu_estimate`` +
 ``nu_evaluate`` on ``brain.mnc.gz`` and requires the result to stay within
-``1e-4`` relative RMS of ``brain_nu_ref.mnc.gz``.  Here every case is turned
-into a comparison against what those programs answered -- recorded once by
-``tests/regenerate_reference.py`` -- so that the Python pipeline has to
-reproduce them rather than merely not crash.
+``1e-4`` relative RMS of ``brain_nu_ref.mnc.gz``.  Here every case becomes a
+comparison against what those programs answered, recorded once by
+``tests/regenerate_reference.py``, so the Python pipeline must reproduce them
+rather than merely not crash.
 
-Each stage runs on both backends, so a failure says whether the port or the
-plumbing around it is at fault.
+Each stage runs on both backends, so a failure identifies whether the port or
+the surrounding plumbing is at fault.
 
 On tolerances: the individual blocks agree with the legacy to the precision
-their tests record.  The *pipeline* cannot, for two reasons.  The legacy
-passes every intermediate volume between programs as a MINC file -- 12-bit
-here, scaled slice by slice -- so each stage rounds its result before the next
-one reads it.  And the iteration amplifies: see
+their tests record.  The *pipeline* cannot, for two reasons.  The legacy passes
+every intermediate volume between programs as a MINC file -- 12-bit here, scaled
+slice by slice -- so each stage rounds its result before the next one reads it.
+And the iteration amplifies; see
 ``test_the_iteration_amplifies_small_differences``.
 """
 
@@ -66,10 +66,10 @@ def test_spline_evaluates_on_a_finer_grid_like_evaluate_field(
         legacy_output, chunk, chunk_mask, backend):
     """`nu_imp2field`: a spline fitted coarse, evaluated at full resolution.
 
-    This is the round trip N3 makes through the ``.imp`` mapping file between
-    ``nu_estimate`` and ``nu_evaluate``, and the reason the estimation can
-    afford to run on a coarse grid at all.  The recorded answer came from
-    ``spline_smooth -compact`` followed by ``evaluate_field``.
+    The round trip N3 makes through the ``.imp`` mapping file between
+    ``nu_estimate`` and ``nu_evaluate``, and the reason the estimation can run
+    on a coarse grid.  The recorded answer came from ``spline_smooth -compact``
+    followed by ``evaluate_field``.
     """
     grid = chunk.shrink(4)
     inside = chunk_mask.data != 0
@@ -105,12 +105,12 @@ def test_nu_correct_tracks_the_legacy_pipeline(legacy_output, chunk, chunk_mask,
 
 
 def test_nu_estimate_recovers_a_planted_field():
-    """The point of the exercise, on a phantom where the answer is known.
+    """Recovery on a phantom where the answer is known.
 
     Two tissues, a little noise, and a smooth multiplicative field: N3 should
-    hand the field back.  Note it never sees the tissue values -- all it has
-    to go on is that the intensity histogram of the *corrected* volume should
-    be sharper than the one it measures.
+    return the field.  It never sees the tissue values; all it has to work from
+    is that the intensity histogram of the *corrected* volume should be sharper
+    than the one it measures.
     """
     shape, step = (40, 40, 40), (2.0, 2.0, 2.0)
     z, y, x = torch.meshgrid(*[torch.arange(n, dtype=torch.float64)
@@ -142,13 +142,13 @@ def test_matches_the_legacy_reference_volume(brain, model_mask, brain_reference,
                                              backend):
     """`nu_reference_1`, the legacy suite's one numerical regression test.
 
-    The legacy asks for ``1e-4`` relative RMS, which is a comparison of the
-    legacy against itself and holds exactly.  We cannot reach it, and the
+    The legacy requires ``1e-4`` relative RMS, which is a comparison of the
+    legacy against itself and holds exactly.  This port cannot reach it, and the
     reason is not the algorithm: legacy N3 hands every intermediate volume to
-    the next program as a 12-bit, slice-scaled MINC file, so every stage
-    rounds before the next one reads, thirty times over.  Working in float64
-    instead costs a few parts in a thousand -- a fraction of a percent, well
-    below the noise of the images N3 is used on.
+    the next program as a 12-bit, slice-scaled MINC file, so every stage rounds
+    before the next one reads, thirty times over.  Working in float64 instead
+    costs a few parts in a thousand, a fraction of a percent, well below the
+    noise of the images N3 is used on.
 
     The bound is one percent relative RMS.  Where the two currently sit:
 
@@ -156,12 +156,11 @@ def test_matches_the_legacy_reference_volume(brain, model_mask, brain_reference,
         legacy   0.5211%
 
     It was ``5e-3`` while the shim linked EBTKS's bundled f2c'd LAPACK, which
-    put the legacy backend at 0.3701%.  On the system LAPACK it is 0.5211%,
-    and the bound moved deliberately rather than the measurement being
-    explained away -- see ``PROBLEMS.md`` and the LAPACK section of
-    ``README.md``.  Both solvers are answering a normal-equation system with a
-    condition number around ``1e13``; neither is wrong, and the difference
-    between them is not something either implementation controls.
+    put the legacy backend at 0.3701%.  On the system LAPACK it is 0.5211%, and
+    the bound was moved deliberately rather than the measurement explained away;
+    see ``PROBLEMS.md`` and the LAPACK section of ``README.md``.  Both solvers
+    answer a normal-equation system with a condition number around ``1e13``;
+    neither is wrong, and neither implementation controls the difference.
     """
     corrected = nu_correct(brain, mask=model_mask, backend=backend)
 
@@ -172,10 +171,10 @@ def test_the_iteration_amplifies_small_differences(brain, model_mask):
     """Why the two backends part company end to end, though the blocks agree.
 
     N3's loop feeds its own output back in, so a difference of one part in
-    ``1e7`` after a single iteration is a difference of one part in ``1e3``
-    after thirty.  This is a property of the algorithm, not of either
-    implementation, and it is the reason the end-to-end tolerances above are
-    so much looser than the per-block ones.
+    ``1e7`` after a single iteration is one part in ``1e3`` after thirty.  This
+    is a property of the algorithm rather than of either implementation, and it
+    is why the end-to-end tolerances above are so much looser than the per-block
+    ones.
     """
     def divisor(backend, iterations):
         field = nu_estimate(brain, mask=model_mask, backend=backend,

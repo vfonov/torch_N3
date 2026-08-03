@@ -1,14 +1,14 @@
 """``nu_optimize``: the descent, the degeneracy it avoids, and its randomness.
 
-The measures themselves are pinned in ``tests/test_sharpness.py``; what is
-asserted here is that driving them with a spline field actually estimates a
-bias field, that the thing standing between this method and a destroyed image
-really is the standardization, and that a stochastic estimator inside this
-repo is still reproducible.
+The measures themselves are constrained in ``tests/test_sharpness.py``.  What is
+asserted here is that driving them with a spline field estimates a bias field,
+that what stands between this method and a destroyed image is the
+standardization, and that a stochastic estimator in this repository is
+reproducible.
 
-``chunk.mnc`` throughout, and small iteration budgets: these are properties of
-the method, and the numbers that decide whether it is *better than N3* come
-from ``experiments/``, not from here.
+``chunk.mnc`` throughout, with small iteration budgets: these are properties of
+the method, and the numbers that decide whether it is *better than N3* come from
+``experiments/``.
 """
 
 import math
@@ -58,7 +58,7 @@ def unexplained(estimated, baseline, planted, inside):
 
 @pytest.mark.parametrize("objective", ["hoyer", "tightness"])
 def test_the_loss_goes_down(trial, chunk_mask, objective):
-    """The whole point of the reformulation: one number, and it descends."""
+    """The reformulation's premise: one number, and it descends."""
     field = nu_optimize(trial, mask=chunk_mask, objective=objective, **BUDGET)
     history = field.optimize_info["loss"]
 
@@ -70,13 +70,13 @@ def test_it_removes_some_of_the_planted_field(trial, chunk, chunk_mask,
                                               planted, inside):
     """Recovery, against the only bound that needs no calibration.
 
-    Doing nothing scores exactly the non-uniformity that was planted.  An
-    estimator has to beat that or it is not estimating anything -- and on this
-    small crop even N3 barely does (3.25% of a 3.29% field at this spacing),
-    so the bound is deliberately a weak one rather than a tight one.
+    Doing nothing scores exactly the non-uniformity that was planted, so an
+    estimator must beat that or it is not estimating anything.  On this small
+    crop even N3 barely does (3.25% of a 3.29% field at this spacing), so the
+    bound is deliberately weak.
 
-    ``hoyer`` only.  ``tightness`` does not meet this bar with a budget long
-    enough to converge -- see the test below, which is where that is recorded.
+    ``hoyer`` only.  ``tightness`` does not meet this bound with a budget long
+    enough to converge; the test below records that.
     """
     settings = dict(objective="hoyer", **BUDGET)
     baseline = nu_optimize(chunk, mask=chunk_mask,
@@ -93,15 +93,15 @@ def test_the_standardization_is_what_prevents_the_collapse(trial, chunk_mask,
     """The degeneracy is reachable *inside the model class*, and standardizing
     is what removes it.
 
-    The worry is not abstract: a smooth spline field with enough freedom can
-    approximate the log volume itself, and subtracting it leaves something
-    close to a constant.  So the test builds exactly that field -- a
-    least-squares spline fit to the log volume, which is the flattest thing
-    the model can produce -- and compares it against doing nothing.
+    The degeneracy is concrete: a smooth spline field with enough freedom can
+    approximate the log volume itself, and subtracting it leaves something close
+    to a constant.  The test builds that field -- a least-squares spline fit to
+    the log volume, the flattest thing the model can produce -- and compares it
+    against doing nothing.
 
-    Unstandardized, the flattening field wins: the objective genuinely prefers
-    a destroyed image.  Standardized, it loses, because an affine change in
-    the intensities is now invisible.  That reversal is the whole argument for
+    Unstandardized, the flattening field wins: the objective prefers a destroyed
+    image.  Standardized, it loses, an affine change in the intensities being
+    invisible.  That reversal is the argument for
     :func:`~torch_n3.blocks.sharpness.standardize`.
     """
     grid = trial.shrink(DEFAULTS["shrink"])
@@ -150,13 +150,13 @@ def test_a_seed_names_one_run(trial, chunk_mask):
 
 
 def test_two_seeds_agree_on_the_field(trial, chunk_mask, inside):
-    """What makes subsampling admissible at all.
+    """What makes subsampling admissible.
 
-    Two draws of the same size must estimate the same field to much better
-    than the field itself varies, or the answer is a property of which voxels
-    were drawn.  The bound is a tenth of the planted non-uniformity: loose,
-    but stated in units of the thing being measured rather than fitted to
-    what came out.
+    Two draws of the same size must estimate the same field to much better than
+    the field itself varies, or the answer is a property of which voxels were
+    drawn.  The bound is a tenth of the planted non-uniformity: loose, but
+    stated in units of the quantity being measured rather than fitted to the
+    result.
     """
     settings = dict(sample_size=4096, max_iterations=BUDGET["max_iterations"],
                     distance=BUDGET["distance"])
@@ -171,7 +171,7 @@ def test_two_seeds_agree_on_the_field(trial, chunk_mask, inside):
 
 def test_the_result_is_a_field_the_rest_of_the_pipeline_accepts(trial,
                                                                 chunk_mask):
-    """Drop-in, which is what makes the comparison with N3 possible at all."""
+    """Drop-in, which is what makes the comparison with N3 possible."""
     field = nu_optimize(trial, mask=chunk_mask, **BUDGET)
 
     assert isinstance(field, BSplineField)
@@ -210,20 +210,20 @@ def test_tightness_makes_its_own_estimate_worse_as_it_converges(trial, chunk,
                                                                 chunk_mask,
                                                                 planted,
                                                                 inside):
-    """The finding that decides ``tightness`` is not usable, kept as a test.
+    """The finding that ``tightness`` is not usable, recorded as a test.
 
-    Its loss falls monotonically while the field it produces grows more and
-    more non-uniform and the recovery gets worse.  That is not a tuning
-    problem: within-cluster variance is minimised by a few widely separated
-    spikes, and a smooth field can move towards that by *amplifying* contrast.
-    :func:`~torch_n3.blocks.sharpness.standardize` pins the first two moments
-    of the intensities; nothing pins the third.
+    Its loss falls monotonically while the field it produces grows steadily more
+    non-uniform and the recovery worsens.  This is not a tuning problem:
+    within-cluster variance is minimised by a few widely separated spikes, and a
+    smooth field can move towards that by *amplifying* contrast.
+    :func:`~torch_n3.blocks.sharpness.standardize` fixes the first two moments
+    of the intensities; nothing fixes the third.
 
-    Asserted as a direction rather than a number, because the number is
-    enormous and volume-dependent -- on ``brain_nu_ref.mnc`` at 200 mm the
-    field reached 257% non-uniformity while the loss kept falling.  If this
-    test ever fails, ``tightness`` has been fixed, and the module docstring
-    and ``optimize.PENALTY`` need rewriting rather than the test.
+    Asserted as a direction rather than a number, the number being large and
+    volume-dependent: on ``brain_nu_ref.mnc`` at 200 mm the field reached 257%
+    non-uniformity while the loss kept falling.  If this test fails,
+    ``tightness`` has been fixed, and the module docstring and
+    ``optimize.PENALTY`` need rewriting rather than the test.
     """
     def run(iterations):
         settings = dict(objective="tightness", penalty=1.0,
@@ -254,8 +254,8 @@ def test_em_centroids_reach_the_same_kind_of_answer(trial, chunk_mask):
 def test_a_stochastic_objective_refuses_the_line_search(trial, chunk_mask):
     """``resample="always"`` with L-BFGS is wrong, and says so.
 
-    Not a style preference: the strong-Wolfe line search and the curvature
-    pairs both assume the objective is the same function between evaluations.
+    The strong-Wolfe line search and the curvature pairs both assume the
+    objective is the same function between evaluations.
     """
     with pytest.raises(ValueError, match="stochastic"):
         nu_optimize(trial, mask=chunk_mask, resample="always",

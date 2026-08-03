@@ -3,9 +3,8 @@
     python3 -m tests.margins
 
 Prints the table at the bottom of ``PROBLEMS.md``.  That table is the evidence
-for the claims made there -- which bounds are tight enough to fail
-intermittently, and which have so much headroom that they no longer constrain
-anything -- and this module is what reproduces it.
+for the claims made there: which bounds are tight enough to fail intermittently,
+and which have so much headroom that they no longer constrain anything.
 
 Not a test.  Nothing here asserts; it measures, and the assertions are in the
 test modules.  The two are kept consistent by hand: when a comparison changes,
@@ -13,8 +12,8 @@ its row here must change with it.  Each row names the test it mirrors, so a
 mismatch is visible.
 
 Requires no MINC program: every answer from the legacy implementation is read
-from ``tests/reference/``, exactly as the tests read it.  It does require the
-CFFI shim, since half the rows are parity comparisons against it.
+from ``tests/reference/``, as the tests read it.  It does require the CFFI shim,
+since half the rows are parity comparisons against it.
 """
 
 import torch

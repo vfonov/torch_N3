@@ -1,13 +1,13 @@
 """The inputs the original N3 programs were run on.
 
-The suite does not run those programs any more -- their answers are recorded
-in ``tests/reference/`` and ``tests/regenerate_reference.py`` puts them there.
-For that to mean anything, the input a test uses has to be the input the
-program was given, so both sides build it from here.
+The suite no longer runs those programs: their answers are recorded in
+``tests/reference/`` by ``tests/regenerate_reference.py``.  For a comparison to
+mean anything, the input a test uses must be the input the program was given, so
+both sides build it from here.
 
 Everything in this module is a deterministic function of the volumes in
-``legacy/N3/testing/``: no random numbers, because a stored answer is only
-usable only if the question can be posed again exactly.
+``legacy/N3/testing/``.  No random numbers: a stored answer is usable only if
+the question can be posed again exactly.
 """
 
 import os
@@ -36,10 +36,10 @@ CONVERGED_PROTOCOL = dict(iterations=(30,), stop=(0.0,))
 def as_stored(directory, name, volume, like):
     """``volume`` after a round trip through a 16-bit MINC file.
 
-    ``nu_correct`` was handed a file, not an array, so it saw its contents
-    quantised.  The regeneration script and the tests both come through here,
-    which is the only way to be sure they are looking at the same numbers --
-    modelling MINC's scaling in Python instead gets it wrong by a whole step.
+    ``nu_correct`` was handed a file rather than an array, so it saw its
+    contents quantised.  The regeneration script and the tests both come through
+    here, which is the only way to be certain they see the same numbers:
+    modelling MINC's scaling in Python is wrong by a whole quantisation step.
     """
     path = os.path.join(str(directory), name)
     save_volume(path, volume, like=like, store_dtype="int16")
@@ -61,10 +61,9 @@ def masked_log(volume, mask):
 def probe_values(volume, mask, stride=47):
     """Every ``stride``-th masked voxel, as a flat list of intensities.
 
-    ``minclookup`` maps a volume, but what is being checked is an
-    interpolation rule, and a few thousand real intensities spread across the
-    range test that as well as a quarter of a million do -- at a fraction of
-    the size on disk.
+    ``minclookup`` maps a volume, but what is checked is an interpolation rule,
+    and a few thousand real intensities spread across the range test that as
+    well as a quarter of a million do, at a fraction of the size on disk.
     """
     values, inside = masked_log(volume, mask)
     return values[inside][::stride].contiguous()
@@ -86,8 +85,8 @@ def smooth_bumps(volume, inside):
 def tilted_plane(volume, inside=None, offset=1.0, slopes=(0.01, -0.004, 0.003)):
     """A plane across the voxel grid, optionally zeroed outside ``inside``.
 
-    Stands in for a field: smooth, and simple enough that a reader can tell at
-    a glance what the program under test should do with it.
+    Stands in for a field: smooth, and simple enough that what the program under
+    test should do with it is evident.
     """
     z, y, x = _voxel_grid(volume)
     plane = offset + slopes[0] * z + slopes[1] * y + slopes[2] * x
@@ -100,9 +99,9 @@ def synthetic_bias_field(volume, inside, log_range):
     """A smooth multiplicative field of exactly ``log_range`` log peak-to-peak.
 
     Deliberately not a B-spline: a few low-order harmonics across the volume,
-    which is the shape coil sensitivity actually takes and which N3's basis
-    can only approximate.  Normalised to mean 1 inside ``inside``, since a
-    bias field is only ever defined up to a global scale.
+    the shape coil sensitivity takes and which N3's basis can only approximate.
+    Normalised to mean 1 inside ``inside``, since a bias field is defined only
+    up to a global scale.
     """
     axes = [torch.linspace(-1.0, 1.0, n, dtype=torch.float64)
             for n in volume.shape]
@@ -118,8 +117,7 @@ def synthetic_bias_field(volume, inside, log_range):
 def two_tissue_histogram(bins=200, value_range=(4.0, 6.0)):
     """Two overlapping tissue peaks in log intensity, as a histogram.
 
-    A clean stand-in for the thing ``sharpen_hist`` exists to deconvolve, with
-    no volume behind it.
+    A stand-in for what ``sharpen_hist`` deconvolves, with no volume behind it.
     """
     centres = torch.linspace(value_range[0], value_range[1], bins,
                              dtype=torch.float64)

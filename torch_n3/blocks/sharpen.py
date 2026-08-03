@@ -1,16 +1,16 @@
 """The sharpened intensity mapping (``sharpen_hist``).
 
-This is the mathematical core of N3.  The bias field blurs the intensity
-histogram, and the paper's key assumption is that the blur is approximately a
-Gaussian convolution.  So: deconvolve the measured histogram to recover the
-distribution the tissues would have had, then map each measured intensity to
-the expected true intensity given that distribution,
+The mathematical core of N3.  The bias field blurs the intensity histogram, and
+the paper's central assumption is that the blur is approximately a Gaussian
+convolution.  The measured histogram is therefore deconvolved to recover the
+distribution the tissues would have had, and each measured intensity is mapped
+to the expected true intensity under that distribution,
 
 .. math::  U(v) = E[u \\mid v] = \\frac{(u f) * g}{f * g}
 
-with ``f`` the deconvolved distribution and ``g`` the Gaussian.  Feeding a
+with ``f`` the deconvolved distribution and ``g`` the Gaussian.  Passing a
 volume through ``U`` sharpens its histogram, and the difference between the
-volume and its sharpened self is the field's fingerprint.
+volume and its sharpened self is attributed to the field.
 
 Ported from ``legacy/N3/src/SharpenHist/sharpen_hist.cc:98-233``.  Everything
 happens on the *bin* grid, so the kernel width is ``fwhm/slope`` bins.
@@ -24,10 +24,10 @@ import torch
 def sharpen_lut(counts, value_range, fwhm, noise, deblur=False):
     """N3's sharpened intensity mapping, one value per histogram bin.
 
-    ``fwhm`` is the assumed width of the blur in intensity units (log
-    intensity, in the pipeline) and ``noise`` is the additive constant of the
-    Wiener restoration filter.  ``deblur=True`` reproduces the legacy
-    ``-blur`` flag, which skips the deconvolution and just smooths.
+    ``fwhm`` is the assumed width of the blur in intensity units (log intensity,
+    in the pipeline) and ``noise`` is the additive constant of the Wiener
+    restoration filter.  ``deblur=True`` reproduces the legacy ``-blur`` flag,
+    which skips the deconvolution and only smooths.
     """
     counts = torch.as_tensor(counts, dtype=torch.float64).reshape(-1)
     bins = counts.numel()

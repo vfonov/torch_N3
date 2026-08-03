@@ -1,9 +1,9 @@
-"""The two MINC command-line tools the N3 drivers lean on, as array code.
+"""The two MINC command-line tools the N3 drivers depend on, as array code.
 
-Everything else N3 does lives in its own C++, and is ported block by block in
-:mod:`torch_n3.blocks`; these two are general MINC utilities that happen to
-sit on the pipeline's critical path.  Both are pinned against the installed
-binaries in ``tests/test_minc_tools.py``.
+Everything else N3 does is in its own C++, ported block by block in
+:mod:`torch_n3.blocks`.  These two are general MINC utilities that sit on the
+pipeline's critical path.  Both are compared against the installed binaries in
+``tests/test_minc_tools.py``.
 """
 
 import torch
@@ -18,7 +18,7 @@ def apply_lut(values, lut, value_range):
     neighbouring table entries, and clamps anything outside.
 
     This is how the sharpened histogram becomes a sharpened volume: the table
-    produced by ``sharpen_hist`` *is* the mapping ``E[u | v]``.
+    produced by ``sharpen_hist`` is the mapping ``E[u | v]``.
     """
     values = torch.as_tensor(values, dtype=torch.float64)
     lut = torch.as_tensor(lut, dtype=torch.float64).reshape(-1)
@@ -48,10 +48,10 @@ def apply_lut(values, lut, value_range):
 def bimodal_threshold(values, bins=2000):
     """Split ``values`` into background and foreground, as ``mincstats -biModalT``.
 
-    This is Otsu's method: histogram the data, then choose the boundary that
-    maximises the variance *between* the two resulting groups.  The returned
-    threshold is the centre of the winning bin, which is what ``mincstats``
-    reports and what ``nu_evaluate`` uses when no mask is supplied.
+    Otsu's method: histogram the data, then choose the boundary that maximises
+    the variance *between* the two resulting groups.  The returned threshold is
+    the centre of the winning bin, which is what ``mincstats`` reports and what
+    ``nu_evaluate`` uses when no mask is supplied.
     """
     values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
     low, high = float(values.min()), float(values.max())

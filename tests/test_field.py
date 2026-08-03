@@ -1,12 +1,12 @@
 """Stage 2: :mod:`torch_n3.blocks.field` against ``correct_field``.
 
-Unlike the other blocks this one cannot be matched to machine precision, and
-should not be expected to.  The legacy sweeps its relaxation in raster order
-in ``float``; sweeping the two checkerboard colours in turn is the same
-iteration reordered, which is what makes it a tensor operation, and both are
-approximations to the same Laplace solution rather than to each other.  So the
-tests below check that the two agree to about the accuracy the solve itself
-has, and that the properties the pipeline depends on hold exactly.
+Unlike the other blocks, this one cannot be matched to machine precision.  The
+legacy sweeps its relaxation in raster order in ``float``; sweeping the two
+checkerboard colours in turn is the same iteration reordered, which makes it a
+tensor operation, and both are approximations to the same Laplace solution
+rather than to each other.  The tests below therefore check that the two agree
+to about the accuracy of the solve itself, and that the properties the pipeline
+depends on hold exactly.
 """
 
 import pytest
@@ -57,9 +57,8 @@ def test_the_extension_stays_within_the_range_it_was_given(chunk,
                                                            ramp_in_a_mask):
     """A harmonic function attains its extrema on the boundary.
 
-    That is the property ``nu_evaluate`` relies on: however far outside the
-    head a voxel is, the field there cannot run away and make the division
-    explode.
+    The property ``nu_evaluate`` relies on: however far outside the head a voxel
+    is, the field there cannot diverge and make the division explode.
     """
     field, inside = ramp_in_a_mask
 
@@ -70,7 +69,7 @@ def test_the_extension_stays_within_the_range_it_was_given(chunk,
 
 
 def test_a_constant_field_extends_to_the_same_constant():
-    """The one case with an exact answer, so it is worth being exact about."""
+    """The one case with an exact answer, asserted exactly."""
     shape = (16, 16, 16)
     inside = torch.zeros(shape, dtype=torch.bool)
     inside[6:10, 6:10, 6:10] = True

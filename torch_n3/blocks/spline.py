@@ -1,22 +1,23 @@
 """The smooth field fit: a cubic tensor B-spline (``spline_smooth -b_spline``).
 
-Each iteration of N3 supplies this block with a noisy, voxelwise estimate of
-the log field and requires the smooth part of it.  The answer is a tensor product of
-uniform cubic B-splines, fitted by least squares with a penalty on the
-spline's bending energy:
+Each iteration of N3 supplies this block with a noisy, voxelwise estimate of the
+log field and requires its smooth part.  The answer is a tensor product of
+uniform cubic B-splines, fitted by least squares with a penalty on the spline's
+bending energy:
 
 .. math::  (A^T A + \\lambda\\, N\\, J)\\, c = A^T f
 
-``A`` holds the basis functions at every masked voxel, ``J`` the bending
-energy of the basis (the integrated second derivatives), ``N`` the number of
-samples, and ``lambda`` is N3's ``-lambda``.  At the default 200 mm knot
-spacing a whole head is described by 80 coefficients, which accounts for most
-of the field's smoothness: the basis cannot represent anything sharper.  The
-penalty accounts for the remainder, and the two must be set jointly, since
-halving the spacing without raising ``lambda`` gives the fit sufficient freedom
-to begin following tissue contrast.  See ``python3 -m torch_n3 --help``.
+``A`` holds the basis functions at every masked voxel, ``J`` the bending energy
+of the basis (the integrated second derivatives), ``N`` the number of samples,
+and ``lambda`` is N3's ``-lambda``.  At the default 200 mm knot spacing a whole
+head is described by 80 coefficients, which accounts for most of the field's
+smoothness: the basis cannot represent anything sharper.  The penalty accounts
+for the remainder.  The two must be set jointly, since halving the spacing
+without raising ``lambda`` gives the fit enough freedom to follow tissue
+contrast.  See ``python3 -m torch_n3 --help``.
 
-Two solvers answer that least-squares problem, selected by ``solver``:
+The least-squares problem is answered by the solvers below, selected by
+``solver``:
 
 ``"normal"``
     Form ``AtA + lambda*N*J`` and solve it, as the legacy does
@@ -24,7 +25,7 @@ Two solvers answer that least-squares problem, selected by ``solver``:
     condition number, and at the default spacing, where the knots are further
     apart than the head is wide, that reaches about ``1e13``: close enough to
     singular that the last digits of the answer are determined by whichever
-    BLAS computed them.  This is the reference formulation, and is bit for bit
+    BLAS computed them.  This is the reference formulation and is bit for bit
     what the repository has always computed.
 
 ``"qr"``
@@ -37,23 +38,22 @@ Two solvers answer that least-squares problem, selected by ``solver``:
 
     whose normal equations are those above, term for term, so it minimises the
     same objective.  Its condition number is the square root of the other's,
-    and the answer depends on the machine to a far smaller degree than the
-    normal equations do.  On the grid ``brain.mnc`` is estimated on, that is
-    ``2.3e6`` against ``5.3e12``, and the fitted field moves ``3.0e-13``
-    relative RMS between a CPU and a GPU where the normal equations move it by
-    ``2.5e-9``.
+    and the answer depends on the machine far less than the normal equations
+    do.  On the grid ``brain.mnc`` is estimated on, that is ``2.3e6`` against
+    ``5.3e12``, and the fitted field moves ``3.0e-13`` relative RMS between a
+    CPU and a GPU where the normal equations move it by ``2.5e-9``.
 
 ``"blocked"``
     The same stacked system and the same answer as ``"qr"`` -- they agree to
-    ``4e-15``, which is rounding -- reached without ever holding ``A``.  Its
-    rows are sorted, grouped, and folded into a running ``R`` one band at a
-    time.  Sorting is what makes the groups cheap: ``A`` is banded once its
-    rows are ordered by their first-axis knot, so each group touches one
-    window of ``4*n1*n2`` columns instead of all ``n0*n1*n2`` of them.  This
-    is the solver to select at a fine ``-distance``, where the dense stack no
-    longer fits in memory: at 12.5 mm on ``chunk.mnc`` (3168 coefficients)
-    it peaks at 1.55 GB against ``"qr"``'s 7.53 GB, and runs 3.7x faster.  At
-    200 mm there is a single group and it reduces to ``"qr"`` plus a sort.
+    ``4e-15``, which is rounding -- reached without holding ``A``.  Its rows are
+    sorted, grouped, and folded into a running ``R`` one band at a time.
+    Sorting is what makes the groups cheap: ``A`` is banded once its rows are
+    ordered by their first-axis knot, so each group touches one window of
+    ``4*n1*n2`` columns instead of all ``n0*n1*n2`` of them.  This is the solver
+    to select at a fine ``-distance``, where the dense stack no longer fits in
+    memory: at 12.5 mm on ``chunk.mnc`` (3168 coefficients) it peaks at 1.55 GB
+    against ``"qr"``'s 7.53 GB and runs 3.7x faster.  At 200 mm there is a
+    single group and it reduces to ``"qr"`` plus a sort.
 
 ``"dr"``
     The same stacked system, factorised once and then *reparameterized* so
@@ -73,66 +73,66 @@ Two solvers answer that least-squares problem, selected by ``solver``:
                \\frac{U^T Q_0^T [f; 0]}{1 + (\\lambda - \\lambda_0)\\gamma},
 
     a triangular solve around an elementwise division.  At ``lambda ==
-    lambda_0`` the divisor is one and this *is* ``"qr"``, back-substitution and
-    all; the two agree to rounding, which is what the suite holds it to.
+    lambda_0`` the divisor is one and this *is* ``"qr"``, back-substitution
+    included; the two agree to rounding, which is what the suite holds it to.
 
-    What it provides is an inexpensive ``lambda`` sweep.  The QR, the triangular solve and the
-    eigendecomposition are all independent of ``lambda``, so a whole grid --
-    GCV or REML smoothing-parameter selection, or the ``--lambda`` x
-    ``--distance`` tables -- costs one factorization plus one division per
+    Its purpose is an inexpensive ``lambda`` sweep.  The QR, the triangular
+    solve and the eigendecomposition are all independent of ``lambda``, so a
+    whole grid -- GCV or REML smoothing-parameter selection, or the ``--lambda``
+    x ``--distance`` tables -- costs one factorization plus one division per
     point instead of one fit per point.  :meth:`BSplineField.refit` is that
-    division: on ``brain.mnc``'s estimation grid a further weight costs 0.033
-    ms at 200 mm and 0.140 ms at 50 mm, against 5.6 ms and 27.7 ms for a fresh
-    ``"qr"`` fit -- 170x to 200x.  ``gamma`` is non-negative and the divisor
-    therefore never falls below one, so no dynamic range in ``gamma`` (seven
+    division: on ``brain.mnc``'s estimation grid a further weight costs 0.033 ms
+    at 200 mm and 0.140 ms at 50 mm, against 5.6 ms and 27.7 ms for a fresh
+    ``"qr"`` fit, a factor of 170 to 200.  ``gamma`` is non-negative, so the
+    divisor never falls below one and no dynamic range in ``gamma`` (seven
     decades here) can affect the answer.
 
     **For a single weight this is the slowest solver and should not be
     selected.**  The eigendecomposition of ``D~'D~`` is ``O(k^3)`` in addition
-    to everything ``"qr"`` performs, and yields no benefit until a second
-    weight is requested.  One fit on the same grid: 7.3 ms at 200 mm against ``"qr"``'s
+    to everything ``"qr"`` performs, and yields no benefit until a second weight
+    is requested.  One fit on the same grid: 7.3 ms at 200 mm against ``"qr"``'s
     5.6 ms and ``"normal"``'s 4.9 ms, and 43.6 ms at 50 mm against 27.7 ms and
-    8.3 ms -- so a whole 30-iteration pipeline runs 1.8 s at 50 mm where
-    ``"qr"`` runs 1.2 s.  It becomes economical from the second weight
-    onwards and decisively so by the fourth; below that, use ``"qr"``.
+    8.3 ms, so a whole 30-iteration pipeline runs 1.8 s at 50 mm where ``"qr"``
+    runs 1.2 s.  It becomes economical from the second weight onwards and
+    decisively so by the fourth; below that, use ``"qr"``.
 
     **The anchor is what makes this work, and it differs from the textbook
-    formulation.**  Demmler-Reinsch is usually written on the QR of ``A``
-    alone, whose ``R`` is then used for ``D~``.  That is unusable here: ``A``
-    is the masked design, and at fine knot spacings the mask leaves basis
-    functions with no data under them at all.  Measured on ``chunk.mnc``,
-    ``cond(A)`` is ``8.4e7`` at 200 mm and ``7.5e12`` at 50 mm, where ``A``
-    is *rank deficient* -- 243 of 245 columns -- and ``D R^-1`` overflows into
-    a ``gamma`` with 83 non-positive entries reaching ``-5.7e6``.  Clipping
-    those at zero does not recover it; the eigenvectors are as damaged as the
-    eigenvalues.  Anchoring on the stacked matrix instead costs nothing and
-    removes the failure entirely, because the penalty rows span precisely the
-    directions the data leaves empty: ``cond(R0)`` is the stacked system's ``3.5e6`` and
-    ``2.9e5`` at those two spacings.  The cost is that the basis is valid only at or
-    above its anchor, since below it the divisor can pass through zero, so
-    ``anchor`` belongs at the bottom of the intended grid.
+    formulation.**  Demmler-Reinsch is usually written on the QR of ``A`` alone,
+    whose ``R`` is then used for ``D~``.  That is unusable here: ``A`` is the
+    masked design, and at fine knot spacings the mask leaves basis functions
+    with no data under them.  Measured on ``chunk.mnc``, ``cond(A)`` is
+    ``8.4e7`` at 200 mm and ``7.5e12`` at 50 mm, where ``A`` is *rank deficient*
+    (243 of 245 columns) and ``D R^-1`` overflows into a ``gamma`` with 83
+    non-positive entries reaching ``-5.7e6``.  Clipping those at zero does not
+    recover it; the eigenvectors are as damaged as the eigenvalues.  Anchoring
+    on the stacked matrix costs nothing and removes the failure, because the
+    penalty rows span precisely the directions the data leaves empty:
+    ``cond(R0)`` is the stacked system's ``3.5e6`` and ``2.9e5`` at those two
+    spacings.  The cost is that the basis is valid only at or above its anchor,
+    since below it the divisor can pass through zero, so ``anchor`` belongs at
+    the bottom of the intended grid.
 
 ``"sparse"``
     The same stacked system again, held in ``scipy.sparse`` and handed to
-    ``lsqr``.  **It does not converge on this problem and should not be used
-    for results.**  Rectangular systems rule out every direct sparse solver in
-    ``scipy.sparse.linalg`` -- it has no sparse QR -- which leaves iterative
-    methods, and LSQR's convergence is governed by the very condition number
-    the stacked form was chosen to reduce.  At 200 mm it stops after ~2,950
-    iterations reporting ``istop=3`` ("condition number exceeds ``conlim``"),
-    18 s in and ``1.8e-3`` from the direct answer, which is larger than the
-    difference between this port and the original C++.  Raising the iteration
-    limit has no effect; it is not terminating early.  Retained because the
-    measurement is informative: see :attr:`BSplineField.solve_info` for what
-    LSQR reports, and ``PROBLEMS.md`` for the full result.
+    ``lsqr``.  **It does not converge on this problem and must not be used for
+    results.**  Rectangular systems rule out every direct sparse solver in
+    ``scipy.sparse.linalg``, which has no sparse QR, leaving iterative methods,
+    and LSQR's convergence is governed by the same condition number the stacked
+    form was chosen to reduce.  At 200 mm it stops after ~2,950 iterations
+    reporting ``istop=3`` ("condition number exceeds ``conlim``"), 18 s in and
+    ``1.8e-3`` from the direct answer, which is larger than the difference
+    between this port and the original C++.  Raising the iteration limit has no
+    effect; it is not terminating early.  Retained because the measurement is
+    informative: see :attr:`BSplineField.solve_info` for what LSQR reports, and
+    ``PROBLEMS.md`` for the full result.
 
-The three direct solvers agree to far better than the fit is determined to;
-where they differ, the stacked pair is the more accurate (they reach a
-strictly lower residual than the normal equations).
+The direct solvers agree to far better than the fit is determined to; where they
+differ, the stacked pair is the more accurate, reaching a strictly lower
+residual than the normal equations.
 
 The spline is defined on a box in *world* coordinates and evaluates to exactly
 zero outside it, so a field fitted on the coarse estimation grid can be
-evaluated at full resolution -- N3 does that through its ``.imp`` file, and
+evaluated at full resolution.  N3 does that through its ``.imp`` file;
 :meth:`BSplineField.evaluate_on` does it directly.
 
 Ported from ``legacy/N3/src/Splines/TBSpline.cc``.
@@ -173,8 +173,8 @@ class BSplineField:
     ``solver`` selects how the least-squares problem is solved; see the
     module docstring.  All of them minimise the same objective.
 
-    ``anchor`` applies to ``solver="dr"`` alone: it is the weight at which that
-    solver takes its factorization, and the lowest weight :meth:`refit` can
+    ``anchor`` applies to ``solver="dr"`` alone: the weight at which that solver
+    takes its factorization, and the lowest weight :meth:`refit` can
     subsequently be given.  It defaults to ``lam``, which makes a single fit
     behave exactly as ``"qr"`` does; set it to the bottom of the grid to be
     swept.
@@ -253,14 +253,14 @@ class BSplineField:
         One row per masked voxel, holding the 64 basis functions that voxel
         falls under (``weights``) and their flat coefficient indices
         (``columns``), plus the voxel indices themselves (``where``).  This is
-        the design matrix ``A`` in the sparse form it is actually built in --
-        every row has 64 non-zeros and no other -- which is why the solvers
-        can scatter it into slabs instead of holding it whole.
+        the design matrix ``A`` in the sparse form it is built in -- every row
+        has 64 non-zeros and no others -- which is why the solvers can scatter
+        it into slabs instead of holding it whole.
 
         :meth:`fit` uses it to build a system.  :mod:`torch_n3.optimize` uses
         it to *evaluate*: ``(weights * c[columns]).sum(1)`` is the field at the
-        samples, differentiable in ``c``, with no dense matrix anywhere.  Both
-        want exactly these two tensors, which is why this is public.
+        samples, differentiable in ``c``, with no dense matrix.  Both require
+        these two tensors, which is why this is public.
         """
         step = int(subsample)
         if mask is None:
@@ -302,13 +302,13 @@ class BSplineField:
         in each -- with the penalty rows written underneath it, and handed to
         a least-squares driver.
 
-        That is the one real cost of this solver: ``A`` is held dense, where
-        the normal equations only ever held ``AtA``, which is ``N x size``
-        doubles against ``size x size``.  N3 estimates on the grid ``-shrink``
-        leaves, so on ``brain.mnc`` it is 25 MB at the default shrink of 4 and
-        600 MB at ``-shrink 1``; peak RSS for the whole pipeline measured 1.0
-        GB against 1.3 GB there.  Time is not the issue -- 10 iterations of
-        the shipped protocol run 0.38 s against 0.41 s on a CPU.
+        This is the one real cost of the solver: ``A`` is held dense, where the
+        normal equations held only ``AtA`` -- ``N x size`` doubles against
+        ``size x size``.  N3 estimates on the grid ``-shrink`` leaves, so on
+        ``brain.mnc`` it is 25 MB at the default shrink of 4 and 600 MB at
+        ``-shrink 1``; peak RSS for the whole pipeline measured 1.0 GB against
+        1.3 GB there.  Time is not the constraint: 10 iterations of the shipped
+        protocol run 0.38 s against 0.41 s on a CPU.
         """
         size = int(np.prod(self.n))
         factor = bending_energy_factor(self.n, self.device)
@@ -342,27 +342,26 @@ class BSplineField:
         an extra *column*, so the rotations that triangularise ``A`` deliver
         ``Q^T f`` in it and the fit is one back-substitution at the end.
 
-        What makes the groups cheap is that ``A`` is banded once its rows are
-        sorted.  A sample whose first-axis corner is ``k`` has its 64
-        non-zeros inside the flat columns ``[k*n1*n2, (k+4)*n1*n2)`` -- one
-        contiguous window of width ``4*n1*n2``, because the flat index runs
-        first-axis-slowest.  Take the groups in increasing ``k`` and two
-        things follow: a group can only touch the window, and every row of
-        ``R`` above the window is already final, since the incoming rows are
-        zero in the columns those rows pivot on.  So each step factorises a
-        ``(window + group)`` by ``window`` block rather than anything the size
-        of the whole system.
+        The groups are cheap because ``A`` is banded once its rows are sorted.
+        A sample whose first-axis corner is ``k`` has its 64 non-zeros inside
+        the flat columns ``[k*n1*n2, (k+4)*n1*n2)``: one contiguous window of
+        width ``4*n1*n2``, because the flat index runs first-axis-slowest.
+        Taking the groups in increasing ``k``, a group can only touch the
+        window, and every row of ``R`` above the window is already final, since
+        the incoming rows are zero in the columns those rows pivot on.  Each
+        step therefore factorises a ``(window + group)`` by ``window`` block
+        rather than anything the size of the whole system.
 
-        The bending-energy rows are the exception -- ``D`` comes from an
+        The bending-energy rows are the exception: ``D`` comes from an
         eigendecomposition and is dense across every column, so it cannot join
         the band.  It goes in at the end, as one ``2*size`` by ``size`` QR,
-        which is small: the sweep above has already absorbed the ``N`` rows
-        that made the problem big.
+        which is small, the sweep above having already absorbed the ``N`` rows
+        that made the problem large.
 
-        At the shipped 200 mm spacing this degenerates to :meth:`_solve_stacked`
-        -- ``n0`` is 4, so there is a single group and the window is the whole
-        system.  It pays at fine spacings, where ``size`` grows as the cube of
-        the knot count but the window only as the square.
+        At the shipped 200 mm spacing this degenerates to
+        :meth:`_solve_stacked`: ``n0`` is 4, so there is a single group and the
+        window is the whole system.  It pays at fine spacings, where ``size``
+        grows as the cube of the knot count but the window only as the square.
         """
         size = int(np.prod(self.n))
         stride = self.n[1] * self.n[2]
@@ -431,17 +430,17 @@ class BSplineField:
     def _solve_dr(self, columns, weights, values):
         """Factorise once into the Demmler-Reinsch basis, then solve by division.
 
-        The stacked matrix is built exactly as :meth:`_solve_stacked` builds
-        it, but at the *anchor* weight and with the right-hand side carried
-        along as an extra column, so that triangularising it delivers ``R0``
-        and ``Q0'[f; 0]`` together and ``Q0`` itself is never formed -- the
-        same construction :meth:`_solve_blocked` uses to obtain its
+        The stacked matrix is built as :meth:`_solve_stacked` builds it, but at
+        the *anchor* weight and with the right-hand side carried along as an
+        extra column, so triangularising it delivers ``R0`` and ``Q0'[f; 0]``
+        together and ``Q0`` itself is never formed.  This is the same
+        construction :meth:`_solve_blocked` uses to obtain its
         back-substitution at no additional cost.
 
-        Everything expensive is in that factorization and in the
-        eigendecomposition :class:`DemmlerReinschBasis` does on top of it, and
-        neither depends on ``lambda``.  The basis is kept so that
-        :meth:`refit` can sweep one.
+        The expensive parts are that factorization and the eigendecomposition
+        :class:`DemmlerReinschBasis` performs on top of it, and neither depends
+        on ``lambda``.  The basis is retained so that :meth:`refit` can sweep
+        one.
         """
         size = int(np.prod(self.n))
         factor = bending_energy_factor(self.n, self.device)
@@ -463,23 +462,22 @@ class BSplineField:
     def _solve_sparse(self, columns, weights, values):
         """``"qr"``'s stacked system, held sparse and solved iteratively.
 
-        Exactly the matrix :meth:`_solve_stacked` builds -- ``[A; sqrt(lam*N)
-        D]`` against ``[f; 0]`` -- but ``A`` is stored as the sparse thing it
-        is: 64 non-zeros in a row of ``size``, which at the shipped 200 mm
-        spacing is 80% full and at 25 mm is 2%.  Nothing here forms ``AtA`` or
-        ``At f``, so the conditioning is the stacked system's, as in ``"qr"``.
+        The matrix :meth:`_solve_stacked` builds -- ``[A; sqrt(lam*N) D]``
+        against ``[f; 0]`` -- but with ``A`` stored sparsely: 64 non-zeros in a
+        row of ``size``, which at the shipped 200 mm spacing is 80% full and at
+        25 mm is 2%.  Nothing here forms ``AtA`` or ``At f``, so the
+        conditioning is the stacked system's, as in ``"qr"``.
 
-        The solver has to be ``lsqr`` rather than ``spsolve`` because the
-        system is rectangular -- ``spsolve`` takes square systems only, and a
-        square one here would mean the normal equations again.  ``lsqr``
-        applies its own bidiagonalisation to ``A`` directly and never forms
-        them, which is the whole point; being iterative, it stops on a
-        tolerance rather than at a fixed cost, and that tolerance is what
-        ``atol``/``btol`` set below.
+        The solver must be ``lsqr`` rather than ``spsolve`` because the system
+        is rectangular: ``spsolve`` takes square systems only, and a square one
+        here would be the normal equations again.  ``lsqr`` applies its own
+        bidiagonalisation to ``A`` directly and never forms them.  Being
+        iterative, it stops on a tolerance rather than at a fixed cost, and that
+        tolerance is what ``atol``/``btol`` set below.
 
-        ``scipy`` is imported here rather than at the top of the module so
-        that it is needed only by whoever asks for this solver, and the solve
-        runs on the CPU whatever device the fit was assembled on.
+        ``scipy`` is imported here rather than at the top of the module so that
+        it is required only by callers of this solver.  The solve runs on the
+        CPU whatever device the fit was assembled on.
         """
         from scipy.sparse import coo_matrix, csr_matrix, vstack
         from scipy.sparse.linalg import lsqr
@@ -515,8 +513,8 @@ class BSplineField:
         """Accumulate ``AtA`` and ``AtF`` without ever holding all of ``A``.
 
         ``A`` has one row per sample and 64 non-zeros in it.  Materialising a
-        slab of rows at a time turns the accumulation into two matrix
-        products, which is both fast and indifferent to the device.
+        slab of rows at a time turns the accumulation into two matrix products,
+        which is fast and device-independent.
         """
         size = int(np.prod(self.n))
         normal = torch.zeros((size, size), dtype=torch.float64,
@@ -547,10 +545,10 @@ class BSplineField:
         """Set the coefficients without fitting anything.
 
         For a caller that chose them some other way -- :mod:`torch_n3.optimize`
-        arrives at them by gradient descent -- and then wants the evaluation
+        arrives at them by gradient descent -- and then requires the evaluation
         machinery below.  Nothing else about the object changes, so
-        :attr:`solve_info` and :attr:`dr_basis` stay as they were, which for an
-        unfitted spline means absent.
+        :attr:`solve_info` and :attr:`dr_basis` are left as they were, which for
+        an unfitted spline means absent.
         """
         values = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
         size = int(np.prod(self.n))
@@ -570,10 +568,10 @@ class BSplineField:
     def refit(self, lam):
         """Move to another ``lambda`` without factorising again.
 
-        Only ``solver="dr"`` can do this, and only at or above its ``anchor``.
-        The whole cost is one elementwise division and a triangular solve, so
-        a ``lambda`` grid is a sweep over this rather than a sequence of fits;
-        the answer is the same one a fresh fit at ``lam`` would reach.
+        Only ``solver="dr"`` supports this, and only at or above its ``anchor``.
+        The cost is one elementwise division and a triangular solve, so a
+        ``lambda`` grid is a sweep over this rather than a sequence of fits.
+        The answer is the one a fresh fit at ``lam`` would reach.
         """
         basis = self.dr_basis
         self._coefficients = basis.coefficients(lam)
@@ -588,7 +586,7 @@ class BSplineField:
         """Evaluate the fitted spline on any grid in the same world space.
 
         The basis is a tensor product, so this contracts one axis at a time
-        rather than forming the 4x4x4 block per voxel.
+        rather than forming a 4x4x4 block per voxel.
         """
         coefficients = self.coefficients.reshape(*self.n)
         neighbours = torch.arange(4, device=self.device)
@@ -626,9 +624,9 @@ class BSplineField:
         """The four non-zero cubics at each coordinate, and where they start.
 
         Returns ``(terms, block)`` with ``terms`` of shape ``(n, 4)`` holding
-        the basis values and ``block`` the index of the first of the four
-        basis functions.  Coordinates outside the domain get zeros, which is
-        how the legacy makes the spline vanish there.
+        the basis values and ``block`` the index of the first of the four basis
+        functions.  Coordinates outside the domain receive zeros, which is how
+        the legacy makes the spline vanish there.
         """
         knots, distance = self._knots[axis], self.distance
         block = torch.ceil((coordinates - knots[3]) / distance).long() - 1
@@ -665,8 +663,8 @@ class BSplineField:
 class DemmlerReinschBasis:
     """A penalised least-squares fit reparameterized so the penalty is diagonal.
 
-    Built from the triangular factor of the *stacked* system at an anchor
-    weight -- ``R0' R0 = A'A + lambda_0 N J`` -- together with the transformed
+    Built from the triangular factor of the *stacked* system at an anchor weight
+    -- ``R0' R0 = A'A + lambda_0 N J`` -- together with the transformed
     right-hand side ``rhs = Q0'[f; 0]``, which the same factorization produces
     when the data rides along as an extra column.  See this module's docstring
     for the algebra and for why the anchor is on the stacked matrix rather than
@@ -675,14 +673,13 @@ class DemmlerReinschBasis:
     Everything here is independent of ``lambda``: the triangular solve that
     forms ``D~ = sqrt(N) D R0^-1`` (Step 2), the eigendecomposition ``D~'D~ =
     U diag(gamma) U'`` (Step 3), and the projection of the right-hand side into
-    that basis (Step 4).  :meth:`coefficients` is Steps 5 and 6, and is the
-    only part a ``lambda`` sweep repeats.
+    that basis (Step 4).  :meth:`coefficients` is Steps 5 and 6, and is the only
+    part a ``lambda`` sweep repeats.
 
-    ``gamma`` is the penalty spectrum in the transformed basis, sorted
-    ascending by ``eigh``.  Its four smallest entries are zero to working
-    precision in three dimensions -- ``J`` cannot see an affine field -- and
-    those are the unpenalised trend components of the classical
-    Demmler-Reinsch construction.
+    ``gamma`` is the penalty spectrum in the transformed basis, sorted ascending
+    by ``eigh``.  Its four smallest entries are zero to working precision in
+    three dimensions, since ``J`` cannot see an affine field; these are the
+    unpenalised trend components of the classical Demmler-Reinsch construction.
 
     References
     ----------
@@ -718,9 +715,9 @@ class DemmlerReinschBasis:
     def divisor(self, lam):
         """``1 + (lambda - lambda_0) * gamma`` -- what Step 5 divides by.
 
-        At or above the anchor every entry is at least one, which is the whole
-        point of the reparameterization: there is nothing here to cancel, and
-        ``gamma``'s dynamic range cannot reach the answer.
+        At or above the anchor every entry is at least one, which is the point
+        of the reparameterization: there is nothing to cancel, and ``gamma``'s
+        dynamic range cannot reach the answer.
         """
         return 1.0 + (float(lam) - self.anchor) * self.gamma
 
@@ -748,17 +745,16 @@ def fit_penalized_spline_dr(design, factor, values, lam, anchor=None,
                             return_diagnostics=False):
     """Fit ``(B'B + lam D'D) c = B'y`` through the Demmler-Reinsch basis.
 
-    The standalone form of what ``BSplineField(..., solver="dr")`` does, on
-    matrices handed in directly: ``design`` is ``B`` (``n x k``), ``factor`` is
-    ``D`` (``p x k``, the penalty's square root, ``D'D = J``), ``values`` is
-    ``y``.  Note the convention -- ``lam`` multiplies ``D'D`` with no sample
-    count in it, so a caller using N3's ``lambda * N * J`` folds the ``N`` in
-    itself.
+    The standalone form of ``BSplineField(..., solver="dr")``, on matrices
+    passed in directly: ``design`` is ``B`` (``n x k``), ``factor`` is ``D``
+    (``p x k``, the penalty's square root, ``D'D = J``), ``values`` is ``y``.
+    Note the convention: ``lam`` multiplies ``D'D`` with no sample count in it,
+    so a caller using N3's ``lambda * N * J`` folds the ``N`` in itself.
 
     ``anchor`` is the weight the factorization is taken at, defaulting to
     ``lam``; the returned basis is valid at that weight and above.  Fitting a
     grid means calling this once at the bottom of it and then
-    :meth:`DemmlerReinschBasis.coefficients` per point -- the QR and the
+    :meth:`DemmlerReinschBasis.coefficients` per point: the QR and the
     eigendecomposition do not depend on ``lam`` and must not be repeated.
 
     Returns ``c``, or ``(c, basis)`` when ``return_diagnostics`` is set, the
@@ -829,14 +825,13 @@ def bending_energy_factor(n, device=None):
     """``D`` with ``D^T D = J``, the stacked solver's half of the penalty.
 
     ``J`` is a Gram matrix of integrals, so it is symmetric positive
-    *semi*-definite -- singular, in fact, by exactly the four dimensions an
-    affine field spans, which bends not at all and is what the penalty is
-    meant to leave alone.  That rules out a Cholesky factor and leaves the
-    symmetric eigendecomposition, which does not mind: ``J = V diag(w) V^T``
-    gives ``D = diag(sqrt(w)) V^T``, with the handful of eigenvalues that come
-    back a rounding error below zero clamped away.  ``J`` is one coefficient
-    square (80 of them at the default spacing), so this costs nothing next to
-    the fit.
+    *semi*-definite: singular by exactly the four dimensions an affine field
+    spans, which does not bend and which the penalty leaves alone.  That rules
+    out a Cholesky factor and leaves the symmetric eigendecomposition:
+    ``J = V diag(w) V^T`` gives ``D = diag(sqrt(w)) V^T``, with the few
+    eigenvalues that come back a rounding error below zero clamped away.  ``J``
+    is one coefficient square (80 at the default spacing), so this costs nothing
+    beside the fit.
     """
     energy = bending_energy_tensor(n, device)
     values, vectors = torch.linalg.eigh(energy)
@@ -851,10 +846,10 @@ def _kron(axes, order):
 def bending_energy(size, order, device=None):
     """The 1-D matrix of ``integral(b_i^(order) * b_j^(order))``.
 
-    ``size`` basis functions on a uniform knot grid.  Interior functions all
-    see the same four-span overlap, so the matrix is banded with a constant
-    band; only the first and last two rows differ, because those splines are
-    clipped by the end of the domain (``TBSpline.cc:476``).
+    ``size`` basis functions on a uniform knot grid.  Interior functions all see
+    the same four-span overlap, so the matrix is banded with a constant band;
+    only the first and last two rows differ, those splines being clipped by the
+    end of the domain (``TBSpline.cc:476``).
     """
     if size < 4:
         raise ValueError("bending energy is undefined for fewer than 4 splines")

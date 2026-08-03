@@ -3,13 +3,13 @@
 The filter is a modification rather than a port, so it has no oracle.  Nor is
 ``torch_SR``'s C kernel one: the two are the same computation under different
 conventions and agree only where ``sigma`` is constant, so comparing against it
-would pin the wrong thing.  What follows states the properties the filter is
-required to have, and what it does to a bias-field estimate is measured by
+would constrain the wrong thing.  What follows states the properties the filter
+is required to have; its effect on a bias-field estimate is measured by
 ``python3 -m tests.denoise`` rather than asserted here.
 
-Every bound below is either exact or an ordering.  That is deliberate: a bound
-this module could only justify by first running the code would record what the
-filter does instead of what it must do (CLAUDE.md, "Test tolerances").
+Every bound below is either exact or an ordering.  A bound this module could
+justify only by first running the code would record what the filter does instead
+of what it must do (CLAUDE.md, "Test tolerances").
 
 The phantom is built here rather than in ``tests/inputs.py``, which exists to
 re-pose questions a recorded oracle has already answered; there is no recorded
@@ -41,7 +41,7 @@ def clean():
 
 @pytest.fixture(scope="module")
 def noisy(clean):
-    """The same, with seeded Gaussian noise -- what the filter is given."""
+    """The same, with seeded Gaussian noise: the filter's input."""
     generator = torch.Generator().manual_seed(20260802)
     spread = NOISE * (max(SLABS) - min(SLABS))
     return clean + spread * torch.randn(clean.shape, generator=generator,
@@ -61,20 +61,19 @@ def test_a_constant_volume_is_returned_exactly(clean):
 
 @pytest.mark.parametrize("factor", [2.0 ** -20, 2.0 ** 20])
 def test_the_filter_does_not_depend_on_the_intensity_scale(noisy, factor):
-    """The one property the internal normalisation exists to provide.
+    """The property the internal normalisation provides.
 
     ``SIGMA_FLOOR`` is an absolute threshold, so a filter that trusted its
     input's scale would smooth the background of a volume stored large and be
-    the identity on the same volume stored small -- both silently.  Rescaling
-    the input must instead rescale the output and do nothing else.
+    the identity on the same volume stored small, both silently.  Rescaling the
+    input must instead rescale the output and do nothing else.
 
-    Exact rather than approximate because the factors are powers of two:
-    every quantity the filter derives from the volume -- the noise level, the
-    audibility floor, the patch distances -- is then an exact binary rescaling
-    of its counterpart, so the weights are bit-identical and no measurement
-    enters the bound.  This is also the test that caught the source's fixed
-    ``1e-10`` variance floor, which is scale-free only while the volume
-    happens to be on ``DEFAULT_SCALE``.
+    Exact rather than approximate because the factors are powers of two: every
+    quantity the filter derives from the volume -- the noise level, the floor,
+    the patch distances -- is then an exact binary rescaling of its counterpart,
+    so the weights are bit-identical and no measurement enters the bound.  This
+    test also caught the source's fixed ``1e-10`` variance floor, which is
+    scale-free only while the volume is on ``DEFAULT_SCALE``.
     """
     assert torch.equal(denoise(noisy * factor) / factor, denoise(noisy))
 
@@ -86,14 +85,14 @@ def test_the_filter_does_not_depend_on_an_intensity_offset(noisy, offset):
     Every other quantity in the filter is already translation-invariant -- the
     patch distances are differences, the noise level is a local standard
     deviation -- so a floor taken from an intensity *level* rather than from a
-    range would be the one term that was not, and the same anatomy stored with
+    range would be the only term that was not, and the same anatomy stored with
     a DC offset would be filtered as though its noise were smaller than it is.
-    Together with the scaling above, this is affine equivariance:
+    With the scaling above, this is affine equivariance:
     ``denoise(a*v + b) == a*denoise(v) + b``.
 
     Not exact, unlike the scaling: ``v + offset`` rounds, so the two runs are
-    not handed bit-identical inputs.  The bound is float64's sixteen digits
-    less the ~343-term accumulation.
+    not given bit-identical inputs.  The bound is float64's sixteen digits less
+    the ~343-term accumulation.
     """
     shifted = denoise(noisy + offset) - offset
     assert float((shifted - denoise(noisy)).abs().max()) < 1e-12 * float(
@@ -101,7 +100,7 @@ def test_the_filter_does_not_depend_on_an_intensity_offset(noisy, offset):
 
 
 def test_zero_strength_is_the_identity(noisy):
-    """``strength`` reaches zero, and reaching it does nothing at all.
+    """``strength`` reaches zero, and at zero the filter does nothing.
 
     Every ``sigma`` becomes zero, none clears ``SIGMA_FLOOR``, every weight is
     masked away, and the result is the input over a total weight of one.
@@ -139,10 +138,10 @@ def test_a_voxel_in_a_quiet_neighbourhood_is_left_untouched(clean):
 
 
 def test_it_reduces_the_error_against_the_noise_free_phantom(clean, noisy):
-    """What the filter is for, stated as the only bound that needs no number.
+    """The filter's purpose, as the one bound that needs no number.
 
-    An ordering, not a threshold: how much it removes is a measurement and
-    belongs in ``tests/denoise.py``.
+    An ordering rather than a threshold: how much it removes is a measurement
+    and belongs in ``tests/denoise.py``.
     """
     before = float((noisy - clean).pow(2).mean())
     after = float((denoise(noisy) - clean).pow(2).mean())
@@ -182,8 +181,8 @@ def test_an_axis_no_longer_than_the_padding_is_an_error(shape, fails):
     """Reflect padding cannot reach past the array it reflects.
 
     The kernel pads by ``search + patch``, which is 4 at the defaults, so every
-    axis must exceed 4.  Torch's own message for this names neither the option
-    that caused it nor the way out, so it is caught first.
+    axis must exceed 4.  Torch's own message names neither the option that
+    caused it nor the remedy, so this is caught first.
     """
     volume = torch.rand(shape, dtype=torch.float64) + 1.0
     if fails:
@@ -209,8 +208,8 @@ def test_a_volume_that_is_almost_all_background_is_an_error():
     """Noise present, but no dynamic range to measure the floor against.
 
     Two voxels of signal in a field of zeros: the centile range collapses while
-    the local spread does not, so no floor can be set.  Saying so is better
-    than silently admitting every voxel.
+    the local spread does not, so no floor can be set.  Raising an error is
+    preferable to silently admitting every voxel.
     """
     volume = torch.zeros(9, 9, 9, dtype=torch.float64)
     volume[4, 4, 4] = 500.0
@@ -272,7 +271,7 @@ def test_the_default_pipeline_never_calls_the_filter(monkeypatch, chunk,
 
     Asserted rather than inferred, because every recorded answer in ``tests/``
     was produced without it: were the filter to run by default, or on an option
-    left true by accident, each of them would move.
+    left true by accident, each of them would change.
     """
     import torch_n3.blocks
 
@@ -293,7 +292,7 @@ def test_denoising_changes_the_field_that_is_estimated(chunk, chunk_mask):
     """The option is wired to the estimation and not to a dead branch.
 
     Categorical: that it changes the answer at all.  Whether it changes it for
-    the better is a measurement, and is what ``tests/denoise.py`` is for.
+    the better is a measurement, and belongs in ``tests/denoise.py``.
     """
     plain = nu_estimate(chunk, mask=chunk_mask, iterations=(1,))
     filtered = nu_estimate(chunk, mask=chunk_mask, iterations=(1,),
@@ -305,11 +304,10 @@ def test_the_written_volume_is_the_original_divided_by_the_field(chunk,
                                                                  chunk_mask):
     """Denoising reaches the estimate and stops there.
 
-    The whole point of the option: the field is fitted to a filtered copy, but
-    the volume handed back is the caller's own intensities divided by that
-    field.  Exact, because both sides are the same division of the same
-    tensor -- had the filtered copy leaked into the output, the difference
-    would be the size of the noise.
+    The field is fitted to a filtered copy, but the volume returned is the
+    caller's own intensities divided by that field.  Exact, because both sides
+    are the same division of the same tensor; had the filtered copy leaked into
+    the output, the difference would be the size of the noise.
     """
     field = nu_estimate(chunk, mask=chunk_mask, iterations=(1,), denoise=True)
     divisor = evaluate_field(chunk, field)
@@ -327,7 +325,7 @@ def test_the_legacy_backend_has_no_denoiser():
 
 
 def test_the_legacy_backend_refuses_a_denoised_run(chunk, chunk_mask):
-    """And refuses it through the pipeline too, rather than silently ignoring."""
+    """And refuses it through the pipeline as well, rather than ignoring it."""
     with pytest.raises(ValueError, match="torch backend"):
         nu_estimate(chunk, mask=chunk_mask, iterations=(1,),
                     backend="legacy", denoise=True)
@@ -337,8 +335,8 @@ def test_the_scale_constant_is_the_one_the_floor_was_calibrated_on():
     """A guard on the module's own arithmetic.
 
     ``SIGMA_FLOOR`` is meaningful only against ``DEFAULT_SCALE``; changing one
-    without the other silently re-tunes the filter, and no other test here
-    would notice, since every one of them is scale-invariant by construction.
+    without the other silently re-tunes the filter, and no other test here would
+    detect it, every one of them being scale-invariant by construction.
     """
     assert DEFAULT_SCALE == 256.0
 
@@ -347,9 +345,9 @@ def test_the_scale_is_a_range_and_not_a_level(noisy):
     """The floor is measured against a spread, which is what noise is.
 
     Stated directly as well as through the invariance above, because the two
-    fail differently: a level-based floor would still pass the scaling test
-    while being wrong about any volume with a DC offset, and it is what the
-    code this was ported from uses.
+    fail differently: a level-based floor would pass the scaling test while
+    being wrong about any volume with a DC offset, and it is what the source
+    code uses.
     """
     from torch_n3.blocks.denoise import SCALE_QUANTILES, _scale
 
