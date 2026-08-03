@@ -192,9 +192,10 @@ scaling in Python is wrong by a whole quantisation step. Round-trip through
 
 ## Documentation style
 
-`README.md` and every docstring in `torch_n3/`, `tests/` and `experiments/` were rewritten on
-2026-08-02 into a **concise, factual, technical-report register**. Write new prose the same way,
-and do not reintroduce the earlier essayistic voice when editing existing text.
+`README.md`, `PROBLEMS.md`, `experiments/README.md` and every docstring in `torch_n3/`,
+`tests/` and `experiments/` were rewritten on 2026-08-02/03 into a **concise, factual,
+technical-report register**. Write new prose the same way, and do not reintroduce the earlier
+essayistic voice when editing existing text.
 
 What that means in practice:
 
@@ -216,10 +217,11 @@ What that means in practice:
   sentence, and none may be added without being measured.
 - Section headings, anchors and the `README.md` heading structure are load-bearing (internal
   links, `tests/tables.py`'s comparison against the published tables). Do not rename them
-  incidentally.
-
-The same register applies to `PROBLEMS.md` and `experiments/README.md`, which have not yet been
-converted.
+  incidentally. `PROBLEMS.md`'s section *numbers* are cited from `README.md` and from several
+  docstrings as "§8", "§9" and so on, so they are load-bearing too.
+- `PROBLEMS.md`'s fenced block is `python3 -m tests.margins`'s output, and
+  `experiments/README.md`'s are commands and recorded output. Reproduce them byte for byte;
+  they are not prose.
 
 ## Test tolerances
 
