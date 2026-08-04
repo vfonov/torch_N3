@@ -12,8 +12,8 @@ concise orientation.
 | Path | Role |
 |---|---|
 | `torch_n3/` | The PyTorch port. `pipeline.py` is N3; `blocks/` implements each stage (`histogram.py`, `sharpen.py`, `spline.py`, `field.py`); `volume.py` is MINC I/O; `minc_tools.py`; `optimize.py` + `blocks/sharpness.py` are a second estimator (`--method`, Hoyer sparsity or within-cluster variance). |
-| `legacy/N3/` | Original C++/Perl — **reference only, do not modify**. Binaries/Perl drivers installed under `/opt/minc/1.9.18.13/bin`. Source of truth for the algorithm. |
-| `torch_n3/_legacy/` | Vendored N3 + EBTKS sources; the CFFI backends/legacy backend (compiles the original C++, now only an oracle). **Do not modify** the `n3/`/`ebtks/` sources. |
+| `legacy/N3/`, `legacy/EBTKS/` | Original C++/Perl and its numerical library. Source of truth for the algorithm. Separate git repositories; changes to them are made on branch **`aislop`**, never on `master` or `develop-1.9.18`. The installed oracle is `/opt/minc/1.9.18.13/bin` and is not written to; this tree's own build installs to `/app/legacy/_install/bin`. |
+| `torch_n3/_legacy/` | Vendored N3 + EBTKS sources; the CFFI backends/legacy backend (compiles the original C++, now only an oracle). **Do not modify** the `n3/`/`ebtks/` sources: they are what every `tests/` comparison is measured against, and must stay byte-identical to the files they vendor from `legacy/N3/src`. |
 | `tests/` | `test_*.py` compare PyTorch blocks against recorded C++ answers via the shim. `tests/regenerate_reference.py` is the only thing that shells out. `tests/margins.py`, `convergence.py`, `tables.py`, `parzen.py`, `denoise.py` measure and print (not tests). |
 | `experiments/` | Monte-Carlo simulations (`experiments.recovery` / `summarize`), not collected by pytest. |
 | `minc2-simple/` | MINC2 binding source; `minc2-simple/USAGE.md` is the Python API reference. |

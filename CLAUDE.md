@@ -8,9 +8,24 @@ Reimplement **N3** (Non-parametric Non-uniform intensity Normalization, Sled/Zij
 1998) in **PyTorch**. N3 removes the smooth multiplicative intensity inhomogeneity ("bias
 field") from MRI volumes without a tissue model.
 
-`legacy/N3/` is the original C++/Perl implementation — **reference only, do not modify**. It is
-also already compiled and installed, so it can be run to produce ground truth for any part of
-the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already installed.
+`legacy/N3/` is the original C++/Perl implementation and `legacy/EBTKS/` its numerical library.
+Both are already compiled and installed, so they can be run to produce ground truth for any
+part of the pipeline. MINC volume I/O from Python goes through `minc2_simple`, already
+installed.
+
+Each is a separate git repository, ignored by this one, and both are checked out on the branch
+**`aislop`**. That is where every change to them is made: new sources, additive
+`CMakeLists.txt` entries, and options added to the existing programs and Perl drivers
+(`-gaussian_window`, `-parzen_sigma`) all live there. Do not commit to `master` or
+`develop-1.9.18`, and do not write to `/opt/minc/1.9.18.13` — the installed programs there are
+the untouched oracle, and `/app/legacy/_install` is where this tree's own build goes.
+
+Two things do not move. `torch_n3/_legacy/n3/` and `_legacy/ebtks/` are the PyTorch port's
+oracle and must stay byte-identical to the files they vendor: editing one of those files in
+`legacy/N3/src` silently changes what every `tests/` comparison is measured against, so it
+requires re-vendoring deliberately, with the effect on `PROBLEMS.md`'s margins measured. And
+the original arithmetic is the specification: the C++ pipeline links the existing translation
+units rather than editing them (`PLAN.md` §1, §5).
 
 ## Layout
 
