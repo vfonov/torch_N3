@@ -143,7 +143,7 @@ than retyped.
 | `ShrinkVolume` (`:955`) | keep `start`, multiply `step` by the factor and take `ceil((n-1)/factor)+1` samples, on axes finer than `factor·min\|step\|` only; sample nearest neighbour. The factor is a float. **Check this against `mincresample` before building anything on it** (cycle 1) |
 | `CheckSampling(..., isLabel=1)` → `resample_labels` | **trilinear, then threshold at 0.5** (`resample_labels.in:176-177`), not nearest neighbour |
 | `log_transform` (`:657`) | `log(max(v, 1.0))`; the clamp is `mincmath -clamp -const2 1 1.7e308` |
-| `CreateMask` (`:297`) | `input > background_threshold`, intersected with the user mask; `-bimodalT`, or `-auto_mask` on a non-Talairach volume, takes the threshold from EBTKS `Histogram::biModalThreshold` over `ceil(voxelMax-voxelMin+1)` bins (`volumeStats.cc:286-299`); `-auto_mask` on a Talairach volume uses the average brain mask, label-resampled |
+| `CreateMask` (`:297`) | `input > background_threshold`, intersected with the user mask; `-bimodalT`, or `-auto_mask` on a non-Talairach volume, takes the threshold from EBTKS `Histogram::biModalThreshold` over `ceil(voxelMax-voxelMin+1)` bins (`volumeStats.cc:286-299`); `-auto_mask` on a Talairach volume uses the average brain mask, label-resampled. **The C++ tool does not port the Talairach branch**: it reads no `xspace:spacetype` and always collapses `-auto_mask` to the bimodal threshold. See "Not in scope" |
 | `mincmath -sub`/`-add`/`-mult` | buffer arithmetic |
 | `sharpen_estimate` (`:500`) | `autoRange` → histogram class → `sharpenLookup` → `applyLookup`, then re-masked (`:527`) |
 | `spline_smooth_volume` (`:567`) | b_spline: `TBSplineVolume(volume_domain(vol), start={0,0,0}, step, sizes, distance, lambda)`, `fitSplinesToVolumeLookup(..., mask, subsample)`, `fit()`, `smoothVolumeLookup`. tp_spline: `createThinPlateSpline(reduced_domain(mask), distance, lambda)` and `fitSplinesToVolume`. **The two domains differ** — defect 3 above |
@@ -358,6 +358,14 @@ drivers, `legacy/EBTKS`, everything under `/app/torch_n3`, `/opt/minc`.
   5.3e12) and the `--denoise` prefilter. The C++ pipeline keeps `dsysv` on `AtA`.
 - The EM and WM branches, `fir` smoothing, `-real`, `-differential`, `-initial`,
   `-islands`.
+- **`-auto_mask` on a Talairach-tagged volume**. The Perl detects Talairach space by reading
+  `xspace/yspace/zspace:spacetype` and, when the ICBM average brain mask is readable,
+  intersects it (label-resampled) with the background-threshold mask instead of using the
+  bimodal threshold (`nu_estimate_np_and_em.in:361-369`). This tree ships the ICBM mask
+  (`model_data/N3/icbm_avg_152_*_VI_mask.mnc.gz`) but no Talairach-tagged test volume exists,
+  so the branch cannot be cycled red/green and is deliberately not ported. The C++ tool
+  always collapses `-auto_mask` to the bimodal threshold, which for a Talairach volume that
+  differs from the Perl. Recorded so it is not a *silent* divergence.
 - Threading or GPU. The program stays single-threaded: the gain sought here is the removal
   of file round trips, and a second change at the same time would make it unmeasurable.
 - One divergence found while reading, not fixed and not this task's business:
