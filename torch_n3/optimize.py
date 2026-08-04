@@ -66,7 +66,7 @@ from torch_n3.blocks.sharpness import (cluster_occupancy, cluster_tightness,
                                        quantile_centroids, soft_histogram,
                                        standardize)
 from torch_n3.blocks.spline import BSplineField, bending_energy_tensor
-from torch_n3.pipeline import _denoised, nu_estimate
+from torch_n3.pipeline import _denoised, estimation_mask, nu_estimate
 
 #: The measures :func:`nu_optimize` can descend on.
 OBJECTIVES = ("hoyer", "tightness")
@@ -148,6 +148,12 @@ DEFAULTS = dict(
     distance=200.0,
     shrink=4,
     background=1.0,
+    bimodal=None,       # as in `pipeline.DEFAULTS`: None takes the background
+                        # threshold from the data exactly when no mask is
+                        # supplied.  It matters more here than it does for N3,
+                        # because `_sigma` divides by the spread of whatever
+                        # the mask admitted: air left in it makes that spread
+                        # the air-to-tissue gap rather than the tissue's own.
     subsample=1,
     solver="normal",
 
@@ -215,12 +221,7 @@ def nu_optimize(volume, mask=None, verbose=False, **options):
     volume = _denoised(volume, opts)
     grid = volume if opts["shrink"] == 1 else volume.shrink(opts["shrink"])
     log_volume = torch.log(grid.data.clamp(min=1.0))
-    inside = grid.data > opts["background"]
-    if mask is not None:
-        inside &= mask.resample_like(grid).data != 0
-    if not inside.any():
-        raise ValueError("the mask is empty: no voxel is above the background "
-                         "threshold inside the region of interest")
+    inside = estimation_mask(grid, mask, opts["background"], opts["bimodal"])
 
     spline = BSplineField(grid, opts["distance"], REFIT_LAMBDA,
                           solver=opts["solver"])

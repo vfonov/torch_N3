@@ -373,6 +373,19 @@ re-run.
   the constant that was *missed* on the first pass was the source's `1e-10` variance clamp,
   which only ever bites on a volume stored small. When porting a filter written for normalised
   data, enumerate its constants and check each for units.
+  The same trap sits in the *estimation mask*, where N3's `background_threshold` of 1 admits
+  `brain.mnc`'s air and rejects the whole of the same anatomy stored on [0, 1].
+  `pipeline.estimation_mask` therefore takes the threshold from the data with
+  `minc_tools.bimodal_threshold` when no mask is supplied — `bimodal=None`, the default, for
+  both `nu_estimate` and `nu_optimize`; `--bimodal` / `--no-bimodal` from the CLI. That is the
+  `mincstats -biModalT` rule `evaluate_field` already used, not N3's estimation-side
+  `volume_stats -biModalT`, whose bin count comes from the file's stored voxel range and has no
+  counterpart on a float64 tensor. **A supplied mask still selects the fixed threshold**, as
+  `CreateMask` (:301) does, so no recorded reference or published table is affected: verified
+  bit-identical on `brain.mnc` and `chunk.mnc`. It matters most to `optimize.py`, whose
+  `_sigma` divides `fwhm` by the spread of whatever the mask admitted — with air left in, that
+  spread is the air-to-tissue gap and the kernel comes out below the soft histogram's bin
+  spacing, which is a hard error rather than a quiet loss of accuracy.
 - **Pin such a scale to a *range*, never to a level, and never to `max()`.** A threshold on
   noise is a threshold on a spread, so the quantity it is measured against must be a spread
   too, or it will not survive a DC offset. And `max()` over a million voxels is decided by one

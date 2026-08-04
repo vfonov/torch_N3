@@ -275,6 +275,25 @@ def test_too_few_bins_for_the_kernel_is_an_error(trial, chunk_mask):
         nu_optimize(trial, mask=chunk_mask, bins=8, sigma=0.01, **BUDGET)
 
 
+def test_air_left_in_the_mask_sets_the_kernel_width(chunk):
+    """Why ``nu_optimize`` needs the automatic threshold more than N3 does.
+
+    ``_sigma`` carries ``fwhm`` into standardized units by dividing it by the
+    spread of the intensities the mask admitted.  With air in the mask that
+    spread is the air-to-tissue gap rather than the tissue's own, so the kernel
+    comes out several times too narrow and falls through the soft histogram's
+    grid -- which the guard above catches, leaving an unmasked volume with no
+    way through.  Thresholding at Otsu's boundary is what restores it.
+    """
+    settings = dict(BUDGET, max_iterations=5, shrink=2)
+
+    with pytest.raises(ValueError, match="bin spacing"):
+        nu_optimize(chunk, bimodal=False, **settings)
+
+    field = nu_optimize(chunk, **settings)
+    assert torch.isfinite(field.evaluate_on(chunk)).all()
+
+
 def test_unknown_settings_are_rejected(trial, chunk_mask):
     for bad in (dict(objective="entropy"), dict(optimizer="newton"),
                 dict(precondition="magic"), dict(init="warm"),

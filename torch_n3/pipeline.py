@@ -44,7 +44,15 @@ DEFAULTS = dict(
                         # legacy's own penalised normal equations, "qr"
                         # the better-conditioned stacked factorization of
                         # the same problem (torch backend only)
-    background=1.0,     # voxels at or below this are never part of the mask
+    background=1.0,     # voxels at or below this are never part of the mask.
+                        # An absolute intensity, and so a statement about the
+                        # scale the volume happens to be stored on; `bimodal`
+                        # below replaces it with one taken from the data.
+    bimodal=None,       # take the background threshold from the data with
+                        # Otsu's rule instead of `background` above.  None
+                        # applies it exactly when no mask is supplied, which is
+                        # when `CreateMask` (:301) considers it; True applies
+                        # it within the supplied mask as well, and False never.
     parzen=True,
     parzen_sigma=None,  # None is N3's own `-parzen`: linear interpolation into
                         # the two neighbouring bins.  A number replaces it with
@@ -72,13 +80,63 @@ DEFAULTS = dict(
 )
 
 
+def estimation_mask(grid, mask=None, background=None, bimodal=None):
+    """The voxels the estimation works over (``CreateMask``, :297).
+
+    The intersection of the supplied ``mask`` with a threshold on intensity.
+    That threshold is ``background``, an absolute value, and therefore a
+    statement about the scale the volume's writer happened to choose: N3's own
+    default of 1 admits the air of a volume stored large and rejects all of one
+    stored on [0, 1].  ``bimodal`` replaces it with Otsu's threshold over the
+    data, which is scale-free.
+
+    ``bimodal=None`` applies that rule exactly when no mask is supplied, which
+    is the case ``CreateMask`` reserves it for (:301) and the case where
+    nothing else separates tissue from air.  ``True`` applies it within a
+    supplied mask as well; ``False`` never applies it, which is N3's behaviour
+    without ``-bimodalT`` and what every recorded reference in ``tests/`` was
+    produced under.
+
+    The rule is :func:`~torch_n3.minc_tools.bimodal_threshold`, which is
+    ``mincstats -biModalT`` and what :func:`evaluate_field` already thresholds
+    with.  N3's estimation side uses the *other* of the two bimodal rules,
+    ``volume_stats -biModalT``, which is the same Otsu criterion over a
+    histogram whose bin count comes from the file's stored voxel range; that
+    quantity does not exist on a float64 tensor, so it is not reproduced here.
+    """
+    supplied = None if mask is None else mask.resample_like(grid).data != 0
+    if supplied is not None and not supplied.any():
+        raise ValueError("the supplied mask is empty on the estimation grid")
+
+    if bimodal is None:
+        bimodal = supplied is None
+    if background is None:
+        background = DEFAULTS["background"]
+    if bimodal:
+        # Over the same voxels the threshold will be applied to, as
+        # `volume_stats -biModalT -mask` is given the user's mask (:322-325).
+        background = bimodal_threshold(
+            grid.data if supplied is None else grid.data[supplied])
+
+    inside = grid.data > background
+    if supplied is not None:
+        inside &= supplied
+    if not inside.any():
+        raise ValueError("the mask is empty: no voxel is above the background "
+                         "threshold %g inside the region of interest"
+                         % background)
+    return inside
+
+
 def nu_correct(volume, mask=None, evaluation_mask=None, field_floor=0.1,
                verbose=False, **options):
     """Estimate the bias field and divide it out.  Returns the corrected volume.
 
-    ``mask`` restricts the *estimation* to a region of interest, and should be
-    supplied wherever possible: N3 is a histogram method, and background voxels
-    contribute only noise.  ``evaluation_mask`` restricts where the field is
+    ``mask`` restricts the *estimation* to a region of interest, and is worth
+    supplying: N3 is a histogram method, and background voxels contribute only
+    noise.  Without one the estimation keeps what lies above the automatic
+    threshold (:func:`estimation_mask`), which separates tissue from air but
+    not brain from skull.  ``evaluation_mask`` restricts where the field is
     used directly before being extrapolated outwards; when omitted, one is
     derived from the data as ``nu_evaluate`` does.
     """
@@ -117,12 +175,7 @@ def nu_estimate(volume, mask=None, verbose=False, **options):
     # The mask is on whatever grid the caller had; it follows the estimation
     # onto the coarse one (`CheckSampling`).
     log_volume = torch.log(grid.data.clamp(min=1.0))
-    inside = grid.data > opts["background"]
-    if mask is not None:
-        inside &= mask.resample_like(grid).data != 0
-    if not inside.any():
-        raise ValueError("the mask is empty: no voxel is above the background "
-                         "threshold inside the region of interest")
+    inside = estimation_mask(grid, mask, opts["background"], opts["bimodal"])
     outside = torch.zeros_like(log_volume)
     log_volume = torch.where(inside, log_volume, outside)
 

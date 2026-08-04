@@ -25,8 +25,8 @@ import torch
 from tests import inputs
 from tests.conftest import assert_close, relative_rms, span
 from torch_n3 import backends
-from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, evaluate_field,
-                               nu_correct, nu_estimate)
+from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, estimation_mask,
+                               evaluate_field, nu_correct, nu_estimate)
 from torch_n3.volume import Volume
 
 BACKENDS = ["torch", "legacy"]
@@ -85,6 +85,114 @@ def test_spline_evaluates_on_a_finer_grid_like_evaluate_field(
     evaluated = torch.where(inside, evaluated, torch.zeros_like(evaluated))
 
     assert_close(evaluated, recorded, atol=span(recorded) / 65535)
+
+
+# ------------------------------------------------------- the estimation's mask
+
+
+def two_clusters(seed=0):
+    """A volume of air and tissue, on a scale nobody would guess.
+
+    The separation is what ``bimodal_threshold`` has to find, and the level is
+    what ``background`` cannot know: both clusters sit far above N3's fixed
+    threshold of 1, so it admits the air along with everything else.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    shape = (8, 8, 8)
+    air = 40.0 + 3.0 * torch.randn(shape, generator=generator,
+                                   dtype=torch.float64)
+    tissue = 900.0 + 40.0 * torch.randn(shape, generator=generator,
+                                        dtype=torch.float64)
+    data = torch.cat([air, tissue], dim=0)
+    return Volume(data, start=(0.0, 0.0, 0.0), step=(1.0, 1.0, 1.0)), data.shape
+
+
+def test_the_automatic_threshold_separates_air_from_tissue():
+    """What ``--mask`` was carrying, when no mask is supplied.
+
+    ``background`` is an absolute intensity: on this volume every voxel clears
+    it, so N3's own rule selects the air as readily as the tissue.  Otsu's
+    threshold is taken from the data and separates the two.
+    """
+    volume, _ = two_clusters()
+    half = volume.data.shape[0] // 2
+
+    fixed = estimation_mask(volume, bimodal=False)
+    automatic = estimation_mask(volume)
+
+    assert bool(fixed.all())
+    assert float(automatic[:half].to(torch.float64).mean()) < 0.01
+    assert float(automatic[half:].to(torch.float64).mean()) > 0.99
+
+
+def test_the_automatic_threshold_does_not_depend_on_the_stored_scale():
+    """The property the fixed threshold does not have.
+
+    A MINC file carries whatever range its writer chose, so a rule that decides
+    which voxels are tissue must not change when the whole volume is
+    multiplied by a constant.  Scaling by a power of two makes every step of
+    the histogram exact -- the range, the bin width and each quotient scale
+    without rounding -- so the two masks are equal rather than merely close.
+
+    The fixed threshold has no such property: the same anatomy stored on
+    [0, 1] puts every voxel under it and leaves nothing to estimate from.
+    """
+    volume, _ = two_clusters()
+    large = volume.like(volume.data * 4.0)
+    small = volume.like(volume.data * 2.0 ** -10)     # tissue at 0.88, air 0.04
+
+    assert torch.equal(estimation_mask(volume), estimation_mask(large))
+    assert torch.equal(estimation_mask(volume), estimation_mask(small))
+
+    with pytest.raises(ValueError, match="empty"):
+        estimation_mask(small, bimodal=False)
+
+
+def test_a_supplied_mask_leaves_the_threshold_where_N3_put_it(chunk,
+                                                              chunk_mask):
+    """The default changes nothing for a caller who supplies a mask.
+
+    Every recorded reference in ``tests/`` and every published table was
+    produced with a mask and the fixed threshold, so the automatic rule must
+    not reach them.  ``CreateMask`` (:301) likewise considers a bimodal
+    threshold only when no user mask is given.
+    """
+    grid = chunk.shrink(DEFAULTS["shrink"])
+    supplied = chunk_mask.resample_like(grid).data != 0
+    n3 = (grid.data > DEFAULTS["background"]) & supplied
+
+    assert torch.equal(estimation_mask(grid, chunk_mask), n3)
+    assert torch.equal(estimation_mask(grid, chunk_mask, bimodal=False), n3)
+
+
+def test_bimodal_true_thresholds_inside_a_supplied_mask(chunk, chunk_mask):
+    """`-bimodalT` with a mask: the rule applies, over the masked voxels."""
+    grid = chunk.shrink(DEFAULTS["shrink"])
+    supplied = chunk_mask.resample_like(grid).data != 0
+
+    inside = estimation_mask(grid, chunk_mask, bimodal=True)
+
+    assert bool((inside <= supplied).all())
+    assert int(inside.sum()) < int(supplied.sum())
+
+
+def test_an_empty_mask_is_an_error_before_the_threshold_is_taken(chunk):
+    """Otsu over no voxels has no answer, so the empty mask is caught first."""
+    grid = chunk.shrink(DEFAULTS["shrink"])
+    empty = grid.like(torch.zeros_like(grid.data))
+
+    with pytest.raises(ValueError, match="empty"):
+        estimation_mask(grid, empty, bimodal=True)
+
+
+def test_nu_estimate_without_a_mask_uses_the_automatic_threshold(chunk):
+    """The option reaches the pipeline, and the two settings differ."""
+    settings = dict(iterations=(1,), stop=(0.0,))
+
+    automatic = nu_estimate(chunk, **settings).evaluate_on(chunk)
+    fixed = nu_estimate(chunk, bimodal=False, **settings).evaluate_on(chunk)
+
+    assert not torch.equal(automatic, fixed)
 
 
 # ------------------------------------------------------------------ end to end

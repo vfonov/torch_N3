@@ -73,6 +73,10 @@ exactly reproducible). Default protocol: `-distance 200 -fwhm 0.15 -noise 0.01 -
   `experiments/`. Don't quote their `tests/README` analytic tables for a real volume.
 - Thresholds on intensities are thresholds on a scale: pin to a *range* (1st-to-99th centile),
   never a level or `max()`. Use `kthvalue`, not `torch.quantile` (refuses >2^24 elements).
+  The estimation mask is built by `pipeline.estimation_mask`, shared by `nu_estimate` and
+  `nu_optimize`: N3's fixed `background` of 1 when a mask is supplied, Otsu's threshold from
+  the data when none is (`bimodal=None`, `--bimodal`/`--no-bimodal`). The masked path is
+  bit-identical to what every recorded reference was produced under.
 - The installed N3's precision is not float precision: intermediates pass between programs as
   MINC files and are rounded, so a float64 port cannot reproduce `brain_nu_ref.mnc.gz` to 1e-4.
 

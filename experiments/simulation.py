@@ -25,7 +25,7 @@ import os
 import torch
 
 from torch_n3.blocks.spline import BSplineField
-from torch_n3.pipeline import DEFAULTS
+from torch_n3.pipeline import DEFAULTS, estimation_mask
 from torch_n3.volume import load_volume
 
 #: Where the colin27 volumes live.  Not checked in -- ``.gitignore`` excludes
@@ -176,18 +176,17 @@ def non_uniformity_percent(field):
     return 100.0 * float(field.std(unbiased=False) / field.mean())
 
 
-def estimation_grid(volume, mask, shrink, background=DEFAULTS["background"]):
+def estimation_grid(volume, mask, shrink, background=DEFAULTS["background"],
+                    bimodal=DEFAULTS["bimodal"]):
     """The grid and mask ``nu_estimate`` will work on, without running it.
 
-    Mirrors ``pipeline.nu_estimate`` steps 1 and 3 (``pipeline.py:83-92``).
-    Only :func:`basis_floor` needs this, and only so that it fits the planted
-    field over exactly the samples the pipeline would have fitted it over.
+    Mirrors ``pipeline.nu_estimate`` steps 1 and 3.  Only :func:`basis_floor`
+    needs this, and only so that it fits the planted field over exactly the
+    samples the pipeline would have fitted it over -- so the mask is built by
+    the pipeline's own function rather than by a second copy of it.
     """
     grid = volume if shrink == 1 else volume.shrink(shrink)
-    inside = grid.data > background
-    if mask is not None:
-        inside &= mask.resample_like(grid).data != 0
-    return grid, inside
+    return grid, estimation_mask(grid, mask, background, bimodal)
 
 
 def basis_spline(volume, mask, planted, distance, lam, solver,

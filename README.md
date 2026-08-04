@@ -64,8 +64,24 @@ python3 -m torch_n3 legacy/N3/testing/chunk.mnc.gz out.mnc \
 
 N3 estimates the field from the intensity histogram, so the contents of the mask
 determine the result. Supply `--mask` whenever a brain mask is available; background
-voxels contribute noise and no signal. Without one, estimation retains every voxel
-above an intensity of 1, which is rarely appropriate.
+voxels contribute noise and no signal. Without one, the background is removed by an
+Otsu threshold over the estimation grid, which separates tissue from air but not brain
+from skull.
+
+`--background` is the alternative rule, and N3's own: a fixed intensity, defaulting to
+1, below which voxels are discarded. Being absolute it depends on the range the file
+was written on. `brain.mnc` peaks at 1,078,824, where a threshold of 1 admits the air;
+the same anatomy stored on [0, 1] leaves nothing above it. `--no-bimodal` selects that
+rule, and supplying `--mask` selects it as well, so the automatic threshold does not
+reach a masked run. Every recorded reference in `tests/` and every table below was
+produced under the fixed rule.
+
+The automatic rule is `mincstats -biModalT`, the same one `--evaluation-mask` falls
+back to. N3's estimation side uses the other of the two bimodal rules,
+`volume_stats -biModalT`: the same Otsu criterion over a histogram whose bin count
+comes from the file's stored voxel range, which is not a quantity a float64 tensor
+carries. `--bimodal` applies the automatic rule inside `--mask` too, which is what N3's
+`-bimodalT` flag does.
 
 `--evaluation-mask` serves a different purpose. It delimits the region in which the
 fitted field is applied directly, outside of which the field is smoothly extrapolated.
@@ -86,6 +102,8 @@ All protocol options mirror those of `nu_correct` and default to its values:
 | `--iterations` | 50 | Iteration budget, one number per stopping stage. |
 | `--stop` | 0.001 | Terminate when the field changes by less than this, one per stage. |
 | `--field-floor` | 0.1 | Smallest field value admitted, which bounds the division. |
+| `--background` | 1 | Fixed intensity below which voxels are never estimated from. An absolute value; see [Mask selection](#mask-selection). |
+| `--bimodal` / `--no-bimodal` | auto | Take that threshold from the data with Otsu's rule instead. Applied when no `--mask` is given and not otherwise. |
 | `--denoise` | off | Filter the volume with one non-local-means pass before estimating the field, for the *estimation only*: the output is the original volume divided by the fitted field, and is never denoised. A modification to the algorithm rather than part of it, with no counterpart in the original; torch backend only. Expensive; see [Non-local means](#non-local-means---denoise). |
 | `--denoise-search` | 3 | Search radius in voxels. The cost is cubic in this and in nothing else. |
 | `--denoise-patch` | 1 | Patch half-width in voxels. Larger is a stricter similarity test, and so less smoothing. |

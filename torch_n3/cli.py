@@ -72,6 +72,27 @@ def build_parser():
                              "the data, as nu_evaluate does]")
     parser.add_argument("--field", help="also write the estimated field here")
 
+    threshold = parser.add_argument_group(
+        "background", "which voxels the estimation is allowed to see when no "
+                      "--mask is given")
+    threshold.add_argument("--background", type=float,
+                           default=DEFAULTS["background"],
+                           help="voxels at or below this intensity are never "
+                                "estimated from.  An absolute value, so it "
+                                "depends on the scale the file was written on "
+                                "(default: %(default)s, N3's own)")
+    exclusive = threshold.add_mutually_exclusive_group()
+    exclusive.add_argument("--bimodal", dest="bimodal", action="store_true",
+                           default=None,
+                           help="take that threshold from the data instead, "
+                                "with Otsu's rule, and apply it inside --mask "
+                                "as well.  Default: applied when no --mask is "
+                                "given and not otherwise")
+    exclusive.add_argument("--no-bimodal", dest="bimodal", action="store_false",
+                           help="never take it from the data; use --background "
+                                "as given, which is N3's behaviour without "
+                                "-bimodalT")
+
     protocol = parser.add_argument_group(
         "protocol", "defaults are what `nu_correct` uses with no options")
     protocol.add_argument("--distance", type=float, default=DEFAULTS["distance"],
@@ -202,6 +223,7 @@ def main(argv=None):
                             distance=args.distance, fwhm=args.fwhm,
                             noise=args.noise, bins=args.bins,
                             shrink=args.shrink, lam=args.lam,
+                            background=args.background, bimodal=args.bimodal,
                             iterations=tuple(args.iterations),
                             stop=tuple(args.stop), backend=args.backend,
                             solver=args.solver,
@@ -214,6 +236,7 @@ def main(argv=None):
         field = nu_optimize(volume, mask=mask, verbose=args.verbose,
                             objective=args.method, distance=args.distance,
                             fwhm=args.fwhm, shrink=args.shrink,
+                            background=args.background, bimodal=args.bimodal,
                             penalty=args.penalty, solver=args.solver,
                             denoise=args.denoise,
                             denoise_search=args.denoise_search,
