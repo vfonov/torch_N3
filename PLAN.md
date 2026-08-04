@@ -187,11 +187,20 @@ only the values.
 Divergence (1) has no instrument, so the end-to-end comparisons need a configuration where
 it is small rather than a bound that assumes it away. The first comparison is therefore
 `-shrink 1 -distance 200 -iterations 1 -stop 0`: one iteration, two round trips, expected
-agreement of order the 16-bit quantum of the intermediates over their own range, ~1e-4
-relative RMS. If that comparison is inconclusive, the fallback is a `-legacy_quantise`
-flag emulating the round trip on the two buffers that dominate — the corrected volume
-entering the histogram, and the working field entering the fit. Do not build it
-speculatively.
+agreement of order the quantum of the intermediates over their own range. The bound must be
+**derived from the data, never assumed**: the earlier draft assumed 16-bit files and
+published 1e-4, but the test volumes are 12-bit (`chunk.mnc` has a `valid_range` of 0..4095),
+so the correct bound is the physical quantity
+
+  ``0.5 · (log max − log min) / 4095``,
+
+2.683e-4 relative RMS on `chunk.mnc`. The stages round to a half-voxel midpoint on the way
+out and back, so half the in-mask log range over the file's quantum is the width one round
+trip can shift a corrected value. That is what cycles 11 and 12 assert (they measure 2.30e-4
+and 1.83e-4 against it) and what cycle 14 repeats end to end. If that comparison is
+inconclusive, the fallback is a `-legacy_quantise` flag emulating the round trip on the two
+buffers that dominate — the corrected volume entering the histogram, and the working field
+entering the fit. Do not build it speculatively.
 
 **The stopping rule quantises everything downstream** (`change < 0.001`): two
 implementations differing in the fifth decimal can run different iteration counts, which
@@ -287,7 +296,7 @@ All cycles run on `tests/data/chunk.mnc` + `chunk_mask.mnc` (91×52×50) unless 
 | 11 | one iteration of `NuEstimate`: the mask, then `est0`, then `field0` | the Perl with **`-save_fields -save_histograms`**, which writes `${basename}_est$iter.mnc`, `${basename}_field$iter.mnc` and `${basename}_hist$iter.txt` (`:154, :193, :508`) | per-iteration, so the loop is not an opaque end-to-end. 1e-4 relative RMS at `-shrink 1` (§4); report `field_CV` from both |
 | 12 | `NuEvaluate` stage by stage: auto mask from `mincstats -biModalT`, `evaluate_field` on the full grid, `correct_field`, the floor clamp, the division | each Perl stage's intermediate | 1e-6 per stage except `correct_field`'s 5e-6 |
 | 13 | end-to-end **properties**, asserted before any bound is measured: the field is strictly positive; the in-mask coefficient of variation of the output is below the input's; a volume with no planted non-uniformity yields a field within 1e-3 of constant; iteration counts match the Perl exactly at `-stop 0` | the Perl | properties, not bounds — none of these needs the code to have been run first |
-| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 1e-4 relative RMS — the 16-bit quantum of the two intermediates over their own range (§4). This is the only end-to-end comparison whose bound is justified in advance |
+| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/4095 relative RMS — the 12-bit quantum of the two intermediates over their own range (§4), 2.683e-4 on `chunk.mnc`; the driver measures 1.8e-4. This is the only end-to-end comparison whose bound is justified in advance |
 | 15 | argv[0] and the argument table: `nu_estimate_cxx` writes only the `.imp`; `-estimate_only`/`-correct` override it; every out-of-scope option (`-em`, `-fir`, `-real`, `-differential`, `-initial`, `-islands`) exits non-zero with a message | none | behavioural. **Out-of-scope options must fail loudly, not be ignored** |
 | 16 | `-tp_spline` and `-parzen_sigma 2` end to end at a fixed count | the Perl. For `-parzen_sigma` the oracle is **`/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH`**, not the installed N3 (defect 6): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` | as cycle 14 |
 | 17 | `-estimate_only` against the Perl's `.imp`, compared by evaluating both and diffing the fields, not the text | `evaluate_field` on each | 1e-6 |
