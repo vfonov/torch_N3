@@ -45,19 +45,24 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 - `-fwhm` aliased `-distance` (`nu_correct_cxx.cc:219`), corrected in `40f94d1`. `-fwhm` now
   sets the deconvolution width and `-distance` alone sets the knots, which is what
   `nu_estimate.in:205` maps it to and what `:498` passes on as `-sharpen <width> 0.01`.
+  Item 1 above adds an asserting test so it cannot silently regress.
 
-## Found in review (2026-08-04), not yet fixed
+## Found in review (2026-08-04)
 
-| # | Where | Item |
+All eight items below are fixed; each has its own commit (plus the two PLAN edits are
+separate commits per AGENTS.md). CTest is 35/35; a fresh out-of-source configure with the
+LIBMINC/EBTKS dirs succeeds after the in-source artifacts were removed.
+
+| # | Resolved in | Item |
 |---|---|---|
-| 1 | `testing/CMakeLists.txt:142-157` | The two tests added with `40f94d1` assert only the exit status. Their comment states that changing the sharpening width must move the correction and that `-distance` must move it through the other channel, but neither output is compared to anything: a re-aliasing of `-fwhm` would fail these only by exhausting memory on a 0.3 mm knot spacing, not by an assertion. Cycle 15 should compare outputs — `-fwhm 0.15` byte-identical to the default, `-fwhm 0.3` and `-distance 100` each differing from it — which is the verification `40f94d1`'s message reports having done by hand |
-| 2 | `/app/legacy/_install/bin/nu_correct_cxx` | Stale: 08:11, predating the fix, against the build tree's 13:21. The installed copy still aliases `-fwhm` to `-distance`, and `regenerate_reference.sh` resolves `N3_LOCAL_BIN` there. Re-run `make install` |
-| 3 | `nu_correct_cxx.cc:318` | `-auto_mask`'s Talairach branch missing. PLAN §3 requires the `model_data/N3` average brain mask, label-resampled, on a Talairach-tagged volume; `-auto_mask` collapses to the bimodal threshold. Implement, or record the restriction in PLAN's scope list |
-| 4 | `nu_correct_cxx.cc:341`, comment `:336` | A correct run writes no `.imp` unless `-mapping_dir` is given, while the comment says every correct run does. The Perl always writes one (`nu_estimate.in:57-58`, `replace_ext`, relocated by `replace_dir` only when `-mapping_dir` is given) |
-| 5 | `PLAN.md` §4 and §7 cycle 14 | The published 1e-4 end-to-end bound assumes 16-bit intermediates; `chunk.mnc`'s `valid_range` is 0..4095, so cycles 11-12 derive 2.683e-4 from the data and measure 2.30e-4 and 1.83e-4 against it. The derived bound is a physical quantity, not a fitted one, and is the correct one. Correct PLAN in its own commit with the derivation |
-| 6 | `nu_correct_cxx.cc:136-139` | `imp_path`'s `.mnc.gz`/`.mnc.Z` branches are dead: `find_last_of('.')` lands on `.gz`, so `out.mnc.gz` yields `out.mnc.gz.imp` |
-| 7 | `legacy/N3`, commit `e01d441` | 17 in-source CMake artifacts committed into the tree: `CMakeCache.txt` (holding `LIBMINC_DIR-NOTFOUND`), `CMakeFiles/` including two `a.out`, `CPackConfig.cmake`, `CPackSourceConfig.cmake`, `DartConfiguration.tcl`, `Testing/`. Verified not to block a fresh out-of-source configure. `git rm --cached` them and add a `.gitignore` |
-| 8 | `NuEstimate.cc:48-50`; `nu_correct_cxx.cc:275` | Dead fragments, no effect on any measurement. A ternary whose two arms are the same `resample_label(user_mask, work)` call, correct because that call is the identity at `shrink == 1` (asserted by `test_resample_label`); and `if(!A.sharpen && A.parzen_sigma > 0)`, unreachable since `A.sharpen` is initialised true, only ever set true, and no `-nosharpen` spelling exists — omitting `-sharpen` is what selects the Perl's EM branch, which PLAN excludes |
+| 1 | `e6b46b3` | The two `40f94d1` exit-status-only smoke tests replaced by `test_driver_fwhm`, which drives the built binary and compares outputs: `-fwhm 0.15` byte-identical to the default, `-fwhm 0.3` and `-distance 100` each move the correction through their own, different channels. A re-aliasing of `-fwhm` fails an assertion now, not by exhausting memory |
+| 2 | `make install` | Re-ran `make install`; `/app/legacy/_install/bin/nu_correct_cxx` is now the 15:30 build. Confirmed the installed copy equals the fresh build byte-for-byte (rms 0.0) and now writes the `.imp` |
+| 3 | `8ccdca2` | `-auto_mask`'s Talairach branch recorded as not ported in PLAN §3 and Not-in-scope. The tool always collapses `-auto_mask` to bimodal; the ICBM mask ships but no Talairach-tagged test volume exists, so the branch cannot be cycled red/green. Divergence is now documented, not silent |
+| 4 | `e6b46b3` | A correct run now always writes the `.imp` (`imp_path`, relocated only by `-mapping_dir`), matching the comment and the Perl (`nu_estimate.in:57-58`) |
+| 5 | `4989c0b` | PLAN §4 and §7 cycle 14 corrected in their own commit: bound is 0.5·(log max − log min)/4095 = 2.683e-4 on `chunk.mnc`, derived, not assumed; cycles 11-12 measure 2.30e-4/1.83e-4; the driver measures 1.8e-4 |
+| 6 | `e6b46b3` | `imp_path` now replaces only the final extension (`s/\.[^\.]*$/\.imp/`), so `out.mnc.gz → out.mnc.imp`; the dead `.mnc.gz`/`.mnc.Z` length checks are gone |
+| 7 | `2847122` | 17 in-source CMake artifacts `git rm --cached`'d and a `.gitignore` added; `config.h.cmake` (CONFIGURE_FILE'd at CMakeLists.txt:134) correctly kept. Fresh out-of-source configure verified |
+| 8 | `e6b46b3` | Dead fragments removed: the identical-arms `resample_label` ternary in `NuEstimate.cc` and the unreachable `!sharpen && parzen_sigma` die (plus the then-unused `A.sharpen` field) |
 
 Verified alongside the gaps: CTest 36/36 including the 18 pre-existing legacy cases;
 `legacy/EBTKS` carries no changes of its own; no pre-existing `legacy/N3` source or Perl driver
