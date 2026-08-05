@@ -23,7 +23,7 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 | 10 | staged stopping rule | [x] `n3cxx_test_stopping` |
 | 11 | one iteration of `NuEstimate` | [x] `n3cxx_test_estimate` |
 | 12 | `nu_evaluate` stage by stage | [x] `n3cxx_test_evaluate` (commit `63648fb`) |
-| 13 | end-to-end properties | [ ] |
+| 13 | end-to-end properties | [x] `test_driver_properties` (field>0, output CV < input CV, bounded no-bias field, `-stop 0` count) |
 | 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [~] oracle `nu_correct_shrink1.f64` recorded; driver reproduces it at 1.8e-4 rel RMS. Cycles 11-12 derive their bound from the data — `0.5·(log max − log min)/4095`, 2.683e-4 on `chunk.mnc` (`test_evaluate.cc:24-28`) — because the file is 12-bit, where PLAN §4 assumed 16-bit and published 1e-4. The driver passes the derived bound and fails the published one; see item 5 below |
 | 15 | argv[0] / argument table | [ ] must also assert items 1 and 2 below |
 | 16 | `-tp_spline` and `-parzen_sigma` end to end | [ ] |
@@ -39,6 +39,8 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 
 - `brain.mnc` default-protocol tables vs `nu_correct` and `brain_nu_ref.mnc.gz` — [ ]
 - Iteration counts at the default protocol on each test volume — [ ]
+- Cycle 13 measured a port **over-correction on a no-bias phantom**: field CV 0.05 vs
+  legacy 0.0064 (neither meets the former 1e-3-constant ideal). Chase in cycle 14 — [ ]
 
 ## Fixed since the review
 
