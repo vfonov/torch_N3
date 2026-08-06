@@ -716,6 +716,79 @@ purpose of this harness.
 The torch backend is **2.4× faster than legacy on the same CPU**, and the GPU is
 8.8× faster than legacy.
 
+## torch_n3 against `nu_correct_cxx`, two protocols, 50 seeds each
+
+`legacy/N3/src/N3Pipeline/nu_correct_cxx` (`PLAN.md`) is neither backend above:
+it is the same C++ blocks as `legacy`, but linked into one file-based program
+that runs the whole pipeline -- estimate and evaluate -- in a single process,
+the in-memory equivalent of the installed `nu_correct`. `experiments.compare_cxx`
+runs it as a subprocess, one MINC2 round trip per trial at `float64` storage
+(no quantisation), and recovers the field it applied as `input / output`.
+Matched against `torch_n3.pipeline.nu_estimate` at identical options, under
+both of `nu_correct_cxx`'s protocols (`-V1.0`/`torch_n3.pipeline.V1_0` and
+`-V1.1`/`torch_n3.pipeline.DEFAULTS`, `-nolegacy_rounding` on both sides --
+see the docstring of `experiments/compare_cxx.py` for why): 50 seeds each,
+one random field per seed, 40% planted, noiseless, scored over the head mask
+and the brain within it (`results/compare_cxx.csv`).
+
+**The summary score**, `unexplained_pct` (the same statistic `recovery.py`
+uses, baseline-divided and renormalised):
+
+| protocol | `unexplained_pct`, mask / brain (torch = cxx to 4 s.f.) | median seconds, torch / cxx |
+|---|---|---|
+| `v1.0` | 3.0770 / 1.6325 % | 0.52 / 7.44 |
+| `v1.1` | 0.2360 / 0.1566 % | 7.39 / 72.0 |
+
+`v1.1`'s tighter stop and Gaussian histogram leave **13× less** residual
+non-uniformity than `v1.0` on this noiseless case, at the cost of running to a
+median 570 iterations (range 408-776) against `v1.0`'s fixed 50 -- both
+implementations picked the *same* iteration count on every one of the 50
+seeds, staying within the staged cap.
+
+**The direct comparison** (`results/compare_cxx_direct.csv`) is a pointwise
+relative RMS of the *recovered field itself* -- `field / baseline`,
+renormalised to mean 1 -- rather than a comparison of two separately-computed
+summary statistics, so it is not diluted by the two implementations
+happening to answer the same *question* similarly; it asks whether they
+computed the same *field*:
+
+| protocol | region | torch↔cxx | torch↔truth | cxx↔truth |
+|---|---|---|---|---|
+| `v1.0` | mask | 9.3e-6 (90th 2.3e-5, max 3.7e-5) | 3.18e-2 | 3.18e-2 |
+| `v1.0` | brain | 5.4e-6 (90th 1.3e-5, max 1.9e-5) | -- | -- |
+| `v1.1` | mask | **7.6e-11** (90th 1.4e-10, max 2.0e-10) | 2.42e-3 | 2.42e-3 |
+| `v1.1` | brain | **4.0e-11** (90th 9.3e-11, max 1.4e-10) | -- | -- |
+
+`torch↔truth` and `cxx↔truth` are shown only over the mask and agree with
+each other to within noise at every seed, which is the direct-comparison
+restatement of the summary table above: the two implementations are not
+merely close to each other, they are close to each other *because* they are
+both close to the same ground truth, not because they share a common bias.
+
+**`v1.1` agreement is five orders of magnitude tighter than `v1.0`'s**, not
+merely tighter. This is the opposite of what the `legacy`/`torch` backend
+comparison above found, where more iterations *amplify* disagreement
+(CLAUDE.md, "The iteration amplifies"): there the two backends take
+different floating-point paths through the same histogram, and a difference
+in the fifth decimal after one iteration is a part in a thousand after ten,
+because the *stopping point itself* depends on which side of a rounding
+boundary a count falls. `v1.0`'s `1e-3` stop threshold is reached quickly,
+while noise from the histogram's linear-split/rounding boundaries is still
+significant relative to the remaining field update. `v1.1`'s `1e-5` threshold
+forces both implementations to keep iterating until the update is small on an
+absolute scale, and the Gaussian Parzen window removes the bin-boundary
+discontinuity that `v1.0`'s linear split is sensitive to (CLAUDE.md, "The
+amplification starts at a discontinuity, not at float noise"). Both effects
+push the same way: the fixed point the iteration converges to is shared and
+strongly attracting, rather than a path-dependent stopping point, so running
+it out further makes two independent implementations agree *more*, not less.
+
+`cxx` is 9.7-14× slower than `torch` on the GPU, run for run: it is
+single-threaded CPU C++ against a GPU tensor pipeline, not a measurement of
+the algorithm. The gap narrows under `v1.1` because per-iteration GPU launch
+overhead amortises better over more iterations while `cxx`'s cost is closer
+to linear in iteration count throughout.
+
 ## Contents of `results/`
 
 | file | what |
@@ -724,6 +797,8 @@ The torch backend is **2.4× faster than legacy on the same CPU**, and the GPU i
 | `summary.png`, `recovery.png`, `cells.png`, `runtime.png`, `implementation.png`, `solvers.png`, `windows.png` | the figures above, from `python3 -m experiments.figures`. Checked in because they summarise a run of several hours, and regenerated from the CSV rather than maintained by hand |
 | `pilot_grid.csv` | the 96-trial `--distance` × `--lambda` pilot for `n3` |
 | `recovery_cpu_partial.csv` | 430 trials from an aborted CPU run, retained as the only CPU sample. Written before `method`/`penalty` existed, so it uses the older column set; `summarize` reads it, and `recovery` refuses to append to it |
+| `compare_cxx.csv` | 200 trials (50 seeds × `torch`/`cxx` × `v1.0`/`v1.1`) for the `nu_correct_cxx` comparison above, from `python3 -m experiments.compare_cxx --seeds 50`. Its own column set; `summarize` does not read it |
+| `compare_cxx_direct.csv` | 100 trials (50 seeds × `v1.0`/`v1.1`) of the same run's direct pointwise comparison, from the same command (`--out-direct`) |
 
 ## The grid search
 
