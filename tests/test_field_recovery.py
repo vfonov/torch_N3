@@ -40,7 +40,7 @@ import torch
 
 from tests.conftest import legacy_data
 from tests.inputs import as_stored, synthetic_bias_field
-from torch_n3.pipeline import nu_estimate
+from torch_n3.pipeline import V1_0, nu_estimate
 
 #: Log peak-to-peak amplitude of the planted fields.  A field spanning ``0.2``
 #: in the log domain ranges over a factor of ``exp(0.2) = 1.22``, i.e. roughly
@@ -62,8 +62,11 @@ BACKENDS = ["torch", "legacy"]
 BINARY = "nu_correct"
 
 #: Iterations every implementation runs, with the early stop disabled, so
-#: that they all do the same work.  See the module docstring.
-PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+#: that they all do the same work.  See the module docstring.  Pinned to
+#: ``V1_0``'s fwhm/histogram/rounding: ``brain_nu_ref.mnc`` and every
+#: recorded answer this file compares against were produced under N3's own
+#: protocol, not whatever ``torch_n3.pipeline.DEFAULTS`` currently defaults to.
+PROTOCOL = dict(V1_0, iterations=(30,), stop=(0.0,))
 
 #: Bending-energy weights for the trade-off test below.  ``1e-7`` is the
 #: shipped default; the others are what a 50 mm spline needs to behave.

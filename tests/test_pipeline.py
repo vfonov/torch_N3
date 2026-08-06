@@ -25,8 +25,9 @@ import torch
 from tests import inputs
 from tests.conftest import assert_close, relative_rms, span
 from torch_n3 import backends
-from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, estimation_mask,
-                               evaluate_field, nu_correct, nu_estimate)
+from torch_n3.pipeline import (DEFAULTS, V1_0, _sharpen, _smooth,
+                               estimation_mask, evaluate_field, nu_correct,
+                               nu_estimate)
 from torch_n3.volume import Volume
 
 BACKENDS = ["torch", "legacy"]
@@ -43,7 +44,7 @@ def test_sharpen_matches_sharpen_volume(legacy_output, chunk, chunk_mask,
     recorded = torch.where(inside, recorded, torch.zeros_like(recorded))
 
     sharpened = _sharpen(log_volume, inside,
-                         dict(DEFAULTS, bins=200, backend=backend))
+                         dict(DEFAULTS, **V1_0, bins=200, backend=backend))
 
     # sharpen_volume's output is a 16-bit MINC file spanning the mapped range.
     assert_close(sharpened, recorded, atol=span(recorded[inside]) / 65535)
@@ -207,6 +208,8 @@ def test_nu_correct_tracks_the_legacy_pipeline(legacy_output, chunk, chunk_mask,
 
     corrected = nu_correct(chunk, mask=chunk_mask, evaluation_mask=chunk_mask,
                            fwhm=fwhm, shrink=shrink, backend=backend,
+                           parzen_sigma=V1_0["parzen_sigma"],
+                           legacy_rounding=V1_0["legacy_rounding"],
                            iterations=(iterations,), stop=(0.001,))
 
     assert relative_rms(corrected.data, recorded) < 1e-3
@@ -270,7 +273,7 @@ def test_matches_the_legacy_reference_volume(brain, model_mask, brain_reference,
     answer a normal-equation system with a condition number around ``1e13``;
     neither is wrong, and neither implementation controls the difference.
     """
-    corrected = nu_correct(brain, mask=model_mask, backend=backend)
+    corrected = nu_correct(brain, mask=model_mask, backend=backend, **V1_0)
 
     assert relative_rms(corrected.data, brain_reference.data) < 1e-2
 
@@ -286,7 +289,7 @@ def test_the_iteration_amplifies_small_differences(brain, model_mask):
     """
     def divisor(backend, iterations):
         field = nu_estimate(brain, mask=model_mask, backend=backend,
-                            iterations=(iterations,), stop=(0.0,))
+                            **dict(V1_0, iterations=(iterations,), stop=(0.0,)))
         return evaluate_field(brain, field, backend=backend).data
 
     early = relative_rms(divisor("torch", 1), divisor("legacy", 1))

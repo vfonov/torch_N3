@@ -59,7 +59,7 @@ from experiments import simulation
 from torch_n3.blocks.spline import DIRECT_SOLVERS
 from torch_n3.optimize import DEFAULTS as OPTIMIZE_DEFAULTS
 from torch_n3.optimize import OBJECTIVES, PENALTY, nu_optimize
-from torch_n3.pipeline import DEFAULTS, nu_estimate
+from torch_n3.pipeline import DEFAULTS, V1_0, nu_estimate
 from torch_n3.volume import load_volume
 
 #: Where a run's rows go unless ``--out`` says otherwise.
@@ -350,8 +350,14 @@ def _settings(cell, args):
     common["denoise"] = bool(cell["denoise"])
     if cell["method"] == "n3":
         # "" is the linear split; `nu_estimate` spells that `parzen_sigma=None`.
+        # `fwhm` and `legacy_rounding` are pinned to `V1_0` rather than left to
+        # `torch_n3.pipeline.DEFAULTS`, which no longer holds those values
+        # (2026-08-06: `DEFAULTS` moved to `-V1.1`) and is not a key column of
+        # this sweep -- every row already in `recovery.csv` was produced under
+        # `V1_0`, and a silent drift here would corrupt its resumability.
         return dict(PROTOCOLS[cell["protocol"]], lam=cell["lam"],
-                    backend=args.backend,
+                    backend=args.backend, fwhm=V1_0["fwhm"],
+                    legacy_rounding=V1_0["legacy_rounding"],
                     parzen_sigma=cell["parzen_sigma"] or None, **common)
     return dict(objective=cell["method"], penalty=cell["penalty"],
                 sample_size=cell["sample_size"],

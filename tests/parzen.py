@@ -110,7 +110,7 @@ import torch
 
 from tests.conftest import MODEL_MASK, legacy_data, relative_rms
 from tests.inputs import as_stored, synthetic_bias_field
-from torch_n3.pipeline import nu_correct, nu_estimate
+from torch_n3.pipeline import V1_0, nu_correct, nu_estimate
 from torch_n3.volume import load_volume
 
 #: Gaussian window widths, in bin widths.  ``None`` is N3's own linear split,
@@ -124,8 +124,12 @@ DISTANCES = [200.0, 100.0, 50.0]
 LAMBDAS = [1e-7, 1e-6, 1e-5, 1e-4]
 
 #: Fixed iteration count with the early stop disabled, so that a cell measures
-#: the fit rather than which side of the stopping rule a run landed on.
-PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+#: the fit rather than which side of the stopping rule a run landed on.  Pinned
+#: to ``V1_0``'s fwhm and rounding -- the ``None`` row must reproduce
+#: ``tables.py``'s published cells -- but not its ``parzen_sigma``, which
+#: :func:`measure` sweeps itself.
+PROTOCOL = dict(fwhm=V1_0["fwhm"], legacy_rounding=V1_0["legacy_rounding"],
+                iterations=(30,), stop=(0.0,))
 
 #: The one solver swept.  See the module docstring.
 SOLVER = "normal"
@@ -209,8 +213,9 @@ def protocol(sigmas, verbose=False):
         # stopping rule re-implemented here.
         log = io.StringIO()
         with contextlib.redirect_stdout(log):
-            corrected = nu_correct(brain, mask=model_mask, verbose=True,
-                                   solver=SOLVER, parzen_sigma=sigma)
+            corrected = nu_correct(
+                brain, mask=model_mask, verbose=True, solver=SOLVER,
+                **dict(V1_0, parzen_sigma=sigma))
         iterations = log.getvalue().count("iteration ")
         if verbose:
             print("  %-14s\n%s" % (_label(sigma), log.getvalue()), flush=True)

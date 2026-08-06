@@ -56,7 +56,7 @@ from tests.conftest import MODEL_MASK, legacy_data, relative_rms
 from tests.inputs import as_stored, synthetic_bias_field
 from tests.tables import PUBLISHED
 from torch_n3.blocks.denoise import denoise
-from torch_n3.pipeline import DEFAULTS, nu_correct, nu_estimate
+from torch_n3.pipeline import DEFAULTS, V1_0, nu_correct, nu_estimate
 from torch_n3.volume import load_volume
 
 #: The planted field, as a log peak-to-peak amplitude.  One amplitude only:
@@ -82,7 +82,10 @@ SIGMAS = [None, 2.0, 4.0]
 DENOISING = [False, True]
 
 #: Fixed iteration count with the early stop disabled, as ``tests/tables.py``.
-PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+#: Pinned to ``V1_0``'s fwhm and rounding, not its ``parzen_sigma``, which
+#: :func:`measure` sweeps itself.
+PROTOCOL = dict(fwhm=V1_0["fwhm"], legacy_rounding=V1_0["legacy_rounding"],
+                iterations=(30,), stop=(0.0,))
 
 #: One solver, matching the published tables.
 SOLVER = "normal"
@@ -174,7 +177,7 @@ def protocol(verbose=False):
         log = io.StringIO()
         with contextlib.redirect_stdout(log):
             corrected = nu_correct(brain, mask=model_mask, verbose=True,
-                                   solver=SOLVER, denoise=denoising)
+                                   solver=SOLVER, denoise=denoising, **V1_0)
         iterations = log.getvalue().count("iteration ")
         if verbose:
             print("  denoise %s\n%s" % ("on" if denoising else "off",
@@ -199,7 +202,7 @@ def cost():
 
     timings = {}
     start = time.perf_counter()
-    nu_estimate(brain, mask=model_mask)
+    nu_estimate(brain, mask=model_mask, **V1_0)
     timings["estimate, cpu"] = time.perf_counter() - start
 
     start = time.perf_counter()

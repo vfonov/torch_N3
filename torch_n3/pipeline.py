@@ -22,16 +22,20 @@ import torch
 from torch_n3 import backends
 from torch_n3.minc_tools import apply_lut, bimodal_threshold
 
-#: What ``nu_correct`` passes down when given no options
-#: (``nu_estimate.in:418-438``, ``nu_estimate_np_and_em.in:1537-1560``).
+#: torch_n3's own default protocol, ``-V1.1``: tighter stopping and a Gaussian
+#: Parzen histogram in place of N3's linear split, chosen for this port rather
+#: than measured from the Perl (``PLAN.md``, mirrored from
+#: ``nu_correct_cxx -V1.1``).  What ``nu_correct`` itself passes down with no
+#: options -- and what every recorded reference in ``tests/`` and every table
+#: in ``README.md`` was produced under -- is :data:`V1_0` below.
 DEFAULTS = dict(
     distance=200.0,     # B-spline knot spacing, mm -- the dominant smoothness
                         # parameter, paired with `lam` below
-    fwhm=0.15,          # width of the blur assumed in the histogram, log units
+    fwhm=0.1,           # width of the blur assumed in the histogram, log units
     noise=0.01,         # Wiener constant of the deconvolution
     bins=200,           # histogram bins
-    iterations=(50,),   # per stopping stage
-    stop=(0.001,),      # per stopping stage
+    iterations=(1000,), # per stopping stage
+    stop=(1e-5,),       # per stopping stage
     shrink=4,           # estimation runs on a grid this many times coarser
     lam=1e-7,           # B-spline bending-energy weight.  Together with
                         # `distance` this sets how much the field may bend, so
@@ -54,12 +58,19 @@ DEFAULTS = dict(
                         # when `CreateMask` (:301) considers it; True applies
                         # it within the supplied mask as well, and False never.
     parzen=True,
-    parzen_sigma=None,  # None is N3's own `-parzen`: linear interpolation into
+    parzen_sigma=4.0,   # None is N3's own `-parzen`: linear interpolation into
                         # the two neighbouring bins.  A number replaces it with
                         # a Gaussian Parzen window of that many bin widths,
                         # which is a modification to the algorithm rather than
-                        # part of it (tests/parzen.py).
+                        # part of it (tests/parzen.py); the legacy backend
+                        # rejects a number here, since it has no such kernel.
     deblur=False,       # True reproduces `-blur`: skip the deconvolution
+    legacy_rounding=False,  # True rounds the histogram, its domain, and the
+                        # sharpening lookup table to the six decimals `%lf`
+                        # carries between the Perl's file round trips
+                        # (`_as_written`) -- what this pipeline always did
+                        # before this option existed, and what every legacy
+                        # reference in `tests/` needs to reproduce it.
     backend="torch",    # or "legacy", to run the original C++ instead
     denoise=False,      # Off, and not part of N3.  True filters the volume
                         # with one non-local-means pass (blocks/denoise.py)
@@ -78,6 +89,17 @@ DEFAULTS = dict(
                         # exactly the identity, since no voxel then clears the
                         # filter's own noise floor, and larger smooths harder.
 )
+
+#: N3's own protocol -- ``nu_estimate.in:418-438``,
+#: ``nu_estimate_np_and_em.in:1537-1560`` -- and what :data:`DEFAULTS` held
+#: before 2026-08-06.  Mirrors ``nu_correct_cxx -V1.0``: N3's own linear-split
+#: histogram, its staged iteration/stop, and the Perl's `%lf` rounding of the
+#: histogram, its domain, and the lookup table.  Every recorded reference in
+#: ``tests/`` and every table in ``README.md`` was produced under this, so a
+#: comparison against one of them must pass ``**V1_0`` rather than rely on
+#: :data:`DEFAULTS`, which no longer holds these values.
+V1_0 = dict(fwhm=0.15, iterations=(50,), stop=(0.001,), parzen_sigma=None,
+           legacy_rounding=True)
 
 
 def estimation_mask(grid, mask=None, background=None, bimodal=None):
@@ -252,14 +274,18 @@ def _sharpen(values, inside, opts):
     counts = backend.histogram(selected, opts["bins"], value_range,
                                opts["parzen"], sigma=opts["parzen_sigma"])
 
-    # The drivers pass the histogram from volume_hist to sharpen_hist, and the
-    # mapping from sharpen_hist to minclookup, through text files written with
-    # "%lf" -- so six decimals is all that survives, and the domain the
-    # mapping is defined over is the *rounded* one.
-    value_range = _as_written(value_range)
-    lut = _as_written(backend.sharpen_lut(_as_written(counts), value_range,
-                                          opts["fwhm"], opts["noise"],
-                                          opts["deblur"]))
+    if opts["legacy_rounding"]:
+        # The drivers pass the histogram from volume_hist to sharpen_hist, and
+        # the mapping from sharpen_hist to minclookup, through text files
+        # written with "%lf" -- so six decimals is all that survives, and the
+        # domain the mapping is defined over is the *rounded* one.
+        value_range = _as_written(value_range)
+        counts = _as_written(counts)
+
+    lut = backend.sharpen_lut(counts, value_range,
+                              opts["fwhm"], opts["noise"], opts["deblur"])
+    if opts["legacy_rounding"]:
+        lut = _as_written(lut)
 
     mapped = apply_lut(values, lut, value_range)
     return torch.where(inside, mapped, torch.zeros_like(mapped))

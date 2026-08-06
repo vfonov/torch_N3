@@ -56,7 +56,7 @@ import tempfile
 from tests.conftest import MODEL_MASK, legacy_data
 from tests.inputs import as_stored, synthetic_bias_field
 from torch_n3.blocks.spline import DIRECT_SOLVERS
-from torch_n3.pipeline import nu_estimate
+from torch_n3.pipeline import V1_0, nu_estimate
 from torch_n3.volume import load_volume
 
 #: The sweep, matching ``test_field_recovery.py``'s constants.
@@ -65,8 +65,10 @@ DISTANCES = [200.0, 100.0, 50.0]
 LAMBDAS = [1e-7, 1e-6, 1e-5, 1e-4]
 
 #: Fixed iteration count with the early stop disabled, so that a cell measures
-#: the fit rather than which side of the stopping rule a run landed on.
-PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+#: the fit rather than which side of the stopping rule a run landed on.  Pinned
+#: to ``V1_0``: the published tables were measured under N3's own fwhm and
+#: histogram, not whatever ``torch_n3.pipeline.DEFAULTS`` currently defaults to.
+PROTOCOL = dict(V1_0, iterations=(30,), stop=(0.0,))
 
 #: What ``README.md`` and ``torch_n3/cli.py`` currently print, as percentages,
 #: indexed by amplitude then weight, one entry per spacing in ``DISTANCES``.

@@ -13,8 +13,27 @@ import sys
 
 from torch_n3.blocks.spline import SOLVERS
 from torch_n3.optimize import OBJECTIVES, nu_optimize
-from torch_n3.pipeline import DEFAULTS, evaluate_field, nu_estimate, nu_evaluate
+from torch_n3.pipeline import DEFAULTS, V1_0, evaluate_field, nu_estimate, nu_evaluate
+
+#: The options a version switch (``--V1.0``/``--V1.1``) fills, and only those
+#: the user did not also give explicitly.  Everything else in ``V1_0``/
+#: ``DEFAULTS`` (``distance``, ``lam``, ``shrink``, ...) does not vary between
+#: the two protocols, so it is not here and stays a plain fixed-default
+#: argument.
+PROTOCOL_OPTIONS = ("fwhm", "iterations", "stop", "parzen_sigma",
+                    "legacy_rounding")
 from torch_n3.volume import load_volume, save_volume
+
+
+def _kernel(value):
+    """``--parzen-sigma`` takes a width or the word for not having one."""
+    if value.lower() in ("none", "linear"):
+        return None
+    width = float(value)
+    if not width > 0:
+        raise argparse.ArgumentTypeError(
+            "a window width is positive; 'none' selects N3's linear split")
+    return width
 
 
 #: Shown after the options.  ``--distance`` and ``--lambda`` jointly set one
@@ -94,14 +113,19 @@ def build_parser():
                                 "-bimodalT")
 
     protocol = parser.add_argument_group(
-        "protocol", "defaults are what `nu_correct` uses with no options")
+        "protocol", "--fwhm/--iterations/--stop/--parzen-sigma/"
+                    "--legacy-rounding default to whichever of --V1.0/--V1.1 "
+                    "was given, --V1.1 if neither was; an explicit value for "
+                    "one of them always wins over either, in any order")
     protocol.add_argument("--distance", type=float, default=DEFAULTS["distance"],
                           help="B-spline knot spacing in mm, the scale below "
                                "which the field cannot vary; lowering it "
                                "requires raising --lambda (default: "
                                "%(default)s)")
-    protocol.add_argument("--fwhm", type=float, default=DEFAULTS["fwhm"],
-                          help="assumed histogram blur (default: %(default)s)")
+    protocol.add_argument("--fwhm", type=float, default=argparse.SUPPRESS,
+                          help="assumed histogram blur (version default: "
+                               "%g under -V1.0, %g under -V1.1)"
+                               % (V1_0["fwhm"], DEFAULTS["fwhm"]))
     protocol.add_argument("--noise", type=float, default=DEFAULTS["noise"],
                           help="Wiener constant (default: %(default)s)")
     protocol.add_argument("--bins", type=int, default=DEFAULTS["bins"],
@@ -114,22 +138,56 @@ def build_parser():
                                "decade more per halving of --distance, see the "
                                "note below (default: %(default)s)")
     protocol.add_argument("--iterations", type=int, nargs="+",
-                          default=list(DEFAULTS["iterations"]),
-                          help="iteration count, one per stopping stage")
+                          default=argparse.SUPPRESS,
+                          help="iteration count, one per stopping stage "
+                               "(version default: %d under -V1.0, %d under "
+                               "-V1.1)" % (V1_0["iterations"][0],
+                                          DEFAULTS["iterations"][0]))
     protocol.add_argument("--stop", type=float, nargs="+",
-                          default=list(DEFAULTS["stop"]),
-                          help="stopping threshold, one per stage")
+                          default=argparse.SUPPRESS,
+                          help="stopping threshold, one per stage (version "
+                               "default: %g under -V1.0, %g under -V1.1)"
+                               % (V1_0["stop"][0], DEFAULTS["stop"][0]))
     protocol.add_argument("--field-floor", type=float, default=0.1,
                           help="smallest field value allowed before dividing")
-    protocol.add_argument("--parzen-sigma", type=float,
-                          default=DEFAULTS["parzen_sigma"],
+    protocol.add_argument("--parzen-sigma", type=_kernel,
+                          default=argparse.SUPPRESS,
                           help="width, in bin widths, of a Gaussian Parzen "
-                               "window on the histogram.  N3's own -parzen is "
-                               "linear interpolation into two bins; this "
-                               "replaces it with the kernel estimator the name "
-                               "denotes, and is a modification to the "
-                               "algorithm rather than part of it.  torch "
-                               "backend only (default: N3's linear split)")
+                               "window on the histogram, or 'none' for N3's "
+                               "own linear interpolation into two bins.  A "
+                               "width is a modification to the algorithm "
+                               "rather than part of it, and torch backend "
+                               "only (version default: none under -V1.0, "
+                               "%g under -V1.1)" % DEFAULTS["parzen_sigma"])
+    legacy_rounding = protocol.add_mutually_exclusive_group()
+    legacy_rounding.add_argument(
+        "--legacy-rounding", dest="legacy_rounding", action="store_true",
+        default=argparse.SUPPRESS,
+        help="round the histogram, its domain, and the sharpening lookup "
+             "table to the six decimals the Perl's file round trips carry "
+             "between stages, reproducing that precision loss even though "
+             "nothing here goes through a file (version default: on under "
+             "-V1.0, off under -V1.1)")
+    legacy_rounding.add_argument(
+        "--no-legacy-rounding", dest="legacy_rounding",
+        action="store_false", default=argparse.SUPPRESS,
+        help="keep the full float64 precision")
+    version = protocol.add_mutually_exclusive_group()
+    version.add_argument(
+        "--V1.0", dest="version", action="store_const", const="v1.0",
+        default=None,
+        help="N3's own protocol: --fwhm %g, N3's linear-split histogram, "
+             "--iterations %d, --stop %g, --legacy-rounding.  What every "
+             "recorded reference in tests/ and every table in README.md was "
+             "produced under" % (V1_0["fwhm"], V1_0["iterations"][0],
+                                 V1_0["stop"][0]))
+    version.add_argument(
+        "--V1.1", dest="version", action="store_const", const="v1.1",
+        help="this port's own protocol and the implicit default: --fwhm %g, "
+             "--parzen-sigma %g, --iterations %d, --stop %g, "
+             "--no-legacy-rounding"
+             % (DEFAULTS["fwhm"], DEFAULTS["parzen_sigma"],
+                DEFAULTS["iterations"][0], DEFAULTS["stop"][0]))
 
     denoising = parser.add_argument_group(
         "denoising", "off by default, and not part of N3: a non-local-means "
@@ -207,8 +265,25 @@ def build_parser():
     return parser
 
 
+def _resolve_protocol(args):
+    """Fill whichever of :data:`PROTOCOL_OPTIONS` the user did not set.
+
+    Mirrors ``nu_correct_cxx.cc``'s ``-V1.0``/``-V1.1``: every argument is
+    parsed first, so an explicit ``--fwhm`` (etc.) always wins over either
+    version flag regardless of the order they were given on the command
+    line, and no version flag at all is ``-V1.1`` -- this port's own
+    implicit default, and what leaving every one of these options unset
+    already did before this switch existed.
+    """
+    protocol = V1_0 if args.version == "v1.0" else DEFAULTS
+    for name in PROTOCOL_OPTIONS:
+        if not hasattr(args, name):
+            setattr(args, name, protocol[name])
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    _resolve_protocol(args)
 
     def read(path):
         volume = load_volume(path)
@@ -228,6 +303,7 @@ def main(argv=None):
                             stop=tuple(args.stop), backend=args.backend,
                             solver=args.solver,
                             parzen_sigma=args.parzen_sigma,
+                            legacy_rounding=args.legacy_rounding,
                             denoise=args.denoise,
                             denoise_search=args.denoise_search,
                             denoise_patch=args.denoise_patch,
@@ -241,7 +317,8 @@ def main(argv=None):
                             denoise=args.denoise,
                             denoise_search=args.denoise_search,
                             denoise_patch=args.denoise_patch,
-                            denoise_strength=args.denoise_strength)
+                            denoise_strength=args.denoise_strength,
+                            sigma=args.parzen_sigma)
 
     corrected = nu_evaluate(volume, field, mask=evaluation_mask,
                             field_floor=args.field_floor, backend=args.backend)

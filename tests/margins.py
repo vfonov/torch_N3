@@ -27,7 +27,7 @@ from torch_n3 import blocks
 from torch_n3.backends import legacy
 from torch_n3.blocks.spline import DIRECT_SOLVERS
 from torch_n3.minc_tools import apply_lut, bimodal_threshold
-from torch_n3.pipeline import (DEFAULTS, _sharpen, _smooth, evaluate_field,
+from torch_n3.pipeline import (DEFAULTS, V1_0, _sharpen, _smooth, evaluate_field,
                                nu_correct, nu_estimate)
 from torch_n3.volume import load_volume
 
@@ -179,7 +179,7 @@ def pipeline_rows(recorded):
     bumpy = inputs.smooth_bumps(chunk, inside)
 
     for backend in BACKENDS:
-        options = dict(DEFAULTS, bins=200, backend=backend)
+        options = dict(DEFAULTS, **V1_0, bins=200, backend=backend)
         rows.append(("_sharpen[%s] vs sharpen_volume" % backend,
                      _worst(_sharpen(values, inside, options), sharpened),
                      span(sharpened[inside]) / 65535))
@@ -194,6 +194,8 @@ def pipeline_rows(recorded):
             corrected = nu_correct(chunk, mask=chunk_mask,
                                    evaluation_mask=chunk_mask, fwhm=fwhm,
                                    shrink=shrink, backend=backend,
+                                   parzen_sigma=V1_0["parzen_sigma"],
+                                   legacy_rounding=V1_0["legacy_rounding"],
                                    iterations=(iterations,), stop=(0.001,))
             rows.append(("nu_correct[%s] chunk i%d s%d"
                          % (backend, iterations, shrink),
@@ -203,14 +205,14 @@ def pipeline_rows(recorded):
                          1e-3))
 
     for backend in BACKENDS:
-        corrected = nu_correct(brain, mask=model_mask, backend=backend)
+        corrected = nu_correct(brain, mask=model_mask, backend=backend, **V1_0)
         rows.append(("nu_correct[%s] vs brain_nu_ref" % backend,
                      relative_rms(corrected.data, brain_reference.data), 1e-2))
 
     # test_the_iteration_amplifies_small_differences
     def divisor(backend, iterations):
         field = nu_estimate(brain, mask=model_mask, backend=backend,
-                            iterations=(iterations,), stop=(0.0,))
+                            **dict(V1_0, iterations=(iterations,), stop=(0.0,)))
         return evaluate_field(brain, field, backend=backend).data
 
     early = relative_rms(divisor("torch", 1), divisor("legacy", 1))

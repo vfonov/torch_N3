@@ -14,6 +14,7 @@ import os
 
 import torch
 
+from torch_n3.pipeline import V1_0
 from torch_n3.volume import load_volume, save_volume
 
 #: The protocol ``tests/data/brain_nu_ref_legacy.mnc`` was produced with, and
@@ -21,8 +22,11 @@ from torch_n3.volume import load_volume, save_volume
 #: disabled: every stage of the pipeline runs, and the whole of
 #: ``nu_evaluate``, while the answer is still a continuous function of
 #: rounding error.  ``tests/test_reproducibility.py`` explains what happens
-#: after that, and why this used to say two.
-PLATFORM_PROTOCOL = dict(iterations=(1,), stop=(0.0,))
+#: after that, and why this used to say two.  Built on ``V1_0`` -- N3's own
+#: fwhm, histogram and rounding -- rather than ``torch_n3.pipeline.DEFAULTS``,
+#: which no longer holds those values (2026-08-06: ``DEFAULTS`` moved to
+#: ``-V1.1``).
+PLATFORM_PROTOCOL = dict(V1_0, iterations=(1,), stop=(0.0,))
 
 #: The protocol ``tests/data/brain_nu_ref_legacy_30.mnc`` was produced with:
 #: thirty iterations, again with the early stop disabled so that every run
@@ -30,7 +34,7 @@ PLATFORM_PROTOCOL = dict(iterations=(1,), stop=(0.0,))
 #: it is the converged pipeline, and no two builds agree on it to better than
 #: about a part in a thousand.  It is a coarse regression net rather than a
 #: sensitive check, and the bound it is held to states as much.  See ``tests/test_reproducibility.py``.
-CONVERGED_PROTOCOL = dict(iterations=(30,), stop=(0.0,))
+CONVERGED_PROTOCOL = dict(V1_0, iterations=(30,), stop=(0.0,))
 
 
 def as_stored(directory, name, volume, like):
