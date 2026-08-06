@@ -175,6 +175,9 @@ Four deliberate divergences, all consequences of the task:
 
 `-legacy_rounding` rounds the histogram counts, the range and the lookup table to six
 decimals, reproducing (2) alone. It is a verification instrument, not a feature.
+`nu_correct_cxx.cc` exposes it on the CLI as `-legacy_rounding`/`-nolegacy_rounding`
+(2026-08-06); it was reachable only from test code before that. It is now also a version
+default: on under `-V1.0`, off under `-V1.1` (§7, cycle 14's row).
 
 Divergence (2) has a second component, found in cycle 6 and measured there.
 `sharpen_hist` writes the lookup table's *entry positions* with six decimals as well:
@@ -192,9 +195,11 @@ agreement of order the quantum of the intermediates over their own range. The bo
 published 1e-4, but the test volumes are 12-bit (`chunk.mnc` has a `valid_range` of 0..4095),
 so the correct bound is the physical quantity
 
-  ``0.5 · (log max − log min) / 4095``,
+  ``0.5 · (log max − log min) / valid_steps``,
 
-2.683e-4 relative RMS on `chunk.mnc`. The stages round to a half-voxel midpoint on the way
+where `valid_steps` is `hi − lo` of the volume's own recorded `valid_range` — 4095 on
+`chunk.mnc`, read from `chunk_valid_range.txt` by `n3fixture::valid_steps`, not a fixed
+denominator — giving 2.683e-4 relative RMS there. The stages round to a half-voxel midpoint on the way
 out and back, so half the in-mask log range over the file's quantum is the width one round
 trip can shift a corrected value. That is what cycles 11 and 12 assert (they measure 2.30e-4
 and 1.83e-4 against it) and what cycle 14 repeats end to end. If that comparison is
@@ -295,8 +300,8 @@ All cycles run on `tests/data/chunk.mnc` + `chunk_mask.mnc` (91×52×50) unless 
 | 10 | the staged stopping rule as a pure function over a table of `(iter, change, iterations[], stop[])` cases, including `-stop 0` never stopping | none — it is logic transcribed from `:171-185` | exact |
 | 11 | one iteration of `NuEstimate`: the mask, then `est0`, then `field0` | the Perl with **`-save_fields -save_histograms`**, which writes `${basename}_est$iter.mnc`, `${basename}_field$iter.mnc` and `${basename}_hist$iter.txt` (`:154, :193, :508`) | per-iteration, so the loop is not an opaque end-to-end. 1e-4 relative RMS at `-shrink 1` (§4); report `field_CV` from both |
 | 12 | `NuEvaluate` stage by stage: auto mask from `mincstats -biModalT`, `evaluate_field` on the full grid, `correct_field`, the floor clamp, the division | each Perl stage's intermediate | 1e-6 per stage except `correct_field`'s 5e-6 |
-| 13 | end-to-end **properties**, asserted by driving the built binary (`test_driver_properties`): the field, read from the driver's own `.imp`, is strictly positive and finite in the mask; the in-mask coefficient of variation of the corrected output is below the input's; a volume with no planted non-uniformity (two-tissue phantom + additive noise) yields a **bounded, finite** field whose RMS CV stays below **0.25× the phantom's tissue contrast** — a derived bound proving the estimator does not absorb the structure it is meant to be blind to (neither this port at RMS CV 0.071, nor the legacy at ~0.0064, reaches a flat field; the gap is a recorded over-correction to chase in cycle 14, not a pass criterion); and `-stop 0` runs the requested staged count (cycle 10 end to end) | none — properties, asserted before any bound is measured, and no test in this cycle runs the Perl | properties, not bounds — none of these needs the code to have been run first |
-| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/valid_steps relative RMS — the 12-bit quantum of the two intermediates over their own range (§4); valid_steps is `hi − lo` of the volume's recorded valid_range (`chunk_valid_range.txt` = 0..4095 → 4095), 2.683e-4 on `chunk.mnc`; the driver measures 1.8e-4. This is the only end-to-end comparison whose bound is justified in advance |
+| 13 | end-to-end **properties**, asserted by driving the built binary (`test_driver_properties`): the field, read from the driver's own `.imp`, is strictly positive and finite in the mask; the in-mask coefficient of variation of the corrected output is below the input's; a volume with no planted non-uniformity (two-tissue phantom + additive noise) yields a **bounded, finite** field whose RMS CV stays below **0.25× the phantom's tissue contrast** — a derived bound proving the estimator does not absorb the structure it is meant to be blind to (neither this port at RMS CV 0.071, nor the legacy at 0.035, reaches a flat field; the gap is a recorded over-correction to chase in cycle 14, not a pass criterion); and `-stop 0` runs the requested staged count (cycle 10 end to end) | none — properties, asserted before any bound is measured, and no test in this cycle runs the Perl | properties, not bounds — none of these needs the code to have been run first. The legacy 0.035 is the installed `nu_correct` on the shipped phantom under the test's own options (`-shrink 2 -iterations 15 -stop 0.0 -distance 100 -mask chunk_mask`), re-measured 2026-08-06; the earlier ~0.0064 was taken on the striped phantom `1ac5192` replaced and does not apply. The criterion is a CV about the mean and therefore does not constrain a uniform gain: the field means are 1.078 (port) and 1.064 (legacy) where a bias-free volume's ideal is 1.0. `test_driver_properties` pins every run to `-V1.0 -nolegacy_rounding` (2026-08-06) so these numbers stay valid regardless of which protocol `nu_correct_cxx`'s own implicit default currently selects |
+| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/valid_steps relative RMS — the 12-bit quantum of the two intermediates over their own range (§4); valid_steps is `hi − lo` of the volume's recorded valid_range (`chunk_valid_range.txt` = 0..4095 → 4095), 2.683e-4 on `chunk.mnc`; the driver measures 1.8e-4. This is the only end-to-end comparison whose bound is justified in advance. Reproducing 1.8e-4 now requires `-V1.0` explicitly: the command was run against what was then the only, implicit default (`fwhm 0.15`, linear interpolation, `-legacy_rounding` off), which `-V1.1` (2026-08-06) replaced as the default |
 | 15 | argv[0] and the argument table: `nu_estimate_cxx` writes only the `.imp`; `-estimate_only`/`-correct` override it; every out-of-scope option (`-em`, `-fir`, `-real`, `-differential`, `-initial`, `-islands`) exits non-zero with a message | none | behavioural. **Out-of-scope options must fail loudly, not be ignored** |
 | 16 | `-tp_spline` and `-parzen_sigma 2` end to end at a fixed count | the Perl. For `-parzen_sigma` the oracle is **`/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH`**, not the installed N3 (defect 6): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` | as cycle 14 |
 | 17 | `-estimate_only` against the Perl's `.imp`, compared by evaluating both and diffing the fields, not the text | `evaluate_field` on each | 1e-6 |
@@ -306,7 +311,9 @@ integration cycles: they stay red longer, which is why 13 comes before 14 — a 
 can be asserted without measurement gives the integration work a green signal well before
 any bound is available.
 
-Reported, not asserted, once the cycles are green:
+Reported, not asserted, once the cycles are green ("the default protocol" below means the
+Perl's own default, reproduced by `nu_correct_cxx -V1.0` since `-V1.1` (2026-08-06) became the
+driver's own implicit default and does not match it):
 
 - `brain.mnc` at the default protocol against `nu_correct` and against
   `legacy/N3/testing/brain_nu_ref.mnc.gz`. The legacy suite's `1e-4` will not be met: a
@@ -331,6 +338,107 @@ commits.
 
 Untouched: every existing source in `legacy/N3/src` (linked, not modified), the Perl
 drivers, `legacy/EBTKS`, everything under `/app/torch_n3`, `/opt/minc`.
+
+## 9. Instructions for the implementing agent
+
+The open work is enumerated in `/app/TODO.md`, which is the tracker; this section is the
+standard each item is closed to. It applies to `legacy/N3/src/N3Pipeline/` and
+`legacy/N3/testing/n3pipeline/`, on branch `aislop`.
+
+### Priority
+
+**Algorithm before ergonomics.** A change that alters a corrected voxel, a fitted field or a
+recorded measurement outranks one that alters a message, a name or a file layout. The two
+classes must not share a commit: a rename bundled with a behavioural fix makes the
+behavioural diff unreadable, and a measurement moved inside a refactor cannot be attributed.
+`TODO.md`'s "Order of work" applies this rule to the current list.
+
+Within the algorithm class, rank by what a wrong answer costs a reader: silent wrong output
+first, crash second, wrong diagnostic third. `-fwhm 0` writing an all-zero volume at exit 0
+outranks `-distance 0` segfaulting, which outranks `-version` printing an incomplete string.
+
+### Correctness
+
+- The Perl is the specification. Cite the line a decision comes from in the comment beside
+  it, as the existing code does (`:1557`, `:499-505`, `:316-325`, `fieldIO.cc:120-133`).
+  A behaviour with no citation is an invention and has to be argued for.
+- A value the Perl rejects must be rejected here: non-zero exit and a message on stderr,
+  never accepted, never a crash. `nu_estimate_np_and_em.in:1449-1481` is the validation
+  block; port it in full rather than one predicate at a time.
+- Never edit a file under `/app/torch_n3/_legacy/`; it vendors `legacy/N3/src` byte for
+  byte and is the PyTorch port's oracle. Never write to `/opt/minc/1.9.18.13` — the
+  installed programs there are the untouched oracle. This tree's own build goes to
+  `/app/legacy/_install`.
+- The existing translation units in `legacy/N3/src` are linked, not modified.
+
+### Bounds and measurements
+
+- A bound is derived from a physical quantity before the code is run, never fitted to what
+  the code happens to do. The quantities available here are the file's own quantum
+  (`n3fixture::valid_steps("chunk_valid_range.txt")`, never a literal `4095`), the six
+  decimals `%lf` prints (`1e-6`), and exactness.
+- **A tolerance is never widened to make a test pass.** When an assertion fails: find the
+  defect; or find and remove the confound; or, if the requirement was itself wrong, change
+  it deliberately, in its own commit, with the measurement and the reasoning recorded.
+- Compare relative RMS over a volume, never `max |a − b|`: whole-volume extremes are decided
+  by a handful of mask-edge voxels and do not support a fixed bound.
+- Compare fields, never spline coefficients: the normal equations are near-singular at
+  200 mm and no solver determines the coefficients better than ~1e-4.
+- **When a comparison's inputs change, re-measure both sides in the same session on the same
+  input.** The recorded legacy field CV of 0.0064 survived a commit that replaced the
+  phantom it was measured on, and stood in `PLAN.md` and `TODO.md` for a day as an 11× gap
+  that is really 2.0×. A number carried across a change of input is not a measurement.
+- Every number published in `PLAN.md` or `TODO.md` must be reproducible from the committed
+  code by a stated command. If it is not, say where it came from in the same sentence.
+
+### Commits
+
+- One item per commit, red before green: the test that fails is committed with, or before,
+  the fix that makes it pass. A cycle whose test was written after its implementation is not
+  one of these commits.
+- The message carries the red output and the measured margin.
+- The commit message's list of what it fixed must match what it fixed. `1ac5192` claimed 26
+  items and enumerated 24.
+
+### Conventions in this code
+
+- **Arguments.** `ParseArgv` with an `ArgvInfo` table, as `src/SharpenHist/args.cc`,
+  `src/SplineSmooth/splineSmoothArgs.cc`, `src/VolumeStats/VolumeStatsArgs.cc`,
+  `src/VolumeHist/args.cc` and `src/EvaluateField/evaluateFieldArgs.cc` all do. Until that
+  rewrite lands, no new `atof(argv[++i])`: numeric options go through one helper that checks
+  `strtod`'s end pointer and dies on a trailing character.
+- **One program name.** `die()`, `usage()`, `out_of_scope()` and the positional-argument
+  error all report `program_name` (the `argv[0]` basename). No message contains a literal
+  `"nu_correct_cxx"`, and none prints the full `argv[0]` path.
+- **Library code in `src/N3Pipeline/` does not `exit()`.** New failure paths return a status
+  or throw, so a test can assert them in-process. The 17 existing `exit(1)` sites are their
+  own commit, not a side effect of another change.
+- **A rule implemented twice is a defect.** The `.imp` path rule currently has three
+  independent copies. Shared test helpers go in `testing/n3pipeline/fixture.h`, beside
+  `must()`, `read_text()`, `valid_steps()`; shared pipeline helpers go in `Buffers.h` or
+  `MincTools.h`.
+- **Check `snprintf`'s return** wherever a path is composed into a fixed buffer, or use
+  `std::string`.
+- Verify an assumption rather than trusting it, in the manner of `Buffers.cc:63-107`, which
+  checks the contiguity and no-voxel-scaling properties every bulk loop rests on and fails
+  loudly if either breaks.
+- Layout: GNU braces, two-space indent, `/* … */` comments, ~80 columns. Prose in comments
+  and in the two documents follows `/app/CLAUDE.md`'s "Documentation style": declarative,
+  no rhetorical framing, no addressing the reader, bold reserved for operational warnings.
+
+### Before reporting an item closed
+
+Run, from `/app/legacy/_build/n3`:
+
+```
+make && ctest
+```
+
+Report the pass count, and state whether `make` recompiled anything — a green `ctest` over a
+stale binary is not evidence. Quote the margins the changed tests printed. If a step was
+skipped, say so; do not describe an unverified claim as verified. `legacy/N3` and
+`legacy/EBTKS` must be clean apart from the commit under discussion, and
+`/app/torch_n3/_legacy/n3/` must still be byte-identical to `legacy/N3/src`.
 
 ## Open risks
 
