@@ -24,7 +24,7 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 | 11 | one iteration of `NuEstimate` | [x] `n3cxx_test_estimate` |
 | 12 | `nu_evaluate` stage by stage | [x] `n3cxx_test_evaluate` (commit `63648fb`) |
 | 13 | end-to-end properties | [x] `test_driver_properties` (field from the driver's `.imp` strictly positive & finite in-mask; in-mask output CV < input CV; no-bias two-tissue phantom → bounded field, RMS CV < 0.25× its tissue contrast; `-stop 0` runs the requested staged count) |
-| 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [x] `test_driver_endtoend` (commit `99fc4a7`): drives the binary at `-V1.0` with and without `-legacy_rounding` against `nu_correct_shrink1.f64` under the derived bound `0.5·(log max − log min)/valid_steps` = 2.683e-4; both measure 1.840e-04 (the recorded 1.8e-4, now an assertion, and a full order below the bound). This is the one end-to-end comparison whose bound is justified in advance (the 12-bit quantum of the two MINC round trips, not the 16-bit figure PLAN §4 once assumed), and the only test that reads the corrected volume the driver's `n3::save` writes |
+| 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [x] `test_driver_endtoend` (commit `99fc4a7`): drives the binary at `-V1.0` with and without `-legacy_rounding` against `nu_correct_shrink1.f64` under the derived bound `0.5·(log max − log min)/valid_steps` = 2.683e-4; both measure 1.840e-04 (the recorded 1.8e-4, now an assertion, 1.46× inside the bound). Cycles 11, 12 and 14 sit at 0.86, 0.68 and 0.69 of that one bound, cycle 11 being the binding case at 14% headroom. This is the one end-to-end comparison whose bound is justified in advance (the 12-bit quantum of the two MINC round trips, not the 16-bit figure PLAN §4 once assumed), and the only test that reads the corrected volume the driver's `n3::save` writes |
 | 15 | argv[0] / argument table | [ ] drive `nu_estimate_cxx` vs `nu_correct_cxx` to pin the argv[0] split, and assert the argument rules: `-V0.9` order-independence, the `-bins`/`-background`/`-distance`/`-iterations` validation, `-clobber` covering the `.imp`, every out-of-scope option exiting non-zero, and the four degenerate-argument cases the 2026-08-06 review found unguarded (items 1-4 below) |
 | 16 | `-tp_spline` and `-parzen_sigma` end to end | [ ] the `-parzen_sigma` oracle is `/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH` (PLAN §7 row 16): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` |
 | 17 | `-estimate_only` vs `.imp` | [~] oracle `estimate.imp` recorded; driver writes the .imp, Domain matches exactly. `estimate.imp` is read by `test_evaluate.cc:62,75` as an *input*; no test evaluates the driver's own `.imp` and the Perl's and diffs the two fields, which is what the cycle specifies |
@@ -313,7 +313,7 @@ not share a commit. PLAN §9 states the conventions each step is held to.
 4. **Cycle 14 — fixed, `99fc4a7`** (`test_driver_endtoend`). Turns the hand-measured
    1.8e-4 into the one end-to-end assertion whose bound is justified in advance. Both
    `-legacy_rounding` configurations measure 1.840e-04 against the recorded oracle
-   (`nu_correct_shrink1.f64`), under the derived 2.683e-4 quantum bound — a full order of
+   (`nu_correct_shrink1.f64`), under the derived 2.683e-4 quantum bound — 1.46× of
    margin, no fix needed (the red was the missing assertion, not a defect). It is now the
    only test that reads the corrected volume the driver's `n3::save` writes. The legacy
    field-CV re-measurement (0.035, item 7) is a separate reported-not-asserted chase item,
@@ -327,3 +327,48 @@ not share a commit. PLAN §9 states the conventions each step is held to.
    `ParseArgv` table) together with cycle 15, so the table and the test that pins it land
    against each other; 20 (`exit()` in library code) is its own commit and must not ride
    along with a behavioural change.
+
+## Found in review (2026-08-07)
+
+Fourth pass, over `7016c41`, `606775e`, `9154eac` and `99fc4a7` (cycle 14), with the suite
+built and run. Line numbers are `legacy/N3` HEAD's at the time of the review.
+
+Confirmed first, checked against the build tree rather than this file. `make` recompiled
+nothing and **CTest is 37/37** (`_build/n3/Testing/Temporary/LastTest.log`, 02:57). Cycle 14
+implements PLAN §7 row 14 as specified: same options, same oracle command
+(`regenerate_reference.sh:216-222`), same bound formula. The bound reproduces independently —
+`chunk.mnc` in-mask min/max 100030.417/900273.755 over 132,056 voxels, `valid_range` 0..4095,
+`0.5·(log max − log min)/4095 = 2.6828e-4`. `legacy_rounding` rounds the lookup table's entry
+positions as well as its values (`NuEstimate.cc:144-157`), which is what PLAN §4 requires.
+`torch_n3/_legacy/n3/` is byte-identical to `legacy/N3/src`, `legacy/EBTKS` carries no commits
+of its own, and since cycle 11 the diff touches only `src/N3Pipeline/`, `CMakeLists.txt` and
+`testing/CMakeLists.txt`.
+
+| # | Where | Status | What needed fixing |
+|---|---|---|---|
+| 1 | `PLAN.md:304`, this file `:27`, `:316`, `99fc4a7`'s message | **fixed** | 1.840e-04 against 2.683e-04 was called "a full order below the bound"; it is 1.46×, 31% headroom. Worse, the reading it invites is backwards: cycles 11, 12 and 14 sit at 0.86, 0.68 and 0.69 of that one bound, and **cycle 11's 2.299e-4 leaves 14%**, so the family is the tight one and a histogram or spline change can put it red. Corrected in both documents with the ratios; `99fc4a7` is published and is recorded here rather than amended, as item 14 of the 2026-08-06 pass does for `1ac5192` |
+| 2 | `test_driver_endtoend.cc:88-93` | open | `cleanup()` removes `<out>.mnc.imp`; the driver writes `<out>.imp` (`nu_correct_cxx.cc:146-160`, final extension replaced), so **every run leaks two `.imp` files into `$TMPDIR`**. The `*.log` glob sits inside the quotes and never expands either. `test_driver_fwhm.cc:61-72` has both right, with a comment naming this exact trap, and `test_driver_properties.cc:62-74` has `imp_of()`. This is item 22's predicted failure mode arriving in new code, and PLAN §9's "a rule implemented twice is a defect" |
+| 3 | `testing/CMakeLists.txt:129-140`, all four driver tests | open | **No test asserts a value produced under the shipped default.** `-V1.1` is what a bare invocation selects (`9154eac`); every value-asserting driver test pins `-V1.0` (`test_driver_endtoend.cc:116-117`, `test_driver_fwhm.cc:47`, `test_driver_properties.cc:96, :178, :252`), and the two tests that do run the default assert exit status only, with `-iterations 1 -stop 0.0` overriding two of its four parameters. The default also selects `-parzen_sigma 4.0`, whose end-to-end cycle (16) is open, so the shipped default rests on the one path with no oracle comparison yet |
+| 4 | `PLAN.md:180`, `:304`, `:315`; this file `:40` | open | `PLAN.md` is authoritative and never states what `-V1.1` *is* — the four values appear only here, and it names the version only as a caveat about what "the default protocol" means. `parzen_sigma 4.0` has evidence in the PyTorch tree (`experiments/README.md`, "The histogram kernel": 1.71% against N3's 4.63% at SNR 20); `fwhm 0.1`, `iterations 1000` and `stop 1e-5` have none recorded anywhere, against PLAN §9's "every number published in `PLAN.md` or `TODO.md` must be reproducible from the committed code by a stated command" |
+| 5 | `test_driver_endtoend.cc:116-117` | open | The cycle **cannot distinguish `-legacy_rounding` on from off**: both runs go against the same oracle under the same bound and both print 1.840e-04, the effect being 5.114e-07 (PLAN §4), three orders below the printed precision. The test passes unchanged if the flag is a no-op — which is not hypothetical, since `9154eac` records that until it landed "every driver run to date has been the equivalent of `-nolegacy_rounding`" and nothing noticed |
+| 6 | `test_driver_endtoend.cc:69-76` | open | `snprintf`'s return discarded into `cmd[1024]`, a fourth instance of item 21. A long `$TMPDIR` truncates the command and the test then reports a driver failure that did not occur |
+| 7 | this file `:70` vs `:318-320` | open | `:70` still carries "Record the legacy run as an oracle in cycle 14 — [ ]" while `:318-320` records that cycle 14 deliberately does not. The re-scoping is what was implemented; `:70` is the stale half |
+
+### Order of work (2026-08-07)
+
+Nothing here alters a corrected voxel, so PLAN §9's ranking is by what a wrong answer costs a
+reader: a wrong recorded measurement first, then a leaked file, then the missing assertions,
+then the documentation gaps.
+
+1. **Item 1 — fixed.** Documentation only.
+2. **Items 2 and 6.** Hoist `imp_of()`, `outdir()` and `run_driver()` (with a checked
+   `snprintf`) into `testing/n3pipeline/fixture.h` beside `must()`/`read_text()`/
+   `valid_steps()`, and convert all three driver tests. Closes items 21-23 of the 2026-08-06
+   pass in the same commit, which is the reason to do it here rather than as a later cleanup.
+3. **Item 5.** A third check in `test_driver_endtoend.cc` comparing the two driver outputs to
+   each other, bounded below by the 5.114e-07 cycle 6 measured. The bound is recorded in
+   advance, so this is not a fitted tolerance.
+4. **Items 4 and 3.** `PLAN.md` gains a `-V1.1` subsection under §7 stating the parameters and
+   the evidence for each; cycle 15's scope gains the default-protocol resolution, which is a
+   behavioural check needing no new bound. The assertion itself lands with cycle 15.
+5. **Item 7.** Reword `:70`.
