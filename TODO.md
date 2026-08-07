@@ -67,9 +67,11 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 - Cycle 13 measured a port **over-correction on a no-bias phantom**: field RMS CV 0.071
   against the legacy's 0.035; neither reaches a flat field. The port stays under cycle 13's
   derived bound (0.25× the phantom's tissue contrast = 0.214), so it passes while the gap is
-  a chase item. Record the legacy run as an oracle in cycle 14 — [ ]. The legacy figure was
-  re-measured on 2026-08-06; the earlier ~0.0064 was taken on the pre-`1ac5192` striped
-  phantom and does not apply to the shipped one (review item 7 below).
+  a chase item — [ ]. **Not an oracle in cycle 14**: that cycle closed in `99fc4a7` against
+  `nu_correct_shrink1.f64` alone, and the legacy CV stays a reported-not-asserted figure with
+  no cycle attached (`:318-320`). It was re-measured on 2026-08-06; the earlier ~0.0064 was
+  taken on the pre-`1ac5192` striped phantom and does not apply to the shipped one (review
+  item 7 below).
 
 ## Fixed since the review
 
@@ -352,7 +354,7 @@ of its own, and since cycle 11 the diff touches only `src/N3Pipeline/`, `CMakeLi
 | 4 | `PLAN.md:180`, `:304`, `:315`; this file `:40` | **fixed** | `PLAN.md` was authoritative and never stated what `-V1.1` *is* — the four values appear only here, and it names the version only as a caveat about what "the default protocol" means. `parzen_sigma 4.0` has evidence in the PyTorch tree (`experiments/README.md`, "The histogram kernel": 1.71% against N3's 4.63% at SNR 20); `fwhm 0.1`, `iterations 1000` and `stop 1e-5` have none recorded anywhere, against PLAN §9's "every number published in `PLAN.md` or `TODO.md` must be reproducible from the committed code by a stated command" |
 | 5 | `test_driver_endtoend.cc:116-117` | **fixed** `9b7a9b5` | The cycle **could not distinguish `-legacy_rounding` on from off**: both runs go against the same oracle under the same bound and both print 1.840e-04, the effect being 5.114e-07 (PLAN §4), three orders below the printed precision. The test passes unchanged if the flag is a no-op — which is not hypothetical, since `9154eac` records that until it landed "every driver run to date has been the equivalent of `-nolegacy_rounding`" and nothing noticed |
 | 6 | `test_driver_endtoend.cc:69-76` | **fixed** `7967ffb` | `snprintf`'s return discarded into `cmd[1024]`, a fourth instance of item 21. A long `$TMPDIR` truncates the command and the test then reports a driver failure that did not occur |
-| 7 | this file `:70` vs `:318-320` | open | `:70` still carries "Record the legacy run as an oracle in cycle 14 — [ ]" while `:318-320` records that cycle 14 deliberately does not. The re-scoping is what was implemented; `:70` is the stale half |
+| 7 | this file `:70` vs `:318-320` | **fixed** | `:70` still carried "Record the legacy run as an oracle in cycle 14 — [ ]" while `:318-320` records that cycle 14 deliberately does not. The re-scoping is what was implemented; `:70` is the stale half |
 | 8 | `test_stopping.cc:56-64` vs `:89-101` | open | The two staged-threshold cases are labelled the wrong way round. `:56` calls `-stop 0.01 0.001` "the -V0.9 protocol" and concludes "with the shipped ordering the staged rule is therefore the first threshold alone". **V0.9 is `-stop 0.001 0.005`** (`nu_estimate.in:438`, `'np:stop:0.9' => '0.001 0.005'`) — the *looser*-second ordering, which is the case at `:89-101`, the one where the second threshold does fire once its stage is reached and does change the outcome. Both orderings are asserted correctly; only the attribution and the conclusion drawn from it are wrong |
 
 ### Order of work (2026-08-07)
@@ -381,6 +383,8 @@ then the documentation gaps.
    `experiments/README.md`, the other three recorded as shipped values and not as results.
    Cycle 15's scope in `PLAN.md` §7 and `:28` above gains the version resolution, which is
    behavioural and needs no bound. The assertion lands with cycle 15.
-5. **Item 7.** Reword `:70`.
+5. **Item 7 — fixed.** `:70` no longer attaches the legacy field CV to cycle 14, which closed
+   in `99fc4a7` against `nu_correct_shrink1.f64` alone. It stays a reported-not-asserted
+   figure with no cycle attached, which is what `:318-320` records.
 6. **Item 8.** Swap the two labels in `test_stopping.cc` and correct the conclusion; the
    assertions themselves are right and do not move.
