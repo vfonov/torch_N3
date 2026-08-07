@@ -24,7 +24,7 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 | 11 | one iteration of `NuEstimate` | [x] `n3cxx_test_estimate` |
 | 12 | `nu_evaluate` stage by stage | [x] `n3cxx_test_evaluate` (commit `63648fb`) |
 | 13 | end-to-end properties | [x] `test_driver_properties` (field from the driver's `.imp` strictly positive & finite in-mask; in-mask output CV < input CV; no-bias two-tissue phantom → bounded field, RMS CV < 0.25× its tissue contrast; `-stop 0` runs the requested staged count) |
-| 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [~] oracle `nu_correct_shrink1.f64` recorded; driver reproduces it at 1.8e-4 rel RMS. Cycles 11-12 derive their bound from the data — `0.5·(log max − log min)/valid_steps`, valid_steps read from `chunk_valid_range.txt` (0..4095 → 4095), 2.683e-4 on `chunk.mnc` — because the file is 12-bit, where PLAN §4 assumed 16-bit and published 1e-4. The driver passes the derived bound and fails the published one. **No test reads the oracle**: `grep -r nu_correct_shrink1 testing/` matches only `regenerate_reference.sh:222`, so 1.8e-4 is a hand measurement, not an assertion. Needs `test_driver_endtoend.cc`, with and without `-legacy_rounding`, registered in CTest |
+| 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [x] `test_driver_endtoend` (commit `99fc4a7`): drives the binary at `-V1.0` with and without `-legacy_rounding` against `nu_correct_shrink1.f64` under the derived bound `0.5·(log max − log min)/valid_steps` = 2.683e-4; both measure 1.840e-04 (the recorded 1.8e-4, now an assertion, and a full order below the bound). This is the one end-to-end comparison whose bound is justified in advance (the 12-bit quantum of the two MINC round trips, not the 16-bit figure PLAN §4 once assumed), and the only test that reads the corrected volume the driver's `n3::save` writes |
 | 15 | argv[0] / argument table | [ ] drive `nu_estimate_cxx` vs `nu_correct_cxx` to pin the argv[0] split, and assert the argument rules: `-V0.9` order-independence, the `-bins`/`-background`/`-distance`/`-iterations` validation, `-clobber` covering the `.imp`, every out-of-scope option exiting non-zero, and the four degenerate-argument cases the 2026-08-06 review found unguarded (items 1-4 below) |
 | 16 | `-tp_spline` and `-parzen_sigma` end to end | [ ] the `-parzen_sigma` oracle is `/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH` (PLAN §7 row 16): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` |
 | 17 | `-estimate_only` vs `.imp` | [~] oracle `estimate.imp` recorded; driver writes the .imp, Domain matches exactly. `estimate.imp` is read by `test_evaluate.cc:62,75` as an *input*; no test evaluates the driver's own `.imp` and the Perl's and diffs the two fields, which is what the cycle specifies |
@@ -310,10 +310,14 @@ not share a commit. PLAN §9 states the conventions each step is held to.
    Bookkeeping items 14-15 also closed: 14 is a commit-message inaccuracy in an
    already-published commit, recorded rather than fixed by amending it; 15's stale claim in
    this file is corrected in place, above.
-4. **Cycle 14** (still open): `test_driver_endtoend.cc` against `nu_correct_shrink1.f64`,
-   with and without `-legacy_rounding`. Turns the hand-measured 1.8e-4 into the one
-   end-to-end assertion whose bound is justified in advance, and gives item 7's
-   re-measurement (0.035) an oracle to live in rather than a comment.
+4. **Cycle 14 — fixed, `99fc4a7`** (`test_driver_endtoend`). Turns the hand-measured
+   1.8e-4 into the one end-to-end assertion whose bound is justified in advance. Both
+   `-legacy_rounding` configurations measure 1.840e-04 against the recorded oracle
+   (`nu_correct_shrink1.f64`), under the derived 2.683e-4 quantum bound — a full order of
+   margin, no fix needed (the red was the missing assertion, not a defect). It is now the
+   only test that reads the corrected volume the driver's `n3::save` writes. The legacy
+   field-CV re-measurement (0.035, item 7) is a separate reported-not-asserted chase item,
+   not an oracle here.
 5. **Cycle 15, then 17, then 16** (still open) — 15 and 17 have their inputs recorded
    already; 16 needs the `PATH` arrangement of PLAN §7 row 16. Cycle 15 is where the
    driver-defect fixes in step 1 become assertions rather than a hand-run probe.

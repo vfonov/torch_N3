@@ -301,7 +301,7 @@ All cycles run on `tests/data/chunk.mnc` + `chunk_mask.mnc` (91×52×50) unless 
 | 11 | one iteration of `NuEstimate`: the mask, then `est0`, then `field0` | the Perl with **`-save_fields -save_histograms`**, which writes `${basename}_est$iter.mnc`, `${basename}_field$iter.mnc` and `${basename}_hist$iter.txt` (`:154, :193, :508`) | per-iteration, so the loop is not an opaque end-to-end. 1e-4 relative RMS at `-shrink 1` (§4); report `field_CV` from both |
 | 12 | `NuEvaluate` stage by stage: auto mask from `mincstats -biModalT`, `evaluate_field` on the full grid, `correct_field`, the floor clamp, the division | each Perl stage's intermediate | 1e-6 per stage except `correct_field`'s 5e-6 |
 | 13 | end-to-end **properties**, asserted by driving the built binary (`test_driver_properties`): the field, read from the driver's own `.imp`, is strictly positive and finite in the mask; the in-mask coefficient of variation of the corrected output is below the input's; a volume with no planted non-uniformity (two-tissue phantom + additive noise) yields a **bounded, finite** field whose RMS CV stays below **0.25× the phantom's tissue contrast** — a derived bound proving the estimator does not absorb the structure it is meant to be blind to (neither this port at RMS CV 0.071, nor the legacy at 0.035, reaches a flat field; the gap is a recorded over-correction to chase in cycle 14, not a pass criterion); and `-stop 0` runs the requested staged count (cycle 10 end to end) | none — properties, asserted before any bound is measured, and no test in this cycle runs the Perl | properties, not bounds — none of these needs the code to have been run first. The legacy 0.035 is the installed `nu_correct` on the shipped phantom under the test's own options (`-shrink 2 -iterations 15 -stop 0.0 -distance 100 -mask chunk_mask`), re-measured 2026-08-06; the earlier ~0.0064 was taken on the striped phantom `1ac5192` replaced and does not apply. The criterion is a CV about the mean and therefore does not constrain a uniform gain: the field means are 1.078 (port) and 1.064 (legacy) where a bias-free volume's ideal is 1.0. `test_driver_properties` pins every run to `-V1.0 -nolegacy_rounding` (2026-08-06) so these numbers stay valid regardless of which protocol `nu_correct_cxx`'s own implicit default currently selects |
-| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/valid_steps relative RMS — the 12-bit quantum of the two intermediates over their own range (§4); valid_steps is `hi − lo` of the volume's recorded valid_range (`chunk_valid_range.txt` = 0..4095 → 4095), 2.683e-4 on `chunk.mnc`; the driver measures 1.8e-4. This is the only end-to-end comparison whose bound is justified in advance. Reproducing 1.8e-4 now requires `-V1.0` explicitly: the command was run against what was then the only, implicit default (`fwhm 0.15`, linear interpolation, `-legacy_rounding` off), which `-V1.1` (2026-08-06) replaced as the default |
+| 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/valid_steps relative RMS — the 12-bit quantum of the two intermediates over their own range (§4); valid_steps is `hi − lo` of the volume's recorded valid_range (`chunk_valid_range.txt` = 0..4095 → 4095), 2.683e-4 on `chunk.mnc`. Closed in `test_driver_endtoend` (`99fc4a7`): both `-legacy_rounding` configurations measure 1.840e-04 against `nu_correct_shrink1.f64`, a full order below the bound. This is the only end-to-end comparison whose bound is justified in advance, and the only test that reads the corrected volume the driver's `n3::save` writes. It runs at `-V1.0`, which reproduces the Perl's default protocol (`fwhm 0.15`, linear interpolation); `-V1.1` (2026-08-06) is the driver's own implicit default and does not match it, so the command must pass `-V1.0` explicitly |
 | 15 | argv[0] and the argument table: `nu_estimate_cxx` writes only the `.imp`; `-estimate_only`/`-correct` override it; every out-of-scope option (`-em`, `-fir`, `-real`, `-differential`, `-initial`, `-islands`) exits non-zero with a message | none | behavioural. **Out-of-scope options must fail loudly, not be ignored** |
 | 16 | `-tp_spline` and `-parzen_sigma 2` end to end at a fixed count | the Perl. For `-parzen_sigma` the oracle is **`/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH`**, not the installed N3 (defect 6): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` | as cycle 14 |
 | 17 | `-estimate_only` against the Perl's `.imp`, compared by evaluating both and diffing the fields, not the text | `evaluate_field` on each | 1e-6 |
@@ -439,6 +439,312 @@ stale binary is not evidence. Quote the margins the changed tests printed. If a 
 skipped, say so; do not describe an unverified claim as verified. `legacy/N3` and
 `legacy/EBTKS` must be clean apart from the commit under discussion, and
 `/app/torch_n3/_legacy/n3/` must still be byte-identical to `legacy/N3/src`.
+
+## 10. External BLAS/LAPACK for `legacy/EBTKS`/`legacy/N3`'s own build
+
+Separate from the `nu_correct_cxx` work above, and orthogonal to it: let this tree's build
+(`legacy/EBTKS` + `legacy/N3`, installing to `/app/legacy/_install`) link a BLAS/LAPACK
+supplied at build time, compiling the bundled `clapack/` sources only when none is supplied.
+Planning only — no change made yet. `/opt/minc/1.9.18.13`, `/app/torch_n3` and
+`legacy/N3/src` stay untouched by this item; §8's "Untouched: … `legacy/EBTKS`" line belongs
+to the `nu_correct_cxx` feature above and does not apply here — this item edits
+`legacy/EBTKS/CMakeLists.txt` and `legacy/N3/CMakeLists.txt`, deliberately.
+
+### Current state
+
+- `legacy/EBTKS/clapack/` is a trimmed, f2c-translated LAPACK/BLAS subset. 20 `.c` files
+  on disk; **19** are compiled unconditionally into `libEBTKS.a`, listed literally at
+  `EBTKS/CMakeLists.txt:171-189` inside `EBTKS_LIB_SRCS` (`test.c` is the twentieth and is
+  not built).
+- `dsysv_` is the only symbol out of that subset called from outside `clapack/` itself —
+  exactly once, `legacy/N3/src/Splines/TBSpline.cc:648`
+  (`TBSpline::solveSymmetricSystem`). Everything else (`dgemm_`, `dsytrf_`, `dsytrs_`,
+  `dlasyf_`, the f2c support routines `s_cmp`/`s_copy`, …) is internal to `dsysv_`'s own
+  call tree and referenced nowhere else in either tree (grep for all 19 symbol names
+  across `N3/src` and `EBTKS/{src,templates,include}` returns only the `dsysv_`
+  declaration and call sites). **Nothing in `EBTKS_LIB_SRCS` itself calls LAPACK**: EBTKS's
+  own library code is independent of `clapack/`, which is compiled into the archive purely
+  so that consumers linking `-lEBTKS` resolve `dsysv_`.
+- `legacy/EBTKS/src/TBSpline.cc` is a second, divergent copy of the same file — it calls
+  `dsysv_("UU", …)` where N3's calls `dsysv_("U", …)` — and is **not** in
+  `EBTKS_LIB_SRCS`, so it is dead and out of scope. It must not be added to the build as
+  part of this item.
+- `legacy/N3/CMakeLists.txt` never names LAPACK. It gets `dsysv_` transitively: every
+  executable that compiles `Splines/TBSpline.cc` directly (`evaluate_field`,
+  `spline_smooth`, `nu_correct_cxx`, `nu_estimate_cxx`, and the `testing/n3pipeline`
+  binaries, via `n3pipeline_core`) links `${EBTKS_LIBRARIES}` through the old-style,
+  directory-wide `LINK_LIBRARIES(mincprog ${EBTKS_LIBRARIES} ${VOLUME_IO_LIBRARIES}
+  ${LIBMINC_LIBRARIES})` at `CMakeLists.txt:155`, which resolves against `libEBTKS.a` —
+  where the symbol is defined today because `clapack/dsysv.c` is compiled into it.
+  `correct_field` compiles no `TBSpline.cc` and needs nothing from LAPACK.
+- `EBTKS_LIBRARIES` is exported as the bare string `"EBTKS"` (`EBTKSConfig.cmake.in`),
+  resolved by `-lEBTKS` against a directory added with `LINK_DIRECTORIES`
+  (`UseEBTKS.cmake.in`) — not a CMake target, so nothing about it propagates
+  transitively to a consumer built from a separate `FIND_PACKAGE(EBTKS)` (which is how
+  `legacy/N3` finds it, `CMakeLists.txt:43`). **Consequence**: if `clapack/*.c` stop
+  being compiled into `libEBTKS.a`, `dsysv_` disappears from that archive, and
+  `legacy/N3`'s own executables — which need the symbol independently of EBTKS's C++ —
+  fail to link unless `legacy/N3/CMakeLists.txt` is separately told what to link instead.
+  The choice of LAPACK cannot be made local to `EBTKS/CMakeLists.txt`; it has to be
+  threaded through the exported `EBTKSConfig.cmake` to `legacy/N3/CMakeLists.txt`.
+
+### Precedent already in this repository
+
+`torch_n3/_legacy/build_legacy.py` solved the identical problem for the CFFI shim, which
+compiles the same `TBSpline.cc` (byte-identical vendored copy) against a chosen LAPACK:
+opt-in only, two variables (`N3_LAPACK_LIBS`, `N3_LAPACK_LIB_DIRS`), nothing
+auto-detected, bundled `clapack/` reachable as the explicit fallback
+(`N3_LAPACK_LIBS="EBTKS"`). Its own default — link nothing, share whatever LAPACK the
+host process (PyTorch) already loaded — is specific to being a Python extension and has
+no equivalent for a standalone executable, so it is not reused here; the naming
+convention is.
+
+That swap is measured there, not assumed safe: `README.md` ("Which LAPACK the legacy
+backend links") and `PROBLEMS.md` §8 record calling the **unmodified** `TBSpline.cc`
+(`_integer` = `long int`, 8 bytes; no hidden Fortran string-length argument — an f2c-style
+call) directly against a real, separately built system LAPACK (OpenBLAS) with no ABI
+adapter, and it works: the two builds' fitted fields differ by 3.1e-11 relative RMS at one
+iteration — a difference between two valid solvers of a `~1e13`-condition-number system,
+not corruption. Reading why it works out safely, from `solveSymmetricSystem`
+(`TBSpline.cc:626-651`): `ipiv` is allocated, passed, and deleted **unread**, so its
+assumed element width never matters; `w_info` is narrowed to `int` before use, which is
+defined truncation to the low 32 bits regardless of what a callee using 4-byte `INTEGER`
+left in the high bytes; every scalar *input* (`n`, `nrhs`, `lda`, `ldb`, `lwork`) is a
+small positive value whose low 4 bytes equal the true value on this little-endian
+platform, so a callee reading them as 32-bit `INTEGER` still reads correctly; and `ipiv`,
+being `_integer[n]` at 8 bytes an element, is strictly larger than the `n`×4 bytes a
+32-bit-`INTEGER` callee writes, so the width mismatch cannot overrun it. The **missing
+hidden string-length argument** is a separate question that the integer-width reasoning
+does not cover, and it is safe for its own reason: `UPLO` is `CHARACTER*1` in LAPACK and
+is consumed only through `LSAME`, which compares one character. A Fortran compiler emits
+that comparison from the dummy argument's *declared* length, not the passed one, so the
+hidden length is never read and the register holding garbage is never consulted. This is
+why f2c-style calls into gfortran-built LAPACK are routine rather than exceptional.
+(`XERBLA` takes `CHARACTER*6` plus a hidden length and is reached only on an argument
+error, which this call site does not produce.) All of this is
+checked-in, already-published evidence, not a theoretical argument, and it directly
+de-risks doing the same swap here: **no change to `TBSpline.cc` is planned or required.**
+Scope note: this reasoning covers LP64 (32-bit Fortran `INTEGER`) libraries — OpenBLAS,
+distro reference LAPACK/BLAS, MKL's default `mkl_rt` interface. An ILP64 build was not
+measured; document it as unsupported rather than silently assume it works.
+
+### Design
+
+New CMake cache variables in `legacy/EBTKS/CMakeLists.txt`, both empty by default, which
+reproduces the current `libEBTKS.a` byte for byte:
+
+- `EBTKS_LAPACK_LIBRARIES` — `;`/space-separated library names or full paths, e.g.
+  `openblas` (this machine, verified above — one name, since Debian's OpenBLAS package
+  merges LAPACK into the same `.so`), the more portable `lapack;blas`, or an absolute path
+  to `libmkl_rt.so`. Non-empty is the only trigger: no `FIND_PACKAGE(BLAS)`/
+  `FIND_PACKAGE(LAPACK)` autodetection (see "Rejected alternatives").
+- `EBTKS_LAPACK_LIBRARY_DIRS` — optional, added via `LINK_DIRECTORIES` for bare names.
+
+Naming mirrors `N3_LAPACK_LIBS`/`N3_LAPACK_LIB_DIRS` deliberately — same mechanism, same
+names, already proven elsewhere in this repository.
+
+`legacy/EBTKS/CMakeLists.txt`:
+
+```cmake
+SET(EBTKS_LAPACK_LIBRARIES "" CACHE STRING
+    "External LAPACK/BLAS to link, e.g. 'lapack;blas' or an absolute path to \
+libmkl_rt.so. Empty (default) builds the bundled clapack/ sources instead.")
+SET(EBTKS_LAPACK_LIBRARY_DIRS "" CACHE STRING
+    "Extra -L directories for EBTKS_LAPACK_LIBRARIES, when its entries are bare names.")
+
+IF(EBTKS_LAPACK_LIBRARIES)
+  IF(EBTKS_LAPACK_LIBRARY_DIRS)
+    LINK_DIRECTORIES(${EBTKS_LAPACK_LIBRARY_DIRS})
+  ENDIF()
+ELSE()
+  LIST(APPEND EBTKS_LIB_SRCS
+    clapack/dcopy.c  clapack/dgemm.c  clapack/dgemv.c  clapack/dger.c
+    clapack/dlasyf.c clapack/dscal.c  clapack/dswap.c  clapack/dsyr.c
+    clapack/dsysv.c  clapack/dsytf2.c clapack/dsytrf.c clapack/dsytrs.c
+    clapack/idamax.c clapack/ieeeck.c clapack/ilaenv.c clapack/lsame.c
+    clapack/s_cmp.c  clapack/s_copy.c clapack/xerbla.c)
+ENDIF()
+...
+ADD_LIBRARY(EBTKS ${LIBRARY_TYPE} ${EBTKS_LIB_SRCS})
+IF(EBTKS_LAPACK_LIBRARIES)
+  TARGET_LINK_LIBRARIES(EBTKS PUBLIC ${EBTKS_LAPACK_LIBRARIES})
+ENDIF()
+```
+
+The 19 `clapack/*.c` lines move out of the unconditional literal `EBTKS_LIB_SRCS` list
+(`CMakeLists.txt:171-189`) into the `ELSE()` branch above; nothing else in the file
+changes. The `TARGET_LINK_LIBRARIES(EBTKS PUBLIC …)` is defensive rather than load-bearing:
+`EBTKS` is a **static** library, so it records an interface dependency and embeds nothing,
+and no source in `EBTKS_LIB_SRCS` calls LAPACK at all ("Current state"), so the one in-tree
+consumer (`EBTKS/testing/ebtks_test_fft`, an FFT test, reached through
+`LINK_LIBRARIES(EBTKS)` — a target name, so interface deps do propagate) does not actually
+need it. Keep it so that a future EBTKS source calling LAPACK links without a second fix.
+
+Export the decision through `EBTKSConfig.cmake.in`/`UseEBTKS.cmake.in`. **Two** variables
+are required, not one, and both must be exported for the same reason `EBTKS_LIBRARIES` and
+`EBTKS_LIBRARY_DIRS` both already are — a bare `-l` name needs its `-L` alongside it:
+
+```
+set(EBTKS_LAPACK_LIBRARIES    "@EBTKS_LAPACK_LIBRARIES_CONFIG@")     # empty if EBTKS bundled its own
+set(EBTKS_LAPACK_LIBRARY_DIRS "@EBTKS_LAPACK_LIBRARY_DIRS_CONFIG@")
+```
+
+with `UseEBTKS.cmake.in` extended to `LINK_DIRECTORIES(${EBTKS_LIBRARY_DIRS}
+${EBTKS_LAPACK_LIBRARY_DIRS})`, mirroring what it already does for EBTKS's own build
+directory. An earlier draft of this plan proposed exporting a single variable holding
+"resolved absolute paths" so the consumer needed no `-L`; that is **not implementable** —
+CMake performs no configure-time resolution of a bare library name to a file, that being
+the linker's job, and there is no supported API that would do it. Passing absolute paths in
+`EBTKS_LAPACK_LIBRARIES` (which works, and needs no `-L`) stays available to the user as a
+convention, but the build must not depend on it. For the `openblas` case on this machine
+neither is needed: `/usr/lib/x86_64-linux-gnu` is a default linker search path, so
+`EBTKS_LAPACK_LIBRARY_DIRS` stays empty.
+
+`legacy/N3/CMakeLists.txt` needs exactly one line changed, extending the existing
+directory-wide link at `:155`:
+
+```cmake
+LINK_LIBRARIES(mincprog ${EBTKS_LIBRARIES} ${EBTKS_LAPACK_LIBRARIES} ${VOLUME_IO_LIBRARIES} ${LIBMINC_LIBRARIES})
+```
+
+`${EBTKS_LAPACK_LIBRARIES}` is empty — a no-op — whenever EBTKS built the bundled
+fallback, so this line is unchanged in the default configuration. Because this is the
+directory-wide link list, every target added afterward (`evaluate_field`,
+`spline_smooth`, `nu_correct_cxx`, `nu_estimate_cxx`, and, through
+`ADD_SUBDIRECTORY(testing)`, every `n3pipeline` test binary) picks it up with no further
+edits to `legacy/N3/testing/CMakeLists.txt`.
+
+Nothing in `legacy/N3/src` or `legacy/EBTKS/{src,templates,include}` changes; no
+re-vendoring of `torch_n3/_legacy/n3/` or `torch_n3/_legacy/ebtks/` is triggered.
+
+### Rejected alternatives
+
+- **`FIND_PACKAGE(BLAS)`/`FIND_PACKAGE(LAPACK)` autodetection.** A spike confirms it
+  resolves cleanly on this machine with no Fortran compiler present (CMake 3.28,
+  `FIND_PACKAGE(LAPACK)` → `/usr/lib/x86_64-linux-gnu/libopenblas.so;-lm;-ldl`), but
+  making it the default would make the default build's numerics depend on whatever
+  happens to be installed, silently — this is the tree whose own `_install` build backs
+  `nu_correct_cxx`'s comparisons against the Perl oracle (§5-§7 above), and `CLAUDE.md`'s
+  "Test tolerances" section is explicit that behaviour must not change without a
+  deliberate, measured, recorded step. Opt-in only keeps `cmake ..` with no extra flags
+  byte-for-byte what it is today.
+- **A `dsysv_` ABI adapter** (converting the 8-byte f2c `integer`/no-hidden-length call
+  to a real Fortran ABI). Considered because of the width and hidden-argument
+  differences, but the checked-in measurement in `README.md`/`PROBLEMS.md` §8 (above)
+  shows the direct, unmodified call already works correctly against real system LAPACK.
+  Adding indirection would solve an already-solved problem, and — because it would have
+  to live in or beside `TBSpline.cc` — would trigger the re-vendoring `CLAUDE.md`
+  requires for any edit to a file `torch_n3/_legacy/n3/` mirrors, for no benefit.
+
+### Verification, once implemented
+
+**The existing CTest suite cannot serve as the acceptance gate for this change, and an
+earlier draft of this plan wrongly assumed it could.** Two independent reasons, both
+checked:
+
+1. *The tests do not exercise the binaries under test.* `nu_reference_1` runs
+   `compare_nu_result.pl`, which shells out to bare `nu_estimate`/`nu_evaluate`; those
+   Perl drivers resolve programs through `MNI::Spawn` against `$ENV{PATH}`
+   (`nu_estimate.in:417`, `SetOptions(strict => 2)` at `:486`). `MINC_TEST_ENVIRONMENT`,
+   the variable `testing/CMakeLists.txt` would use to point that at the build tree, is
+   referenced four times there and **set nowhere in this tree** — it comes from the MINC
+   superbuild, which is not in play. With `/opt/minc/1.9.18.13/bin` on `PATH`, the test
+   measures the installed oracle. A green `nu_reference_1` is therefore no evidence about
+   a rebuilt `spline_smooth` whatsoever. Confirmed on the current `_install`:
+   `nm _install/bin/spline_smooth | grep dsysv_` shows `T dsysv_`, statically bound from
+   `clapack/`, while the binary the test actually ran is the one under `/opt/minc`.
+2. *Even pointed at the right binaries, its tolerance is the wrong instrument.*
+   `compare_nu_result.pl` computes relative RMS against `brain_nu_ref.mnc.gz` at
+   `1e-4` across a full 50-iteration `nu_estimate`. `README.md` ("Which LAPACK the legacy
+   backend links") records that this same swap changes the fitted field by 3.1e-11 and
+   moves the divergence threshold from the sixth iteration to the second; `CLAUDE.md`
+   states no end-to-end N3 comparison is meaningful past three digits. A 50-iteration
+   comparison at 1e-4 may therefore fail under an external LAPACK **without anything
+   being wrong**, and per `CLAUDE.md` widening 1e-4 is not an available remedy.
+
+So the gate is block-level, per `CLAUDE.md`'s "constrain blocks rather than pipelines":
+
+- Default build, no new flags — the only place a strict identity is claimed, and it is
+  claimed strictly: `ar t libEBTKS.a` lists the same 19 `clapack` object members as today,
+  and the whole archive should be bit-identical to a pre-change build (same sources, same
+  order, same flags). `legacy/N3/testing`'s CTest cases stay green, which for the default
+  build *is* meaningful, because nothing changed.
+- `-DEBTKS_LAPACK_LIBRARIES=openblas` (the confirmed case, "OpenBLAS, checked concretely on
+  this machine" above) — link-level checks, which are what this item is actually
+  responsible for: `ar t libEBTKS.a` lists **no** `clapack` members; `nm` on
+  `spline_smooth`, `evaluate_field`, `nu_correct_cxx`, `nu_estimate_cxx` shows `dsysv_` as
+  `U` rather than `T`, and `ldd` lists `libopenblas.so.0`; every executable and the CTest
+  suite still builds and runs to completion.
+- Numerical gate, **one iteration, not fifty**: run the two builds' own `spline_smooth`
+  over the same input and compare the fitted fields directly. Expect a difference near the
+  already-measured 3.1e-11 relative RMS; materially larger is a defect in the swap,
+  materially smaller means the external library was not actually reached. Drive this with
+  explicit absolute paths to the built binaries, not through `PATH`, for reason 1 above.
+- `nu_reference_1` under external LAPACK is run as an **observation, not a gate**, and
+  only with `PATH` explicitly set to the build tree so it means something. Record the
+  relative RMS it reports. If it exceeds 1e-4, that is the documented amplification and
+  belongs in `PROBLEMS.md` beside the existing §8 entry, together with the number — it is
+  not license to change the 1e-4 in `testing/CMakeLists.txt`.
+- `-DEBTKS_LAPACK_LIBRARIES="lapack;blas"` (this machine's `liblapack.so.3`/
+  `libblas.so.3`, currently pointing at the same `libopenblas.so.0` via
+  `update-alternatives`): link-level checks only; expected to match the `openblas` case
+  bit for bit, since it is the same shared object under a different `-l` name. Its value is
+  as a test of the multi-name/`-L` path, not of a second implementation.
+- The genuinely different implementation is the reference Netlib build: `apt install
+  liblapack3` selected via `update-alternatives --config
+  liblapack.so.3-x86_64-linux-gnu`, which `README.md:536-538` already names. This is the
+  one that would show a larger-than-3.1e-11 field difference legitimately, so measure it
+  rather than predicting it. Requires installing a package, which `CLAUDE.md` forbids
+  doing unilaterally — ask first, and treat this bullet as optional.
+- If `EBTKS_LAPACK_LIBRARIES` is ever turned on for a real `_install` build rather than
+  exercised only as a build-system capability, record the effect on `nu_correct_cxx`'s
+  numbers in `PROBLEMS.md`, following the existing §8 entry as the template.
+
+### Default posture — resolved
+
+Confirmed by the user: the goal is the ability to **completely replace** `clapack/` with a
+system-provided library (OpenBLAS named as the concrete example), the bundled sources used
+only when none is supplied — which is a restatement of the original request ("use another
+BLAS/LAPACK library provided during the build, only use the included version as a
+fall-back") and exactly the mechanism already designed above: when
+`EBTKS_LAPACK_LIBRARIES` is set, none of the 19 `clapack/*.c` are compiled and the archive
+carries no clapack objects at all (first "Verification" bullet below) — replacement is
+complete, not additive. `cmake ..` with no extra flags keeps building the bundled fallback,
+matching "only use the included version as a fall-back option" and CLAUDE.md's
+no-silent-behaviour-change rule; a system library is selected by passing
+`-DEBTKS_LAPACK_LIBRARIES=...` explicitly, not auto-detected. No `FIND_PACKAGE` probing is
+added.
+
+### OpenBLAS, checked concretely on this machine
+
+The user named OpenBLAS with LAPACKE as the example, so both were checked directly rather
+than assumed:
+
+- `libopenblas-dev`/`libopenblas0-pthread` (0.3.26, this container's installed package)
+  builds LAPACK *into* `libopenblas.so.0` under its plain Fortran names — `nm -D
+  /usr/lib/x86_64-linux-gnu/libopenblas.so.0` lists `dsysv_` (and `dsysv_aa_`, `dsysv_rk_`,
+  `dsysv_rook_`) as `T` (defined). One name resolves the sole symbol this tree needs:
+  `-DEBTKS_LAPACK_LIBRARIES=openblas` — no separate `lapack`/`blas` package required, and
+  it is the same library `update-alternatives` already points `liblapack.so.3`/
+  `libblas.so.3` at on this machine (`README.md`, "Which LAPACK the legacy backend
+  links"), so this is not a second code path, just a shorter one.
+- LAPACKE (`LAPACKE_dsysv`, the C-calling-convention wrapper — `lapack_int`, an explicit
+  row/column-major flag, no hidden Fortran arguments) is a **separate, optional** interface
+  some OpenBLAS builds also ship. This package does not: `nm -D libopenblas.so.0 | grep
+  LAPACKE_` is empty, and no `lapacke.h` is installed system-wide (only a vendored copy
+  under Eigen, unrelated). It does not matter here regardless of whether it is present,
+  because `TBSpline.cc:648` calls the raw Fortran-mangled `dsysv_` symbol directly, the
+  same call the bundled `clapack/dsysv.c` answers today — not `LAPACKE_dsysv`. Nothing in
+  this plan links or requires `liblapacke`; recorded here only so "OpenBLAS, which
+  includes LAPACKE" is not misread as this swap needing LAPACKE's headers or a
+  `LAPACKE_dsysv` call. Should the ABI-adapter alternative ever be revisited (currently
+  rejected, above), LAPACKE would be the natural replacement for the hand-declared
+  `extern "C"` prototype — it is the more robust interface — but that is a `TBSpline.cc`
+  change and out of scope for this build-system-only item.
+
+`-DEBTKS_LAPACK_LIBRARIES=openblas` becomes the primary case in "Verification, once
+implemented" below, ahead of the generic `lapack;blas` alternative, since it is the example
+given and already confirmed to export the needed symbol on this machine.
 
 ## Open risks
 
