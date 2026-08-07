@@ -374,9 +374,10 @@ drivers, `legacy/EBTKS`, everything under `/app/torch_n3`, `/opt/minc`.
 
 ## 9. Instructions for the implementing agent
 
-The open work is enumerated in `/app/TODO.md`, which is the tracker; this section is the
-standard each item is closed to. It applies to `legacy/N3/src/N3Pipeline/` and
-`legacy/N3/testing/n3pipeline/`, on branch `aislop`.
+The open work is enumerated in `/app/TODO.md`, which is the tracker and carries nothing else;
+this section is the standard each item is closed to. Closed items live in `/app/REVIEWS.md`,
+which is where the source comments' `(review, 2026-08-06, item 11)` citations resolve. Both
+apply to `legacy/N3/src/N3Pipeline/` and `legacy/N3/testing/n3pipeline/`, on branch `aislop`.
 
 ### Priority
 
