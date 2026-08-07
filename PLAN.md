@@ -302,7 +302,7 @@ All cycles run on `tests/data/chunk.mnc` + `chunk_mask.mnc` (91×52×50) unless 
 | 12 | `NuEvaluate` stage by stage: auto mask from `mincstats -biModalT`, `evaluate_field` on the full grid, `correct_field`, the floor clamp, the division | each Perl stage's intermediate | 1e-6 per stage except `correct_field`'s 5e-6 |
 | 13 | end-to-end **properties**, asserted by driving the built binary (`test_driver_properties`): the field, read from the driver's own `.imp`, is strictly positive and finite in the mask; the in-mask coefficient of variation of the corrected output is below the input's; a volume with no planted non-uniformity (two-tissue phantom + additive noise) yields a **bounded, finite** field whose RMS CV stays below **0.25× the phantom's tissue contrast** — a derived bound proving the estimator does not absorb the structure it is meant to be blind to (neither this port at RMS CV 0.071, nor the legacy at 0.035, reaches a flat field; the gap is a recorded over-correction to chase in cycle 14, not a pass criterion); and `-stop 0` runs the requested staged count (cycle 10 end to end) | none — properties, asserted before any bound is measured, and no test in this cycle runs the Perl | properties, not bounds — none of these needs the code to have been run first. The legacy 0.035 is the installed `nu_correct` on the shipped phantom under the test's own options (`-shrink 2 -iterations 15 -stop 0.0 -distance 100 -mask chunk_mask`), re-measured 2026-08-06; the earlier ~0.0064 was taken on the striped phantom `1ac5192` replaced and does not apply. The criterion is a CV about the mean and therefore does not constrain a uniform gain: the field means are 1.078 (port) and 1.064 (legacy) where a bias-free volume's ideal is 1.0. `test_driver_properties` pins every run to `-V1.0 -nolegacy_rounding` (2026-08-06) so these numbers stay valid regardless of which protocol `nu_correct_cxx`'s own implicit default currently selects |
 | 14 | end-to-end bounded: `-shrink 1 -distance 200 -iterations 1 -stop 0`, with and without `-legacy_rounding` | `nu_correct` | 0.5·(log max − log min)/valid_steps relative RMS — the 12-bit quantum of the two intermediates over their own range (§4); valid_steps is `hi − lo` of the volume's recorded valid_range (`chunk_valid_range.txt` = 0..4095 → 4095), 2.683e-4 on `chunk.mnc`. Closed in `test_driver_endtoend` (`99fc4a7`): both `-legacy_rounding` configurations measure 1.840e-04 against `nu_correct_shrink1.f64`, 1.46× inside the bound. **The three comparisons sharing this bound are tight, not roomy**: cycles 11, 12 and 14 sit at 0.86, 0.68 and 0.69 of it, and cycle 11's 2.299e-4 leaves 14% headroom, so a change to the histogram or the spline can put that one red. (`99fc4a7`'s message and an earlier revision of this row said "a full order below the bound", which is wrong by a factor of seven; the commit is published and is corrected here rather than amended.) This is the only end-to-end comparison whose bound is justified in advance, and the only test that reads the corrected volume the driver's `n3::save` writes. It runs at `-V1.0`, which reproduces the Perl's default protocol (`fwhm 0.15`, linear interpolation); `-V1.1` (2026-08-06) is the driver's own implicit default and does not match it, so the command must pass `-V1.0` explicitly |
-| 15 | argv[0] and the argument table: `nu_estimate_cxx` writes only the `.imp`; `-estimate_only`/`-correct` override it; every out-of-scope option (`-em`, `-fir`, `-real`, `-differential`, `-initial`, `-islands`) exits non-zero with a message | none | behavioural. **Out-of-scope options must fail loudly, not be ignored** |
+| 15 | argv[0] and the argument table: `nu_estimate_cxx` writes only the `.imp`; `-estimate_only`/`-correct` override it; every out-of-scope option (`-em`, `-fir`, `-real`, `-differential`, `-initial`, `-islands`) exits non-zero with a message; and **the protocol versions resolve as "Protocol versions" below states** — a bare invocation gives `-V1.1`'s four values, `-V1.0` and `-V0.9` override them, each fills only what the user did not give, and the last `-V` wins | none | behavioural. **Out-of-scope options must fail loudly, not be ignored**. The version rules need no bound: they are the resolved `EstimateOptions`, reported by `-verbose`, against the table below |
 | 16 | `-tp_spline` and `-parzen_sigma 2` end to end at a fixed count | the Perl. For `-parzen_sigma` the oracle is **`/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH`**, not the installed N3 (defect 6): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` | as cycle 14 |
 | 17 | `-estimate_only` against the Perl's `.imp`, compared by evaluating both and diffing the fields, not the text | `evaluate_field` on each | 1e-6 |
 
@@ -310,6 +310,39 @@ Cycles 1-10 are unit cycles and should each close within a session. Cycles 11-17
 integration cycles: they stay red longer, which is why 13 comes before 14 — a property that
 can be asserted without measurement gives the integration work a green signal well before
 any bound is available.
+
+### Protocol versions
+
+`-V<x>` selects a set of defaults, each filling only the options the user did not give
+(`nu_estimate.in:499-505`); a scalar resolved after parsing, so the flag is
+order-independent and the last `-V` wins. Three exist:
+
+| | `-V0.9` | `-V1.0` | `-V1.1` |
+|---|---|---|---|
+| `-iterations` | `10 20` | 50 | 1000 |
+| `-stop` | `0.001 0.005` | 0.001 | 1e-5 |
+| `-shrink` | 3 | 4 | 4 |
+| `-fwhm` | 0.15 | 0.15 | 0.1 |
+| `-parzen_sigma` | off (linear split) | off (linear split) | 4.0 |
+| `legacy_rounding` | off | **on** | off |
+
+`-V0.9` and `-V1.0` are ports: `-V0.9` is `nu_estimate.in:499-505`'s original protocol and
+`-V1.0` is the Perl's current default (§"Default N3 protocol" in `CLAUDE.md`), with
+`legacy_rounding` on because reproducing the Perl's `%lf` rounding between stages is what
+that mode is for. **`-V1.1` is not a port**, and since `9154eac` (2026-08-06) it is what a
+bare `nu_correct_cxx in out` selects. Its four departures do not stand on equal evidence:
+
+- `-parzen_sigma 4.0` is measured, in the PyTorch tree rather than here:
+  `experiments/README.md`, "The histogram kernel" — 450 random fields per window on colin27,
+  20% planted at SNR 20, where N3's linear split leaves 4.63% of the field and `sigma 4`
+  leaves 1.71%, better on 94% of trials.
+- `-fwhm 0.1`, `-iterations 1000` and `-stop 1e-5` are **not measured anywhere**. They are
+  recorded here as the shipped values, not as a result.
+
+Two consequences to keep in view. The default depends on `-parzen_sigma`, whose end-to-end
+oracle comparison is cycle 16 and still open, so the shipped protocol rests on the one path
+with no oracle behind it yet. And every comparison against the Perl must pass `-V1.0`
+explicitly: cycles 13, 14 and `test_driver_fwhm` all do.
 
 Reported, not asserted, once the cycles are green ("the default protocol" below means the
 Perl's own default, reproduced by `nu_correct_cxx -V1.0` since `-V1.1` (2026-08-06) became the

@@ -25,7 +25,7 @@ Status: `[x]` done & committed, `[~]` code written but not wired/tested, `[ ]` p
 | 12 | `nu_evaluate` stage by stage | [x] `n3cxx_test_evaluate` (commit `63648fb`) |
 | 13 | end-to-end properties | [x] `test_driver_properties` (field from the driver's `.imp` strictly positive & finite in-mask; in-mask output CV < input CV; no-bias two-tissue phantom → bounded field, RMS CV < 0.25× its tissue contrast; `-stop 0` runs the requested staged count) |
 | 14 | end-to-end bounded (`-shrink 1 -iterations 1 -stop 0`) | [x] `test_driver_endtoend` (commit `99fc4a7`): drives the binary at `-V1.0` with and without `-legacy_rounding` against `nu_correct_shrink1.f64` under the derived bound `0.5·(log max − log min)/valid_steps` = 2.683e-4; both measure 1.840e-04 (the recorded 1.8e-4, now an assertion, 1.46× inside the bound). Cycles 11, 12 and 14 sit at 0.86, 0.68 and 0.69 of that one bound, cycle 11 being the binding case at 14% headroom. This is the one end-to-end comparison whose bound is justified in advance (the 12-bit quantum of the two MINC round trips, not the 16-bit figure PLAN §4 once assumed), and the only test that reads the corrected volume the driver's `n3::save` writes |
-| 15 | argv[0] / argument table | [ ] drive `nu_estimate_cxx` vs `nu_correct_cxx` to pin the argv[0] split, and assert the argument rules: `-V0.9` order-independence, the `-bins`/`-background`/`-distance`/`-iterations` validation, `-clobber` covering the `.imp`, every out-of-scope option exiting non-zero, and the four degenerate-argument cases the 2026-08-06 review found unguarded (items 1-4 below) |
+| 15 | argv[0] / argument table | [ ] drive `nu_estimate_cxx` vs `nu_correct_cxx` to pin the argv[0] split, and assert the argument rules: `-V0.9` order-independence, the `-bins`/`-background`/`-distance`/`-iterations` validation, `-clobber` covering the `.imp`, every out-of-scope option exiting non-zero, the four degenerate-argument cases the 2026-08-06 review found unguarded (items 1-4 below), and **the protocol-version resolution** against PLAN §7's "Protocol versions" table — a bare invocation gives `-V1.1`'s four values, `-V1.0`/`-V0.9` override them, each fills only what the user did not give, and the last `-V` wins. That last part is the gap the 2026-08-07 review's item 3 records: `-V1.1` is the shipped default and no test asserts a value produced under it |
 | 16 | `-tp_spline` and `-parzen_sigma` end to end | [ ] the `-parzen_sigma` oracle is `/app/legacy/_install/bin/nu_correct` with `/app/legacy/_install/bin` first on `PATH` (PLAN §7 row 16): `MNI::Spawn` resolves `volume_hist` through `PATH` and the stock one has no `-gaussian_window` |
 | 17 | `-estimate_only` vs `.imp` | [~] oracle `estimate.imp` recorded; driver writes the .imp, Domain matches exactly. `estimate.imp` is read by `test_evaluate.cc:62,75` as an *input*; no test evaluates the driver's own `.imp` and the Perl's and diffs the two fields, which is what the cycle specifies |
 
@@ -347,12 +347,13 @@ of its own, and since cycle 11 the diff touches only `src/N3Pipeline/`, `CMakeLi
 | # | Where | Status | What needed fixing |
 |---|---|---|---|
 | 1 | `PLAN.md:304`, this file `:27`, `:316`, `99fc4a7`'s message | **fixed** | 1.840e-04 against 2.683e-04 was called "a full order below the bound"; it is 1.46×, 31% headroom. Worse, the reading it invites is backwards: cycles 11, 12 and 14 sit at 0.86, 0.68 and 0.69 of that one bound, and **cycle 11's 2.299e-4 leaves 14%**, so the family is the tight one and a histogram or spline change can put it red. Corrected in both documents with the ratios; `99fc4a7` is published and is recorded here rather than amended, as item 14 of the 2026-08-06 pass does for `1ac5192` |
-| 2 | `test_driver_endtoend.cc:88-93` | open | `cleanup()` removes `<out>.mnc.imp`; the driver writes `<out>.imp` (`nu_correct_cxx.cc:146-160`, final extension replaced), so **every run leaks two `.imp` files into `$TMPDIR`**. The `*.log` glob sits inside the quotes and never expands either. `test_driver_fwhm.cc:61-72` has both right, with a comment naming this exact trap, and `test_driver_properties.cc:62-74` has `imp_of()`. This is item 22's predicted failure mode arriving in new code, and PLAN §9's "a rule implemented twice is a defect" |
-| 3 | `testing/CMakeLists.txt:129-140`, all four driver tests | open | **No test asserts a value produced under the shipped default.** `-V1.1` is what a bare invocation selects (`9154eac`); every value-asserting driver test pins `-V1.0` (`test_driver_endtoend.cc:116-117`, `test_driver_fwhm.cc:47`, `test_driver_properties.cc:96, :178, :252`), and the two tests that do run the default assert exit status only, with `-iterations 1 -stop 0.0` overriding two of its four parameters. The default also selects `-parzen_sigma 4.0`, whose end-to-end cycle (16) is open, so the shipped default rests on the one path with no oracle comparison yet |
-| 4 | `PLAN.md:180`, `:304`, `:315`; this file `:40` | open | `PLAN.md` is authoritative and never states what `-V1.1` *is* — the four values appear only here, and it names the version only as a caveat about what "the default protocol" means. `parzen_sigma 4.0` has evidence in the PyTorch tree (`experiments/README.md`, "The histogram kernel": 1.71% against N3's 4.63% at SNR 20); `fwhm 0.1`, `iterations 1000` and `stop 1e-5` have none recorded anywhere, against PLAN §9's "every number published in `PLAN.md` or `TODO.md` must be reproducible from the committed code by a stated command" |
-| 5 | `test_driver_endtoend.cc:116-117` | open | The cycle **cannot distinguish `-legacy_rounding` on from off**: both runs go against the same oracle under the same bound and both print 1.840e-04, the effect being 5.114e-07 (PLAN §4), three orders below the printed precision. The test passes unchanged if the flag is a no-op — which is not hypothetical, since `9154eac` records that until it landed "every driver run to date has been the equivalent of `-nolegacy_rounding`" and nothing noticed |
-| 6 | `test_driver_endtoend.cc:69-76` | open | `snprintf`'s return discarded into `cmd[1024]`, a fourth instance of item 21. A long `$TMPDIR` truncates the command and the test then reports a driver failure that did not occur |
+| 2 | `test_driver_endtoend.cc:88-93` | **fixed** `7967ffb` | `cleanup()` removed `<out>.mnc.imp`; the driver writes `<out>.imp` (`nu_correct_cxx.cc:146-160`, final extension replaced), so **every run leaks two `.imp` files into `$TMPDIR`**. The `*.log` glob sits inside the quotes and never expands either. `test_driver_fwhm.cc:61-72` has both right, with a comment naming this exact trap, and `test_driver_properties.cc:62-74` has `imp_of()`. This is item 22's predicted failure mode arriving in new code, and PLAN §9's "a rule implemented twice is a defect" |
+| 3 | `testing/CMakeLists.txt:129-140`, all four driver tests | open, scoped into cycle 15 | **No test asserts a value produced under the shipped default.** `-V1.1` is what a bare invocation selects (`9154eac`); every value-asserting driver test pins `-V1.0` (`test_driver_endtoend.cc:116-117`, `test_driver_fwhm.cc:47`, `test_driver_properties.cc:96, :178, :252`), and the two tests that do run the default assert exit status only, with `-iterations 1 -stop 0.0` overriding two of its four parameters. The default also selects `-parzen_sigma 4.0`, whose end-to-end cycle (16) is open, so the shipped default rests on the one path with no oracle comparison yet |
+| 4 | `PLAN.md:180`, `:304`, `:315`; this file `:40` | **fixed** | `PLAN.md` was authoritative and never stated what `-V1.1` *is* — the four values appear only here, and it names the version only as a caveat about what "the default protocol" means. `parzen_sigma 4.0` has evidence in the PyTorch tree (`experiments/README.md`, "The histogram kernel": 1.71% against N3's 4.63% at SNR 20); `fwhm 0.1`, `iterations 1000` and `stop 1e-5` have none recorded anywhere, against PLAN §9's "every number published in `PLAN.md` or `TODO.md` must be reproducible from the committed code by a stated command" |
+| 5 | `test_driver_endtoend.cc:116-117` | **fixed** `9b7a9b5` | The cycle **could not distinguish `-legacy_rounding` on from off**: both runs go against the same oracle under the same bound and both print 1.840e-04, the effect being 5.114e-07 (PLAN §4), three orders below the printed precision. The test passes unchanged if the flag is a no-op — which is not hypothetical, since `9154eac` records that until it landed "every driver run to date has been the equivalent of `-nolegacy_rounding`" and nothing noticed |
+| 6 | `test_driver_endtoend.cc:69-76` | **fixed** `7967ffb` | `snprintf`'s return discarded into `cmd[1024]`, a fourth instance of item 21. A long `$TMPDIR` truncates the command and the test then reports a driver failure that did not occur |
 | 7 | this file `:70` vs `:318-320` | open | `:70` still carries "Record the legacy run as an oracle in cycle 14 — [ ]" while `:318-320` records that cycle 14 deliberately does not. The re-scoping is what was implemented; `:70` is the stale half |
+| 8 | `test_stopping.cc:56-64` vs `:89-101` | open | The two staged-threshold cases are labelled the wrong way round. `:56` calls `-stop 0.01 0.001` "the -V0.9 protocol" and concludes "with the shipped ordering the staged rule is therefore the first threshold alone". **V0.9 is `-stop 0.001 0.005`** (`nu_estimate.in:438`, `'np:stop:0.9' => '0.001 0.005'`) — the *looser*-second ordering, which is the case at `:89-101`, the one where the second threshold does fire once its stage is reached and does change the outcome. Both orderings are asserted correctly; only the attribution and the conclusion drawn from it are wrong |
 
 ### Order of work (2026-08-07)
 
@@ -361,14 +362,25 @@ reader: a wrong recorded measurement first, then a leaked file, then the missing
 then the documentation gaps.
 
 1. **Item 1 — fixed.** Documentation only.
-2. **Items 2 and 6.** Hoist `imp_of()`, `outdir()` and `run_driver()` (with a checked
-   `snprintf`) into `testing/n3pipeline/fixture.h` beside `must()`/`read_text()`/
-   `valid_steps()`, and convert all three driver tests. Closes items 21-23 of the 2026-08-06
-   pass in the same commit, which is the reason to do it here rather than as a later cleanup.
-3. **Item 5.** A third check in `test_driver_endtoend.cc` comparing the two driver outputs to
-   each other, bounded below by the 5.114e-07 cycle 6 measured. The bound is recorded in
-   advance, so this is not a fitted tolerance.
-4. **Items 4 and 3.** `PLAN.md` gains a `-V1.1` subsection under §7 stating the parameters and
-   the evidence for each; cycle 15's scope gains the default-protocol resolution, which is a
-   behavioural check needing no new bound. The assertion itself lands with cycle 15.
+2. **Items 2 and 6 — fixed, `7967ffb`.** `outdir()`, `temp_path()`, `imp_of()`,
+   `run_driver()` and `cleanup()` moved into `testing/n3pipeline/fixture.h` beside
+   `must()`/`read_text()`/`valid_steps()`, guarded by `#ifdef N3_DRIVER_BIN`; all three
+   driver tests converted; `run_driver()` composes with `std::string`, so the four
+   discarded-`snprintf` buffers are gone. Closes items 21-23 of the 2026-08-06 pass in the
+   same commit. `make && ctest`: 37/37, no new warnings, and `$TMPDIR` holds no `n3cxx_*`
+   files after a full run — which is the check the old cleanup failed.
+3. **Item 5 — fixed, `9b7a9b5`.** Two checks added, neither bound fitted: the two runs must
+   differ at all (the property an inert flag fails), and the difference must stay under the
+   same 2.683e-04 round-trip quantum the cycle already derives. Measured: `-legacy_rounding`
+   moves the output **8.740e-07** end to end at one iteration, the same order as the
+   5.114e-07 PLAN §4 records for the lookup-position component alone. The oracle margins are
+   unchanged at 1.840e-04; `n3cxx_driver_endtoend` is now 4 checks.
+4. **Item 4 — fixed; item 3 scoped into cycle 15.** `PLAN.md` §7 gains a "Protocol versions"
+   subsection: the three-column table, which values each version fills, and the evidence for
+   each of `-V1.1`'s four departures — `parzen_sigma 4.0` measured in
+   `experiments/README.md`, the other three recorded as shipped values and not as results.
+   Cycle 15's scope in `PLAN.md` §7 and `:28` above gains the version resolution, which is
+   behavioural and needs no bound. The assertion lands with cycle 15.
 5. **Item 7.** Reword `:70`.
+6. **Item 8.** Swap the two labels in `test_stopping.cc` and correct the conclusion; the
+   assertions themselves are right and do not move.
