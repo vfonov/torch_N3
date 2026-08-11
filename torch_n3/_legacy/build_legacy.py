@@ -108,6 +108,7 @@ LEGACY_SOURCES = [
 SHIM_SOURCES = [
     os.path.join(HERE, "n3_shim.cc"),
     os.path.join(HERE, "n3_field_shim.cc"),
+    os.path.join(HERE, "n3_spline_modern.cc"),
 ]
 
 #: Which LAPACK/BLAS to link, and where to find it.  Overridable, because

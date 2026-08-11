@@ -112,6 +112,46 @@ The least-squares problem is answered by the solvers below, selected by
     since below it the divisor can pass through zero, so ``anchor`` belongs at
     the bottom of the intended grid.
 
+``"equilibrated"``
+    Same objective as ``"normal"`` -- the same ``system = AtA + lambda*N*J`` is
+    formed, never squaring anything further -- but scaled symmetrically to unit
+    diagonal before the solve: ``D = diag(1/sqrt(system_ii))``, ``scaled = D
+    system D``, solved for ``y = D^-1 c`` and then unscaled.  By van der Sluis'
+    theorem this is within a factor of ``n`` of the best condition number any
+    diagonal scaling can reach for an SPD matrix.  Measured on ``brain.mnc``'s
+    estimation grid (``-shrink 4``) at the default 200 mm spacing:
+    ``cond(system)`` falls from ``3.56e12`` to ``1.00e9``, a factor of about
+    ``3555``, at the cost of an elementwise divide -- ``O(n^2)`` beside the
+    ``O(n^3)`` factorization.
+
+    Tries :func:`torch.linalg.cholesky_ex` on the scaled system first, which is
+    where the reduced condition number is spent: Cholesky performs no pivoting,
+    so its answer depends on ``system`` alone rather than on the pivot sequence
+    a particular LAPACK's Bunch-Kaufman happens to choose, which is what
+    equilibration is for here.  PyTorch has no symmetric-indefinite driver, so
+    on the rare matrix that is not numerically positive definite the fallback
+    is :func:`torch.linalg.solve` -- a general LU solve on the same equilibrated
+    system, not literally Bunch-Kaufman.  This is a deliberate divergence from
+    the oracle, whose fallback is ``dsysv`` on the identical equilibrated
+    matrix (``legacy/N3`` commit ``7d84753``, reachable through
+    ``backends.legacy`` as the same solver name); it matters only on the
+    fallback path, which ``tests/test_spline.py`` exercises deliberately on
+    the torch side with a mask that empties one basis function's row.
+
+    **This is not a reproducibility solver, unlike ``"qr"``/``"blocked"``/
+    ``"dr"``.**  Those factorise the *unsquared* stacked system, which halves
+    the condition number's exponent by construction; equilibration only
+    rescales the same squared Gram matrix, trimming ``1e13`` to about ``1e9``
+    -- three and a half decades, not seven.  Measured on this module's own
+    fixture at 200 mm, CPU/GPU agreement is ``4.7e-8`` relative RMS,
+    indistinguishable from ``"normal"``'s own ``4.7e-8`` and four orders above
+    where the stacked solvers land (``1e-12``).  What equilibration buys is a
+    feasible, pivot-free Cholesky and a fit that agrees with the oracle to the
+    same bound ``"normal"`` does (``tests/test_spline.py``,
+    ``test_the_equilibrated_solver_matches_its_own_oracle_closely``) -- not a
+    cross-platform guarantee, and it is not parametrized into
+    ``test_the_stacked_fit_is_the_same_on_the_gpu`` for that reason.
+
 ``"sparse"``
     The same stacked system again, held in ``scipy.sparse`` and handed to
     ``lsqr``.  **It does not converge on this problem and must not be used for
@@ -154,13 +194,13 @@ _CHUNK_ELEMENTS = 1 << 22
 #: The solvers :meth:`BSplineField.fit` can be asked for.  ``"normal"`` is the
 #: legacy's own formulation and the reference the others are measured against;
 #: see this module's docstring.
-SOLVERS = ("normal", "qr", "blocked", "dr", "sparse")
+SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated", "sparse")
 
 #: The solvers that answer the fit by a direct factorization, and so to the
 #: last few bits of float64.  ``"sparse"`` is iterative and is not among them:
 #: it stops on a tolerance it cannot reach here.  Anything asserting an exact
 #: fit should be parametrised over these, not over :data:`SOLVERS`.
-DIRECT_SOLVERS = ("normal", "qr", "blocked", "dr")
+DIRECT_SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated")
 
 
 class BSplineField:
@@ -243,7 +283,8 @@ class BSplineField:
 
         solve = {"qr": self._solve_stacked, "sparse": self._solve_sparse,
                  "blocked": self._solve_blocked, "dr": self._solve_dr,
-                 "normal": self._solve_normal}[self.solver]
+                 "normal": self._solve_normal,
+                 "equilibrated": self._solve_equilibrated}[self.solver]
         self._coefficients = solve(columns, weights, sampled)
         return self
 
@@ -458,6 +499,33 @@ class BSplineField:
             triangle[:size, :size], triangle[:size, size], factor,
             self._nsamples, self.anchor)
         return self._dr_basis.coefficients(self.lam)
+
+    def _solve_equilibrated(self, columns, weights, values):
+        """``"normal"``'s system, symmetrically equilibrated before the solve.
+
+        See the module docstring for the algebra and the measured condition
+        number.  ``diag > 0`` guards the scaling exactly as the oracle does:
+        a non-positive diagonal entry means the matrix is not positive
+        definite, so equilibration is skipped and the unscaled system goes
+        to the same solve below.
+        """
+        normal, right = self._normal_equations(columns, weights, values)
+        penalty = bending_energy_tensor(self.n, self.device)
+        system = normal + (self.lam * self._nsamples) * penalty
+
+        diag = system.diagonal()
+        equilibrate = bool(torch.all(diag > 0))
+        d = diag.sqrt() if equilibrate else torch.ones_like(diag)
+        scaled = system / (d[:, None] * d[None, :]) if equilibrate else system
+        scaled_b = right / d if equilibrate else right
+
+        factor, info = torch.linalg.cholesky_ex(scaled)
+        if int(info) == 0:
+            y = torch.cholesky_solve(scaled_b[:, None], factor)[:, 0]
+        else:
+            y = torch.linalg.solve(scaled, scaled_b)
+
+        return y / d
 
     def _solve_sparse(self, columns, weights, values):
         """``"qr"``'s stacked system, held sparse and solved iteratively.

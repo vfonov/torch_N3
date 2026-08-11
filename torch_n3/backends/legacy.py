@@ -195,15 +195,24 @@ class BSplineField:
     ``.imp`` mapping file performs between ``nu_estimate`` and ``nu_evaluate``.
     """
 
+    #: solver name -> the `solver` int n3_spline_create_on_domain switches on.
+    _SOLVERS = {"normal": 0, "equilibrated": 1}
+
     def __init__(self, grid, distance=200.0, lam=1e-7, domain_world=None,
                  solver="normal"):
-        # The oracle has one solver: the normal equations, as TBSpline.cc
-        # forms them.  Requesting the stacked QR would return the normal
-        # equations' answer instead, so raise rather than mislead.
-        if solver != "normal":
+        # The oracle solves the normal equations, either as TBSpline.cc's own
+        # solveSymmetricSystem forms them ("normal"), or via
+        # TBSplineVolumeModern (n3_spline_modern.cc): symmetric equilibration
+        # then Cholesky, falling back to dsysv on the equilibrated system if
+        # it isn't numerically SPD ("equilibrated", legacy/N3 commit
+        # 7d84753). Both minimise the identical objective; nothing else is
+        # implemented here, so any other name would silently return the
+        # normal equations' answer under a different label.
+        if solver not in self._SOLVERS:
             raise ValueError(
-                "the legacy backend only solves the normal equations; "
-                "solver=%r is implemented by the torch backend alone" % solver)
+                "the legacy backend only has solver in %r; "
+                "solver=%r is implemented by the torch backend alone"
+                % (tuple(self._SOLVERS), solver))
         self.grid = grid
         self.solver = solver
         self.distance = float(distance)
@@ -228,7 +237,8 @@ class BSplineField:
             ffi.new("double[3]", [0.0, 0.0, 0.0]),
             ffi.new("double[3]", [float(s) for s in grid.step]),
             ffi.new("int[3]", [int(n) for n in grid.shape]),
-            self.distance, self.lam, 1 if allocate else 0)
+            self.distance, self.lam, 1 if allocate else 0,
+            self._SOLVERS[self.solver])
 
     def fit(self, values, mask=None, subsample=1):
         """Fit to ``values``; only voxels where ``mask`` is true contribute."""

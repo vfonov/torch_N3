@@ -16,6 +16,7 @@
 #include "DHistogram.h"
 #include "WHistogram.h"
 #include "TBSpline.h"
+#include "n3_spline_modern.h"
 
 /* Defined in legacy/N3/src/SharpenHist/sharpen_hist.cc, which we compile
  * alongside this file (with main() renamed out of the way). */
@@ -136,7 +137,8 @@ void *n3_spline_create(const double *start, const double *step,
 
 void *n3_spline_create_on_domain(const double *domain, const double *start,
                                  const double *step, const int *count,
-                                 double distance, double lambda, int allocate)
+                                 double distance, double lambda, int allocate,
+                                 int solver)
 {
   DblMat d(3, 2);
   for (int i = 0; i < 3; i++) {
@@ -145,8 +147,11 @@ void *n3_spline_create_on_domain(const double *domain, const double *start,
   }
 
   n3_spline_handle *h = new n3_spline_handle;
-  h->spline = new TBSplineVolume(d, start, step, count, distance, lambda,
-                                 allocate ? TRUE : FALSE);
+  h->spline = solver
+      ? n3_make_modern_spline(d, start, step, count, distance, lambda,
+                              allocate ? TRUE : FALSE)
+      : new TBSplineVolume(d, start, step, count, distance, lambda,
+                           allocate ? TRUE : FALSE);
   for (int i = 0; i < 3; i++)
     h->count[i] = count[i];
   return (void *) h;

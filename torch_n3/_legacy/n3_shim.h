@@ -68,10 +68,18 @@ void  n3_spline_free(void *handle);
  * legacy splines use.  This is how spline_smooth builds the basis and how
  * evaluate_field rebuilds it on a different grid: the coefficients belong to
  * the domain, not to the sampling.  allocate != 0 is needed to fit; pass 0
- * when the spline is only going to be evaluated. */
+ * when the spline is only going to be evaluated.
+ *
+ * solver selects how fit() solves the penalised normal equations: 0 is the
+ * original TBSpline::solveSymmetricSystem (Bunch-Kaufman via dsysv_, N3's
+ * own formulation), 1 is TBSplineVolumeModern (n3_spline_modern.cc):
+ * symmetric equilibration then Cholesky, falling back to dsysv_ on the
+ * equilibrated system if it is not numerically positive definite -- the
+ * n3pipeline_core path from legacy/N3 commit 7d84753. */
 void *n3_spline_create_on_domain(const double *domain, const double *start,
                                  const double *step, const int *count,
-                                 double distance, double lambda, int allocate);
+                                 double distance, double lambda, int allocate,
+                                 int solver);
 
 /* Install coefficients obtained from another spline over the same domain. */
 int n3_spline_set_coefficients(void *handle, const double *coef, int n);

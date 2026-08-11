@@ -98,6 +98,74 @@ def test_fit_matches_the_legacy_spline(chunk, bumpy, distance, subsample,
     assert_close(fitted, oracle.evaluate(), atol=1e-6 * span(fitted))
 
 
+@pytest.mark.parametrize("distance", [200.0, 100.0, 50.0])
+def test_the_equilibrated_solver_matches_its_own_oracle_closely(chunk, bumpy,
+                                                                 distance):
+    """``solver="equilibrated"`` against the oracle's own equilibrated path.
+
+    ``test_fit_matches_the_legacy_spline`` above compares every direct solver
+    against the oracle's *normal*-equations answer -- the same objective,
+    reached by a different algorithm on each side.  Here both sides run the
+    same algorithm instead (symmetric equilibration, then Cholesky with a
+    ``dsysv`` fallback -- ``legacy/N3`` commit ``7d84753``,
+    ``torch_n3/_legacy/n3_spline_modern.cc``).
+
+    That does *not* land materially closer, and the bound is the same
+    ``1e-6 * span`` :func:`test_fit_matches_the_legacy_spline` uses rather
+    than a tighter one: equilibration trims ``cond(system)`` by three and a
+    half decades (``1e13`` to about ``1e9``, see the module docstring), not
+    down to where float64 rounding stops mattering, so two independent
+    Cholesky implementations on the same ~1e9-conditioned matrix still differ
+    by close to what two independent solves of the *unscaled* matrix do --
+    measured here at up to ``1.6e-7 * span`` at 200 mm, against ``"normal"``'s
+    own ``1.6e-7 * span`` on the same fixture.  What this test checks is that
+    the two sides equilibrate the identical matrix and fall back identically,
+    not that same-algorithm agreement buys precision equilibration itself
+    does not provide.
+    """
+    values, inside = bumpy
+
+    port = blocks.BSplineField(chunk, distance, 1e-7, solver="equilibrated").fit(
+        values, inside)
+    oracle = legacy.BSplineField(chunk, distance, 1e-7,
+                                 solver="equilibrated").fit(values, inside)
+
+    fitted = port.evaluate()
+    assert_close(fitted, oracle.evaluate(), atol=1e-6 * span(fitted))
+
+
+def test_the_equilibrated_solver_falls_back_off_the_happy_path():
+    """Both guards in ``_solve_equilibrated``, exercised deliberately.
+
+    ``TBSplineVolumeModern::fit()`` (``n3_spline_modern.cc``) treats a
+    non-positive diagonal entry as evidence the matrix is not positive
+    definite and skips scaling rather than dividing by a non-positive
+    ``sqrt``; if Cholesky still fails on whatever it is handed, it falls back
+    to a general solve.  A real fit's diagonal is ``AtA_ii + lam*N*J_ii``, and
+    ``J_ii`` is positive for every basis function actually in the domain
+    (``test_bending_energy_is_a_gram_matrix``), so a masked-out region alone
+    cannot produce a non-positive diagonal entry to exercise this against --
+    confirmed by trying it before writing this test.  Bypassing ``fit()`` and
+    handing ``_solve_equilibrated`` a matrix built to have one is the direct
+    way to exercise both branches without fabricating a degenerate fit.
+    """
+    grid = unit_grid((6, 6, 6))
+    fitted = blocks.BSplineField(grid, 2.0, 1e-7, solver="equilibrated")
+    size = int(np.prod(fitted.n))
+
+    # Indefinite: a negative diagonal entry, so the guard skips scaling, and
+    # Cholesky must fail on it (there is no real square root of a negative
+    # eigenvalue), so the fallback runs too.
+    system = torch.eye(size, dtype=torch.float64)
+    system[0, 0] = -1.0
+    right = torch.arange(size, dtype=torch.float64)
+    fitted._normal_equations = lambda *a, **k: (system, right)
+
+    solved = fitted._solve_equilibrated(None, None, None)
+
+    assert_close(solved, torch.linalg.solve(system, right), atol=1e-9)
+
+
 def test_evaluating_on_a_finer_grid_matches_the_legacy(chunk, bumpy):
     """Fitted coarse, evaluated fine -- the round trip through the ``.imp`` file."""
     values, inside = bumpy
@@ -213,6 +281,15 @@ def test_the_stacked_fit_is_the_same_on_the_gpu(chunk, bumpy, distance, solver):
     accumulated over the fit, ``sqrt(N) * eps`` with ``N`` around ``1e5``, which
     is ``1e-13``; ``1e-11`` leaves two decades and is still two orders below
     where the normal equations sit.
+
+    ``"equilibrated"`` is deliberately not parametrized here: it is still a
+    solve of the squared, ~1e9-conditioned Gram matrix, only rescaled to unit
+    diagonal, not the unsquared stacked system ``"qr"``/``"blocked"``/``"dr"``
+    factorise instead -- see the module docstring.  Measured at 200 mm on this
+    fixture, its CPU/GPU relative RMS is ``4.7e-8``, indistinguishable from
+    ``"normal"``'s own ``4.7e-8`` and four orders above this test's bound: the
+    diagonal scaling buys Cholesky feasibility and a smaller residual, not
+    cross-platform reproducibility.
     """
     values, inside = bumpy
 
