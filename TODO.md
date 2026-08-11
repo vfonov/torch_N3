@@ -76,6 +76,31 @@ contiguity and no-voxel-scaling assumptions every bulk loop rests on instead of 
 and fails loudly. The per-decision citations to the Perl line (`:1557`, `:499-505`, `:316-325`,
 `fieldIO.cc:120-133`) are what make these reviews checkable and must not be relaxed.
 
+## External BLAS/LAPACK for `legacy/EBTKS`/`legacy/N3`'s own build (PLAN §10)
+
+Separate from the `nu_correct_cxx` work above and orthogonal to it — a build-system item, not
+a change to a corrected voxel. Tracked in full in `/app/TODO_BLAS.md`; `/app/PLAN.md` §10 is
+the design. State at 2026-08-07:
+
+- [x] Design, source split, four-value `EBTKS_BLAS_BACKEND` switch (`bundled` default,
+  `lapack`, `lapacke`, `cblas`), configure-time validation, all four in
+  `legacy/EBTKS/CMakeLists.txt`. `bundled` verified bit-identical to the pre-change archive;
+  `legacy/N3/CMakeLists.txt` propagates the choice on both the standalone
+  (`FIND_PACKAGE(EBTKS)`) and superbuild (`MINC_TOOLKIT_BUILD`) paths.
+- [x] `lapack` and `cblas` built, linked, and measured against `bundled` on this machine
+  (`openblas`; `cblas` also against `libgslcblas`): one-iteration `spline_smooth` relative RMS
+  9.77e-08 (`openblas`, both backends) / exactly 0 (`gslcblas`, explained — see
+  `TODO_BLAS.md` task 9). `ctest` 37/37 under each.
+- [~] `lapacke` (`legacy/EBTKS/shim/dsysv_lapacke.c`) implemented but **not buildable on this
+  machine** — no system `lapacke.h`/`LAPACKE_*` (Debian's OpenBLAS ships `NO_LAPACKE=1`).
+  Verification deferred to a superbuild that builds OpenBLAS itself.
+- [ ] `nu_reference_1` observation under a non-`bundled` backend with `PATH` pointed at the
+  build tree — not run.
+- [ ] Task 8's `ExternalProject_Add` argument lists — not written; no superbuild driver
+  exists in this tree yet to write them against.
+- `/app/legacy/_install` is unaffected: default stays `bundled`, confirmed byte-identical
+  before and after this work.
+
 ## Standing risk
 
 **The three round-trip comparisons share one bound and are tight.** Cycles 11, 12 and 14 sit

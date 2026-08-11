@@ -477,12 +477,25 @@ skipped, say so; do not describe an unverified claim as verified. `legacy/N3` an
 ## 10. External BLAS/LAPACK for `legacy/EBTKS`/`legacy/N3`'s own build
 
 Separate from the `nu_correct_cxx` work above, and orthogonal to it: let this tree's build
-(`legacy/EBTKS` + `legacy/N3`, installing to `/app/legacy/_install`) link a BLAS/LAPACK
-supplied at build time, compiling the bundled `clapack/` sources only when none is supplied.
-Planning only — no change made yet. `/opt/minc/1.9.18.13`, `/app/torch_n3` and
-`legacy/N3/src` stay untouched by this item; §8's "Untouched: … `legacy/EBTKS`" line belongs
-to the `nu_correct_cxx` feature above and does not apply here — this item edits
-`legacy/EBTKS/CMakeLists.txt` and `legacy/N3/CMakeLists.txt`, deliberately.
+(`legacy/EBTKS` + `legacy/N3`, installing to `/app/legacy/_install`) link a BLAS/LAPACK named
+at configure time, compiling the bundled `clapack/` sources only when none is named.
+`/opt/minc/1.9.18.13`, `/app/torch_n3` and `legacy/N3/src` stay untouched by this item; §8's
+"Untouched: … `legacy/EBTKS`" line belongs to the `nu_correct_cxx` feature above and does not
+apply here — this item edits `legacy/EBTKS/CMakeLists.txt`, `legacy/N3/CMakeLists.txt`,
+`EBTKSConfig.cmake.in` and `UseEBTKS.cmake.in`, deliberately, plus a new
+`legacy/EBTKS/shim/` directory. Tracked task by task in `/app/TODO_BLAS.md`.
+
+**Governing rule: the choice is explicit and is never inferred.** Nothing is searched for, no
+capability is probed for in order to pick a default, and a named backend that cannot be
+satisfied is a configure-time error rather than a fallback to `bundled`. The destination is a
+**superbuild that builds OpenBLAS itself**, and that rules detection out specifically:
+a probe can resolve against a *system* OpenBLAS and silently ignore the one the superbuild
+just compiled, with no symptom but a linked path. Four named values, not a toggle:
+`EBTKS_BLAS_BACKEND = bundled | lapack | lapacke | cblas`, default `bundled`. The design
+below was originally a single opt-in toggle (link one named library, or build bundled); it is
+kept, not deleted, as what backend `lapack` now is — its ABI-safety argument and its
+`EBTKSConfig.cmake` propagation analysis are unchanged and are cited by the other three
+backends. `lapacke` and `cblas` are additions.
 
 ### Current state
 
@@ -521,6 +534,29 @@ to the `nu_correct_cxx` feature above and does not apply here — this item edit
   fail to link unless `legacy/N3/CMakeLists.txt` is separately told what to link instead.
   The choice of LAPACK cannot be made local to `EBTKS/CMakeLists.txt`; it has to be
   threaded through the exported `EBTKSConfig.cmake` to `legacy/N3/CMakeLists.txt`.
+
+### The superbuild hooks already exist
+
+Both nested repositories are already written to be built inside a superbuild, and the BLAS
+choice has to travel the paths that arrangement creates:
+
+- `EBTKS/CMakeLists.txt:15,38` and `N3/CMakeLists.txt:11,41-44` branch on
+  `MINC_TOOLKIT_BUILD`: under it, `PROJECT()` is not called and **`FIND_PACKAGE(EBTKS)` is
+  not called either**, so `legacy/N3` never reads `EBTKSConfig.cmake` in that mode.
+  Everything it needs arrives as `-D` arguments from the outer project. This means the
+  standalone propagation design below (exporting through `EBTKSConfig.cmake.in`) is
+  necessary but not sufficient: `legacy/N3/CMakeLists.txt` must also declare
+  `EBTKS_LAPACK_LIBRARIES`/`EBTKS_LAPACK_LIBRARY_DIRS` as its own cache entries, defaulting
+  empty, for the outer project to set directly.
+- `EBTKS/CMakeLists.txt:229-232` strips `SUPERBUILD_STAGING_PREFIX` out of
+  `EBTKS_INCLUDE_DIRS_CONFIG` and `EBTKS_LIBRARY_DIRS_CONFIG` before configuring the
+  *installed* copy of `EBTKSConfig.cmake` — the newly exported LAPACK variables need the
+  same treatment, or the installed config names a staging directory that no longer exists
+  once the superbuild finishes.
+- `N3/CMakeLists.txt:48-70` already repairs `LIBMINC_LIBRARIES`/`VOLUME_IO_LIBRARIES`
+  entries that are absolute paths to files which no longer exist, by name against
+  `LIBMINC_LIBRARY_DIRS`. Precedent in this tree for absolute library paths not surviving a
+  relocation, and the model to follow if the same treatment is wanted for LAPACK.
 
 ### Precedent already in this repository
 
@@ -564,62 +600,109 @@ measured; document it as unsupported rather than silently assume it works.
 
 ### Design
 
-New CMake cache variables in `legacy/EBTKS/CMakeLists.txt`, both empty by default, which
-reproduces the current `libEBTKS.a` byte for byte:
+Four cache variables in `legacy/EBTKS/CMakeLists.txt`. The first three reproduce the
+original two-variable toggle described in earlier drafts of this section (`EBTKS_LAPACK_LIBRARIES`,
+`EBTKS_LAPACK_LIBRARY_DIRS`), which is retained unchanged as what selects backend `lapack`;
+the fourth (`EBTKS_LAPACK_INCLUDE_DIRS`) is new, needed only by `lapacke`/`cblas`:
 
-- `EBTKS_LAPACK_LIBRARIES` — `;`/space-separated library names or full paths, e.g.
-  `openblas` (this machine, verified above — one name, since Debian's OpenBLAS package
-  merges LAPACK into the same `.so`), the more portable `lapack;blas`, or an absolute path
-  to `libmkl_rt.so`. Non-empty is the only trigger: no `FIND_PACKAGE(BLAS)`/
-  `FIND_PACKAGE(LAPACK)` autodetection (see "Rejected alternatives").
-- `EBTKS_LAPACK_LIBRARY_DIRS` — optional, added via `LINK_DIRECTORIES` for bare names.
+```
+EBTKS_BLAS_BACKEND        = bundled | lapack | lapacke | cblas      (default: bundled)
+EBTKS_LAPACK_LIBRARIES    = libraries to link; absolute paths under a superbuild
+EBTKS_LAPACK_LIBRARY_DIRS = extra -L, for bare -l names
+EBTKS_LAPACK_INCLUDE_DIRS = extra -I for lapacke.h / cblas.h
+```
 
-Naming mirrors `N3_LAPACK_LIBS`/`N3_LAPACK_LIB_DIRS` deliberately — same mechanism, same
-names, already proven elsewhere in this repository.
+| backend | compiled from `clapack/` | shim | `dsysv_` resolved by |
+|---|---|---|---|
+| `bundled` (default) | all 19 | none | `clapack/dsysv.c` |
+| `lapack` | none | none | the named library, directly |
+| `lapacke` | none | `shim/dsysv_lapacke.c` | shim → `LAPACKE_dsysv_work` |
+| `cblas` | the 11 LAPACK/support files | `shim/blas_cblas.c` | `clapack/dsysv.c`, on the named BLAS |
+
+`EBTKS_BLAS_BACKEND` defaulting to `bundled` reproduces the current `libEBTKS.a` byte for
+byte with no flags passed, same as the original toggle's empty-string default did.
+Non-`bundled` is the only trigger for anything — no `FIND_PACKAGE(BLAS)`/
+`FIND_PACKAGE(LAPACK)` autodetection (see "Rejected alternatives"). Naming a backend is
+strict: a named backend whose library or header cannot be resolved is a `FATAL_ERROR`
+naming what was missing, never a silent fall-back to `bundled` — the failure mode a
+superbuild that just spent its build time on OpenBLAS must not hit silently.
 
 `legacy/EBTKS/CMakeLists.txt`:
 
 ```cmake
+SET(EBTKS_BLAS_BACKEND "bundled" CACHE STRING
+    "Which LAPACK/BLAS legacy/EBTKS and legacy/N3 link: bundled (default, compiles \
+clapack/), lapack (link a named Fortran-ABI library directly), lapacke (link via a \
+LAPACKE C shim), or cblas (bundled LAPACK over a named CBLAS shim).")
+SET_PROPERTY(CACHE EBTKS_BLAS_BACKEND PROPERTY STRINGS bundled lapack lapacke cblas)
 SET(EBTKS_LAPACK_LIBRARIES "" CACHE STRING
-    "External LAPACK/BLAS to link, e.g. 'lapack;blas' or an absolute path to \
-libmkl_rt.so. Empty (default) builds the bundled clapack/ sources instead.")
+    "External LAPACK/BLAS to link when EBTKS_BLAS_BACKEND != bundled, e.g. 'openblas' \
+or an absolute path to libmkl_rt.so.")
 SET(EBTKS_LAPACK_LIBRARY_DIRS "" CACHE STRING
     "Extra -L directories for EBTKS_LAPACK_LIBRARIES, when its entries are bare names.")
+SET(EBTKS_LAPACK_INCLUDE_DIRS "" CACHE STRING
+    "Extra -I directories for lapacke.h/cblas.h, needed by lapacke and cblas.")
 
-IF(EBTKS_LAPACK_LIBRARIES)
+IF(NOT EBTKS_BLAS_BACKEND MATCHES "^(bundled|lapack|lapacke|cblas)$")
+  MESSAGE(FATAL_ERROR "EBTKS_BLAS_BACKEND must be one of bundled, lapack, lapacke, cblas")
+ENDIF()
+IF(NOT EBTKS_BLAS_BACKEND STREQUAL "bundled" AND NOT EBTKS_LAPACK_LIBRARIES)
+  MESSAGE(FATAL_ERROR "EBTKS_BLAS_BACKEND=${EBTKS_BLAS_BACKEND} requires EBTKS_LAPACK_LIBRARIES")
+ENDIF()
+
+SET(EBTKS_CLAPACK_BLAS_SRCS
+  clapack/dcopy.c clapack/dgemm.c clapack/dgemv.c clapack/dger.c
+  clapack/dscal.c clapack/dswap.c clapack/dsyr.c  clapack/idamax.c)
+SET(EBTKS_CLAPACK_LAPACK_SRCS
+  clapack/dlasyf.c clapack/dsysv.c  clapack/dsytf2.c clapack/dsytrf.c
+  clapack/dsytrs.c clapack/ieeeck.c clapack/ilaenv.c clapack/lsame.c
+  clapack/s_cmp.c  clapack/s_copy.c clapack/xerbla.c)
+
+IF(EBTKS_BLAS_BACKEND STREQUAL "bundled")
+  LIST(APPEND EBTKS_LIB_SRCS ${EBTKS_CLAPACK_BLAS_SRCS} ${EBTKS_CLAPACK_LAPACK_SRCS})
+ELSEIF(EBTKS_BLAS_BACKEND STREQUAL "cblas")
+  LIST(APPEND EBTKS_LIB_SRCS ${EBTKS_CLAPACK_LAPACK_SRCS} shim/blas_cblas.c)
+ELSEIF(EBTKS_BLAS_BACKEND STREQUAL "lapacke")
+  LIST(APPEND EBTKS_LIB_SRCS shim/dsysv_lapacke.c)
+ENDIF()
+# lapack: nothing added, dsysv_ resolved from EBTKS_LAPACK_LIBRARIES directly
+
+IF(NOT EBTKS_BLAS_BACKEND STREQUAL "bundled")
   IF(EBTKS_LAPACK_LIBRARY_DIRS)
     LINK_DIRECTORIES(${EBTKS_LAPACK_LIBRARY_DIRS})
   ENDIF()
-ELSE()
-  LIST(APPEND EBTKS_LIB_SRCS
-    clapack/dcopy.c  clapack/dgemm.c  clapack/dgemv.c  clapack/dger.c
-    clapack/dlasyf.c clapack/dscal.c  clapack/dswap.c  clapack/dsyr.c
-    clapack/dsysv.c  clapack/dsytf2.c clapack/dsytrf.c clapack/dsytrs.c
-    clapack/idamax.c clapack/ieeeck.c clapack/ilaenv.c clapack/lsame.c
-    clapack/s_cmp.c  clapack/s_copy.c clapack/xerbla.c)
+  IF(EBTKS_LAPACK_INCLUDE_DIRS)
+    INCLUDE_DIRECTORIES(${EBTKS_LAPACK_INCLUDE_DIRS})
+  ENDIF()
 ENDIF()
 ...
 ADD_LIBRARY(EBTKS ${LIBRARY_TYPE} ${EBTKS_LIB_SRCS})
-IF(EBTKS_LAPACK_LIBRARIES)
+IF(NOT EBTKS_BLAS_BACKEND STREQUAL "bundled")
   TARGET_LINK_LIBRARIES(EBTKS PUBLIC ${EBTKS_LAPACK_LIBRARIES})
 ENDIF()
 ```
 
 The 19 `clapack/*.c` lines move out of the unconditional literal `EBTKS_LIB_SRCS` list
-(`CMakeLists.txt:171-189`) into the `ELSE()` branch above; nothing else in the file
-changes. The `TARGET_LINK_LIBRARIES(EBTKS PUBLIC …)` is defensive rather than load-bearing:
-`EBTKS` is a **static** library, so it records an interface dependency and embeds nothing,
-and no source in `EBTKS_LIB_SRCS` calls LAPACK at all ("Current state"), so the one in-tree
-consumer (`EBTKS/testing/ebtks_test_fft`, an FFT test, reached through
-`LINK_LIBRARIES(EBTKS)` — a target name, so interface deps do propagate) does not actually
-need it. Keep it so that a future EBTKS source calling LAPACK links without a second fix.
+(`CMakeLists.txt:171-189`) into the two split lists above, in the same order, so archive
+member order does not move for the `bundled` case. `TARGET_LINK_LIBRARIES(EBTKS PUBLIC …)`
+is defensive rather than load-bearing under `lapack`/`lapacke`/`cblas` for the same reason
+it was under the original toggle: `EBTKS` is a **static** library, so it records an
+interface dependency and embeds nothing, and no source in `EBTKS_LIB_SRCS` calls LAPACK at
+all ("Current state"), so the one in-tree consumer (`EBTKS/testing/ebtks_test_fft`, an FFT
+test, reached through `LINK_LIBRARIES(EBTKS)` — a target name, so interface deps do
+propagate) does not actually need it. Keep it so a future EBTKS source calling LAPACK links
+without a second fix.
+
+`EBTKS_LAPACK_INCLUDE_DIRS` is consumed only inside `legacy/EBTKS`: the `lapacke`/`cblas`
+shims are the only translation units that include `lapacke.h`/`cblas.h`, so it is not
+exported to `legacy/N3` (see "Propagate the choice to `legacy/N3`" below).
 
 Export the decision through `EBTKSConfig.cmake.in`/`UseEBTKS.cmake.in`. **Two** variables
 are required, not one, and both must be exported for the same reason `EBTKS_LIBRARIES` and
 `EBTKS_LIBRARY_DIRS` both already are — a bare `-l` name needs its `-L` alongside it:
 
 ```
-set(EBTKS_LAPACK_LIBRARIES    "@EBTKS_LAPACK_LIBRARIES_CONFIG@")     # empty if EBTKS bundled its own
+set(EBTKS_LAPACK_LIBRARIES    "@EBTKS_LAPACK_LIBRARIES_CONFIG@")     # empty under bundled
 set(EBTKS_LAPACK_LIBRARY_DIRS "@EBTKS_LAPACK_LIBRARY_DIRS_CONFIG@")
 ```
 
@@ -633,6 +716,12 @@ the linker's job, and there is no supported API that would do it. Passing absolu
 convention, but the build must not depend on it. For the `openblas` case on this machine
 neither is needed: `/usr/lib/x86_64-linux-gnu` is a default linker search path, so
 `EBTKS_LAPACK_LIBRARY_DIRS` stays empty.
+
+**Under `MINC_TOOLKIT_BUILD`, exporting through `EBTKSConfig.cmake.in` is not enough** — see
+"The superbuild hooks already exist" above. `legacy/N3/CMakeLists.txt` must declare
+`EBTKS_LAPACK_LIBRARIES`/`EBTKS_LAPACK_LIBRARY_DIRS` as its own cache entries (empty
+default) so the outer superbuild project can set them directly, alongside
+`EBTKS_LIBRARIES`/`EBTKS_USE_FILE`, which it already passes that way.
 
 `legacy/N3/CMakeLists.txt` needs exactly one line changed, extending the existing
 directory-wide link at `:155`:
@@ -649,7 +738,28 @@ directory-wide link list, every target added afterward (`evaluate_field`,
 edits to `legacy/N3/testing/CMakeLists.txt`.
 
 Nothing in `legacy/N3/src` or `legacy/EBTKS/{src,templates,include}` changes; no
-re-vendoring of `torch_n3/_legacy/n3/` or `torch_n3/_legacy/ebtks/` is triggered.
+re-vendoring of `torch_n3/_legacy/n3/` or `torch_n3/_legacy/ebtks/` is triggered. The two
+shims (`legacy/EBTKS/shim/dsysv_lapacke.c`, `legacy/EBTKS/shim/blas_cblas.c`) are new
+standalone translation units, resolved against `TBSpline.cc`'s existing `extern "C"`
+declarations at link time — no header either file includes changes.
+
+CBLAS has no call site of its own anywhere in either tree ("Current state" above): the
+`cblas` backend does not remove LAPACK from the build, it substitutes the eight BLAS
+routines *underneath* the bundled `clapack/dsysv.c` and its LAPACK call tree. "Use system
+CBLAS" therefore means exactly that substitution, not a LAPACK-free build — only `lapack`
+and `lapacke` remove `clapack/` entirely.
+
+**The eight routines this backend substitutes are not called by their plain f2c names.**
+`clapack/blaswrap.h`, included by every bundled `clapack/*.c` file unless `NO_BLAS_WRAP` is
+defined (nothing in this tree defines it), `#define`s `dcopy_ dgemm_ dgemv_ dger_ dscal_
+dswap_ dsyr_ idamax_` to `EBTKS_dcopy EBTKS_dgemm EBTKS_dgemv EBTKS_dger EBTKS_dscal
+EBTKS_dswap EBTKS_dsyr EBTKS_idamax` before `dsytrf.c`/`dsytf2.c`/`dlasyf.c`/`dsytrs.c`
+reference them — so that this exact substitution (a real BLAS/LAPACK linked alongside the
+bundled one) does not collide on the plain names. `dsysv_` is deliberately left unrenamed,
+being the one symbol called from outside `clapack/` at all. Confirmed with `nm` on the
+bundled archive: the eight BLAS symbols are defined as `EBTKS_dcopy`, `EBTKS_dgemm`, etc.
+`shim/blas_cblas.c` defines the `EBTKS_`-prefixed names and does not include
+`blaswrap.h` itself.
 
 ### Rejected alternatives
 
@@ -660,15 +770,21 @@ re-vendoring of `torch_n3/_legacy/n3/` or `torch_n3/_legacy/ebtks/` is triggered
   happens to be installed, silently — this is the tree whose own `_install` build backs
   `nu_correct_cxx`'s comparisons against the Perl oracle (§5-§7 above), and `CLAUDE.md`'s
   "Test tolerances" section is explicit that behaviour must not change without a
-  deliberate, measured, recorded step. Opt-in only keeps `cmake ..` with no extra flags
-  byte-for-byte what it is today.
-- **A `dsysv_` ABI adapter** (converting the 8-byte f2c `integer`/no-hidden-length call
-  to a real Fortran ABI). Considered because of the width and hidden-argument
-  differences, but the checked-in measurement in `README.md`/`PROBLEMS.md` §8 (above)
-  shows the direct, unmodified call already works correctly against real system LAPACK.
-  Adding indirection would solve an already-solved problem, and — because it would have
-  to live in or beside `TBSpline.cc` — would trigger the re-vendoring `CLAUDE.md`
-  requires for any edit to a file `torch_n3/_legacy/n3/` mirrors, for no benefit.
+  deliberate, measured, recorded step. Named selection keeps `cmake ..` with no extra
+  flags byte-for-byte what it is today, which autodetection at any default cannot.
+- **A `dsysv_` ABI adapter converting the 8-byte f2c call to a real Fortran ABI was
+  rejected here** on the grounds that "it would have to live in or beside `TBSpline.cc`"
+  and so would trigger the re-vendoring `CLAUDE.md` requires for any edit to a file
+  `torch_n3/_legacy/n3/` mirrors. **That reasoning was false and is retracted.** `dsysv_`
+  is resolved at link time, not compiled into `TBSpline.cc`'s translation unit, so an
+  adapter is a standalone TU that can live anywhere the linker can find it —
+  `legacy/EBTKS/shim/`, in this design. `legacy/N3/src` is untouched by it. The adapter is
+  now implemented, as backend `lapacke` (`shim/dsysv_lapacke.c`, via `LAPACKE_dsysv_work`)
+  — see `/app/TODO_BLAS.md` task 5. The checked-in 3.1e-11 measurement that motivated the
+  original rejection is not itself wrong: it shows the *unmodified* call already works, which
+  is why `lapack` (no adapter) is implemented too and lands first. The two are not
+  alternatives to each other; a superbuild picks between them per "Why `lapack` and
+  `lapacke` are both implemented" in `/app/TODO_BLAS.md`.
 
 ### Verification, once implemented
 
@@ -696,41 +812,52 @@ checked:
    comparison at 1e-4 may therefore fail under an external LAPACK **without anything
    being wrong**, and per `CLAUDE.md` widening 1e-4 is not an available remedy.
 
-So the gate is block-level, per `CLAUDE.md`'s "constrain blocks rather than pipelines":
+So the gate is block-level, per `CLAUDE.md`'s "constrain blocks rather than pipelines", and
+is per-backend — a backend with no measurement is not a closed item:
 
-- Default build, no new flags — the only place a strict identity is claimed, and it is
-  claimed strictly: `ar t libEBTKS.a` lists the same 19 `clapack` object members as today,
-  and the whole archive should be bit-identical to a pre-change build (same sources, same
-  order, same flags). `legacy/N3/testing`'s CTest cases stay green, which for the default
-  build *is* meaningful, because nothing changed.
-- `-DEBTKS_LAPACK_LIBRARIES=openblas` (the confirmed case, "OpenBLAS, checked concretely on
-  this machine" above) — link-level checks, which are what this item is actually
-  responsible for: `ar t libEBTKS.a` lists **no** `clapack` members; `nm` on
-  `spline_smooth`, `evaluate_field`, `nu_correct_cxx`, `nu_estimate_cxx` shows `dsysv_` as
-  `U` rather than `T`, and `ldd` lists `libopenblas.so.0`; every executable and the CTest
-  suite still builds and runs to completion.
+- Default build (`EBTKS_BLAS_BACKEND=bundled`), no new flags — the only place a strict
+  identity is claimed, and it is claimed strictly: `ar t libEBTKS.a` lists the same 19
+  `clapack` object members as today, and the whole archive should be bit-identical to a
+  pre-change build (same sources, same order, same flags). `legacy/N3/testing`'s CTest
+  cases stay green, which for the default build *is* meaningful, because nothing changed.
+- `-DEBTKS_BLAS_BACKEND=lapack -DEBTKS_LAPACK_LIBRARIES=openblas` (the confirmed case,
+  "OpenBLAS, checked concretely on this machine" above) — link-level checks: `ar t
+  libEBTKS.a` lists **no** `clapack` members; `nm` on `spline_smooth`, `evaluate_field`,
+  `nu_correct_cxx`, `nu_estimate_cxx` shows `dsysv_` as `U` rather than `T`, and `ldd` lists
+  `libopenblas.so.0`; every executable and the CTest suite still builds and runs to
+  completion.
 - Numerical gate, **one iteration, not fifty**: run the two builds' own `spline_smooth`
   over the same input and compare the fitted fields directly. Expect a difference near the
   already-measured 3.1e-11 relative RMS; materially larger is a defect in the swap,
   materially smaller means the external library was not actually reached. Drive this with
   explicit absolute paths to the built binaries, not through `PATH`, for reason 1 above.
-- `nu_reference_1` under external LAPACK is run as an **observation, not a gate**, and
-  only with `PATH` explicitly set to the build tree so it means something. Record the
+  Repeat for each buildable backend against the same `bundled` build.
+- `nu_reference_1` under a non-`bundled` backend is run as an **observation, not a gate**,
+  and only with `PATH` explicitly set to the build tree so it means something. Record the
   relative RMS it reports. If it exceeds 1e-4, that is the documented amplification and
   belongs in `PROBLEMS.md` beside the existing §8 entry, together with the number — it is
   not license to change the 1e-4 in `testing/CMakeLists.txt`.
-- `-DEBTKS_LAPACK_LIBRARIES="lapack;blas"` (this machine's `liblapack.so.3`/
-  `libblas.so.3`, currently pointing at the same `libopenblas.so.0` via
-  `update-alternatives`): link-level checks only; expected to match the `openblas` case
-  bit for bit, since it is the same shared object under a different `-l` name. Its value is
-  as a test of the multi-name/`-L` path, not of a second implementation.
-- The genuinely different implementation is the reference Netlib build: `apt install
-  liblapack3` selected via `update-alternatives --config
+- `-DEBTKS_BLAS_BACKEND=lapack -DEBTKS_LAPACK_LIBRARIES="lapack;blas"` (this machine's
+  `liblapack.so.3`/`libblas.so.3`, currently pointing at the same `libopenblas.so.0` via
+  `update-alternatives`): link-level checks only; expected to match the `openblas` case bit
+  for bit, since it is the same shared object under a different `-l` name. Its value is as
+  a test of the multi-name/`-L` path, not of a second implementation.
+- `-DEBTKS_BLAS_BACKEND=lapacke`: unbuildable on this machine (no `lapacke.h`, no
+  `LAPACKE_*` symbol — "OpenBLAS, checked concretely on this machine" below). Its gate is
+  deferred to a superbuild that builds OpenBLAS with `NO_LAPACKE=0`; do not report it
+  verified on the strength of the `lapack` measurement.
+- `-DEBTKS_BLAS_BACKEND=cblas -DEBTKS_LAPACK_LIBRARIES=openblas`: link-level checks — `ar t`
+  shows the 11 LAPACK/support members and no BLAS members; `nm spline_smooth` shows
+  `cblas_dgemm` as `U`. Exercise a second time against `libgslcblas`, the BLAS-only
+  provider this backend exists for, confirmed present on this machine (143 `cblas_`
+  symbols, no `dsysv`).
+- The genuinely different implementation, for `lapack`, is the reference Netlib build:
+  `apt install liblapack3` selected via `update-alternatives --config
   liblapack.so.3-x86_64-linux-gnu`, which `README.md:536-538` already names. This is the
   one that would show a larger-than-3.1e-11 field difference legitimately, so measure it
   rather than predicting it. Requires installing a package, which `CLAUDE.md` forbids
   doing unilaterally — ask first, and treat this bullet as optional.
-- If `EBTKS_LAPACK_LIBRARIES` is ever turned on for a real `_install` build rather than
+- If any non-`bundled` backend is ever turned on for a real `_install` build rather than
   exercised only as a build-system capability, record the effect on `nu_correct_cxx`'s
   numbers in `PROBLEMS.md`, following the existing §8 entry as the template.
 
@@ -740,14 +867,50 @@ Confirmed by the user: the goal is the ability to **completely replace** `clapac
 system-provided library (OpenBLAS named as the concrete example), the bundled sources used
 only when none is supplied — which is a restatement of the original request ("use another
 BLAS/LAPACK library provided during the build, only use the included version as a
-fall-back") and exactly the mechanism already designed above: when
-`EBTKS_LAPACK_LIBRARIES` is set, none of the 19 `clapack/*.c` are compiled and the archive
-carries no clapack objects at all (first "Verification" bullet below) — replacement is
-complete, not additive. `cmake ..` with no extra flags keeps building the bundled fallback,
-matching "only use the included version as a fall-back option" and CLAUDE.md's
-no-silent-behaviour-change rule; a system library is selected by passing
-`-DEBTKS_LAPACK_LIBRARIES=...` explicitly, not auto-detected. No `FIND_PACKAGE` probing is
-added.
+fall-back") and exactly the mechanism designed above: when a non-`bundled` backend is
+named, none of the 19 `clapack/*.c` files EBTKS_BLAS_BACKEND excludes are compiled — under
+`lapack`/`lapacke` the archive carries no clapack objects at all, and under `cblas` it
+carries the 11 LAPACK/support objects and none of the 8 BLAS ones (first "Verification"
+bullet below) — replacement is complete, not additive. `cmake ..` with no extra flags keeps
+building the bundled fallback, matching "only use the included version as a fall-back
+option" and `CLAUDE.md`'s no-silent-behaviour-change rule; a system library is selected by
+naming it explicitly with `-DEBTKS_BLAS_BACKEND=...`, never auto-detected. No
+`FIND_PACKAGE` probing is added.
+
+**This posture was superseded once, briefly, and then reinstated.** An intermediate draft
+of the planning document (`TODO_BLAS.md`, before the design above) moved
+`EBTKS_BLAS_BACKEND`'s default to `auto` — probe for LAPACKE, then LAPACK, then CBLAS, then
+fall back to `bundled` — in response to a since-superseded instruction to prefer a system
+library whenever one is present. That draft was replaced, not built: the stated destination
+for this item is a superbuild that builds OpenBLAS itself, and a probe there can resolve
+against a *system* OpenBLAS instead of the one the superbuild just compiled, with no
+symptom but a linked path. `bundled` as the default, decided by the user in this section
+originally, stands.
+
+### The superbuild must supply
+
+Facts below are measured from this container's `openblas.pc`, not taken from OpenBLAS's own
+documentation, since the two can disagree on packaging defaults:
+
+- `lapacke` requires OpenBLAS built with **`NO_LAPACKE=0`**. This container's 0.3.26
+  package sets `NO_LAPACKE=1` — a Debian packaging choice, not an upstream limitation,
+  which is why `lapacke` is unbuildable here but reachable through a superbuild ("OpenBLAS,
+  checked concretely on this machine" below).
+- `lapack` requires **`USE_64BITINT=0`** (LP64). `TBSpline.cc`'s `long int` declaration for
+  `dsysv_` is wrong against an ILP64 build.
+- A **statically** built OpenBLAS drags `Libs.private: -lm -lpthread -lgfortran`; omitting
+  them fails the link of every `legacy/N3` executable, one project after `libEBTKS.a`
+  itself, since EBTKS is a static library that records no such dependency.
+- `pkg-config` (`openblas.pc`, `blas.pc`, `lapack.pc`, all present here and installed by a
+  self-built OpenBLAS too) is documented as a convenience for populating
+  `EBTKS_LAPACK_LIBRARIES`/`_LIBRARY_DIRS`/`_INCLUDE_DIRS` by hand or from a superbuild
+  script. It is **not** the selection mechanism: a `PKG_CONFIG_PATH` that resolves against
+  a system copy instead of the superbuild's own is the same silent failure a probe would
+  be, so nothing here queries it automatically.
+- A concrete `ExternalProject_Add(EBTKS ... DEPENDS OpenBLAS)` is required regardless of
+  backend, since the validation step (`/app/TODO_BLAS.md` task 3) checks that the named
+  library resolves at EBTKS-configure time — a superbuild that configures EBTKS before
+  OpenBLAS finishes building fails that check correctly rather than silently.
 
 ### OpenBLAS, checked concretely on this machine
 
@@ -757,28 +920,28 @@ than assumed:
 - `libopenblas-dev`/`libopenblas0-pthread` (0.3.26, this container's installed package)
   builds LAPACK *into* `libopenblas.so.0` under its plain Fortran names — `nm -D
   /usr/lib/x86_64-linux-gnu/libopenblas.so.0` lists `dsysv_` (and `dsysv_aa_`, `dsysv_rk_`,
-  `dsysv_rook_`) as `T` (defined). One name resolves the sole symbol this tree needs:
-  `-DEBTKS_LAPACK_LIBRARIES=openblas` — no separate `lapack`/`blas` package required, and
-  it is the same library `update-alternatives` already points `liblapack.so.3`/
-  `libblas.so.3` at on this machine (`README.md`, "Which LAPACK the legacy backend
-  links"), so this is not a second code path, just a shorter one.
-- LAPACKE (`LAPACKE_dsysv`, the C-calling-convention wrapper — `lapack_int`, an explicit
-  row/column-major flag, no hidden Fortran arguments) is a **separate, optional** interface
-  some OpenBLAS builds also ship. This package does not: `nm -D libopenblas.so.0 | grep
-  LAPACKE_` is empty, and no `lapacke.h` is installed system-wide (only a vendored copy
-  under Eigen, unrelated). It does not matter here regardless of whether it is present,
-  because `TBSpline.cc:648` calls the raw Fortran-mangled `dsysv_` symbol directly, the
-  same call the bundled `clapack/dsysv.c` answers today — not `LAPACKE_dsysv`. Nothing in
-  this plan links or requires `liblapacke`; recorded here only so "OpenBLAS, which
-  includes LAPACKE" is not misread as this swap needing LAPACKE's headers or a
-  `LAPACKE_dsysv` call. Should the ABI-adapter alternative ever be revisited (currently
-  rejected, above), LAPACKE would be the natural replacement for the hand-declared
-  `extern "C"` prototype — it is the more robust interface — but that is a `TBSpline.cc`
-  change and out of scope for this build-system-only item.
+  `dsysv_rook_`) as `T` (defined). One name resolves the sole symbol backend `lapack`
+  needs: `-DEBTKS_BLAS_BACKEND=lapack -DEBTKS_LAPACK_LIBRARIES=openblas` — no separate
+  `lapack`/`blas` package required, and it is the same library `update-alternatives`
+  already points `liblapack.so.3`/`libblas.so.3` at on this machine (`README.md`, "Which
+  LAPACK the legacy backend links"), so this is not a second code path, just a shorter one.
+- **LAPACKE is absent here, by packaging choice.** `nm -D libopenblas.so.0 | grep LAPACKE_`
+  is empty, no `lapacke.h` is installed system-wide (only a vendored copy under Eigen,
+  unrelated), and `openblas.pc` records why: `openblas_config = … NO_LAPACKE=1 …`. This is
+  Debian's build of OpenBLAS, not a limitation of OpenBLAS itself — a superbuild building
+  OpenBLAS from source with `NO_LAPACKE=0` produces the interface with nothing installed.
+  **An earlier version of this section said "nothing in this plan links or requires
+  `liblapacke`"; that is no longer true and is retracted.** Backend `lapacke`
+  (`legacy/EBTKS/shim/dsysv_lapacke.c`, calling `LAPACKE_dsysv_work`) links it, is
+  implemented alongside `lapack`, and is the backend a superbuild should prefer once it
+  controls the OpenBLAS build: ILP64-safe by construction (the shim converts in both
+  directions) where `lapack` had to declare ILP64 out of scope. It remains unbuildable and
+  unmeasured *on this machine specifically*, tracked as `[~]` in `/app/TODO_BLAS.md` task 5.
 
-`-DEBTKS_LAPACK_LIBRARIES=openblas` becomes the primary case in "Verification, once
-implemented" below, ahead of the generic `lapack;blas` alternative, since it is the example
-given and already confirmed to export the needed symbol on this machine.
+`-DEBTKS_BLAS_BACKEND=lapack -DEBTKS_LAPACK_LIBRARIES=openblas` is the primary case in
+"Verification, once implemented" above, ahead of the generic `lapack;blas` alternative,
+since it is the example given and already confirmed to export the needed symbol on this
+machine.
 
 ## Open risks
 
