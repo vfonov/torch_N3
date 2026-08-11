@@ -269,7 +269,7 @@ def test_the_stacked_system_is_the_square_root_of_the_normal_equations(
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
-@pytest.mark.parametrize("solver", ["qr", "blocked", "dr"])
+@pytest.mark.parametrize("solver", ["qr", "blocked", "dr", "svd"])
 @pytest.mark.parametrize("distance", [200.0, 100.0])
 def test_the_stacked_fit_is_the_same_on_the_gpu(chunk, bumpy, distance, solver):
     """The reproducibility this solver was added for, stated as a requirement.
@@ -280,16 +280,18 @@ def test_the_stacked_fit_is_the_same_on_the_gpu(chunk, bumpy, distance, solver):
     pipeline diverges (see CLAUDE.md).  The bound here is float64 rounding
     accumulated over the fit, ``sqrt(N) * eps`` with ``N`` around ``1e5``, which
     is ``1e-13``; ``1e-11`` leaves two decades and is still two orders below
-    where the normal equations sit.
+    where the normal equations sit.  ``"svd"`` measures a little above the
+    other three here (``2.6e-13``/``6.0e-14`` at 200/100 mm against ``"qr"``'s
+    ``1.3e-13``/``4.5e-14``) but the same order, and the bound is unchanged.
 
     ``"equilibrated"`` is deliberately not parametrized here: it is still a
     solve of the squared, ~1e9-conditioned Gram matrix, only rescaled to unit
-    diagonal, not the unsquared stacked system ``"qr"``/``"blocked"``/``"dr"``
-    factorise instead -- see the module docstring.  Measured at 200 mm on this
-    fixture, its CPU/GPU relative RMS is ``4.7e-8``, indistinguishable from
-    ``"normal"``'s own ``4.7e-8`` and four orders above this test's bound: the
-    diagonal scaling buys Cholesky feasibility and a smaller residual, not
-    cross-platform reproducibility.
+    diagonal, not the unsquared stacked system ``"qr"``/``"blocked"``/``"dr"``/
+    ``"svd"`` factorise instead -- see the module docstring.  Measured at
+    200 mm on this fixture, its CPU/GPU relative RMS is ``4.66e-9``,
+    indistinguishable from ``"normal"``'s own ``4.66e-9`` and four orders
+    above this test's bound: the diagonal scaling buys Cholesky feasibility
+    and a smaller residual, not cross-platform reproducibility.
     """
     values, inside = bumpy
 
@@ -322,6 +324,52 @@ def test_the_blocked_solver_reproduces_the_dense_one(chunk, bumpy):
             values, inside).evaluate()
 
         assert_close(banded, dense, atol=ROUNDING * span(dense))
+
+
+def test_the_svd_solver_reproduces_the_stacked_one(chunk, bumpy):
+    """On a well-posed mask, truncation never triggers and this is ``"qr"``.
+
+    ``solve_info["truncated"]`` has to be ``0`` here for the comparison to
+    mean what it claims: this is not a looser bound tolerating a different
+    answer, it is the same answer by a different factorization, exactly as
+    ``"blocked"`` is required to reproduce ``"qr"`` above.
+    """
+    values, inside = bumpy
+
+    for distance in (200.0, 100.0, 50.0):
+        dense = blocks.BSplineField(chunk, distance, 1e-7, solver="qr").fit(
+            values, inside).evaluate()
+        fitted = blocks.BSplineField(chunk, distance, 1e-7, solver="svd").fit(
+            values, inside)
+
+        assert fitted.solve_info["truncated"] == 0
+        assert_close(fitted.evaluate(), dense, atol=ROUNDING * span(dense))
+
+
+def test_the_svd_solver_truncates_where_qr_silently_does_not(chunk):
+    """The case ``"svd"`` exists for: a mask too sparse to determine the fit.
+
+    A single voxel cannot pin down all four of the affine trend components
+    the bending-energy penalty leaves unpenalised (module docstring, "dr"),
+    so the stacked system is numerically rank deficient.  ``"qr"``'s
+    ``driver="gels"`` does not detect this and returns *a* solution rather
+    than the minimum-norm one -- measured here at more than triple the
+    coefficient norm of the truncated answer.  ``"svd"`` reports the
+    truncation rather than silently absorbing it.
+    """
+    mask = torch.zeros(chunk.shape, dtype=torch.bool)
+    mask[chunk.shape[0] // 2, chunk.shape[1] // 2, chunk.shape[2] // 2] = True
+    values = torch.zeros(chunk.shape, dtype=torch.float64)
+    values[mask] = 1.0
+
+    qr = blocks.BSplineField(chunk, 200.0, 1e-7, solver="qr").fit(
+        values, mask)
+    svd = blocks.BSplineField(chunk, 200.0, 1e-7, solver="svd").fit(
+        values, mask)
+
+    assert svd.solve_info["truncated"] >= 1
+    assert torch.isfinite(svd.coefficients).all()
+    assert float(qr.coefficients.norm()) > 2.0 * float(svd.coefficients.norm())
 
 
 @requires_compatible_scipy_sparse()

@@ -139,18 +139,55 @@ The least-squares problem is answered by the solvers below, selected by
     the torch side with a mask that empties one basis function's row.
 
     **This is not a reproducibility solver, unlike ``"qr"``/``"blocked"``/
-    ``"dr"``.**  Those factorise the *unsquared* stacked system, which halves
-    the condition number's exponent by construction; equilibration only
-    rescales the same squared Gram matrix, trimming ``1e13`` to about ``1e9``
-    -- three and a half decades, not seven.  Measured on this module's own
-    fixture at 200 mm, CPU/GPU agreement is ``4.7e-8`` relative RMS,
-    indistinguishable from ``"normal"``'s own ``4.7e-8`` and four orders above
-    where the stacked solvers land (``1e-12``).  What equilibration buys is a
+    ``"dr"``/``"svd"``.**  Those factorise the *unsquared* stacked system,
+    which halves the condition number's exponent by construction; equilibration
+    only rescales the same squared Gram matrix, trimming ``1e13`` to about
+    ``1e9`` -- three and a half decades, not seven.  Measured on this module's
+    own fixture at 200 mm, CPU/GPU agreement is ``4.66e-9`` relative RMS
+    (``RMS(a-b) / span(a)``), indistinguishable from ``"normal"``'s own
+    ``4.66e-9`` and four orders above where the stacked solvers land
+    (``1e-13``).  What equilibration buys is a
     feasible, pivot-free Cholesky and a fit that agrees with the oracle to the
     same bound ``"normal"`` does (``tests/test_spline.py``,
     ``test_the_equilibrated_solver_matches_its_own_oracle_closely``) -- not a
     cross-platform guarantee, and it is not parametrized into
     ``test_the_stacked_fit_is_the_same_on_the_gpu`` for that reason.
+
+``"svd"``
+    The same stacked system as ``"qr"`` -- :math:`[A; \\sqrt{\\lambda N}\\, D]
+    c \\simeq [f; 0]` -- factorised by :func:`torch.linalg.svd` instead of
+    Householder QR, then solved through the Moore-Penrose pseudoinverse:
+    singular values at or below ``max(rows, size) * eps * s_max`` (the
+    threshold ``torch.linalg.lstsq``'s own rank-revealing drivers use) are
+    treated as zero rather than divided by, which is the minimum-norm answer
+    among every least-squares solution rather than an arbitrary one.
+
+    ``"qr"``'s ``driver="gels"`` assumes full column rank and does not check
+    for its absence: **it does not raise on a rank-deficient stacked system,
+    contrary to what this docstring said before it was measured here** -- it
+    silently returns *a* solution, not the minimum-norm one.  Rank deficiency
+    needs a mask sparse enough that none of the samples pin down one of the
+    four affine trend components the bending-energy penalty leaves
+    unpenalised (see ``"dr"`` above).  Measured on ``chunk.mnc`` at 200 mm
+    with a single-voxel mask: the stacked system's condition number is
+    ``2.25e15`` with one singular value truncated, ``"qr"``'s coefficient
+    vector comes out ``3.39x`` the norm of the truncated answer, and the two
+    fields disagree by ``195%`` relative RMS -- ``"qr"`` cannot be trusted
+    there.  ``solve_info`` (``"rank"``, ``"truncated"``, ``"cond"``) reports
+    which case a fit landed in.
+
+    On every mask this module's own tests exercise, nothing is truncated --
+    on ``chunk.mnc``'s own fixture ``solve_info["truncated"]`` is ``0`` at
+    200/100/50 mm, and the answer agrees with ``"qr"`` to ``2.5e-13``,
+    ``4.8e-14`` and ``2.5e-14`` relative RMS respectively, which is rounding.
+    CPU/GPU agreement is likewise in the ``"qr"``/``"blocked"``/``"dr"``
+    family rather than ``"normal"``'s: ``2.6e-13``, ``6.0e-14`` and
+    ``2.4e-14`` at the same three spacings, against ``"qr"``'s own
+    ``1.3e-13``, ``4.5e-14`` and ``7.1e-15`` there -- both several orders
+    below ``"equilibrated"``'s ``4e-8``.  This is a safety net for a mask the
+    other stacked solvers were never checked against, not an improvement on
+    them where they already agree: it costs an SVD instead of a QR, which is
+    the more expensive factorization for the same shape.
 
 ``"sparse"``
     The same stacked system again, held in ``scipy.sparse`` and handed to
@@ -194,13 +231,13 @@ _CHUNK_ELEMENTS = 1 << 22
 #: The solvers :meth:`BSplineField.fit` can be asked for.  ``"normal"`` is the
 #: legacy's own formulation and the reference the others are measured against;
 #: see this module's docstring.
-SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated", "sparse")
+SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated", "svd", "sparse")
 
 #: The solvers that answer the fit by a direct factorization, and so to the
 #: last few bits of float64.  ``"sparse"`` is iterative and is not among them:
 #: it stops on a tolerance it cannot reach here.  Anything asserting an exact
 #: fit should be parametrised over these, not over :data:`SOLVERS`.
-DIRECT_SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated")
+DIRECT_SOLVERS = ("normal", "qr", "blocked", "dr", "equilibrated", "svd")
 
 
 class BSplineField:
@@ -284,7 +321,8 @@ class BSplineField:
         solve = {"qr": self._solve_stacked, "sparse": self._solve_sparse,
                  "blocked": self._solve_blocked, "dr": self._solve_dr,
                  "normal": self._solve_normal,
-                 "equilibrated": self._solve_equilibrated}[self.solver]
+                 "equilibrated": self._solve_equilibrated,
+                 "svd": self._solve_svd}[self.solver]
         self._coefficients = solve(columns, weights, sampled)
         return self
 
@@ -367,10 +405,12 @@ class BSplineField:
         # "gels" is Householder QR, and the one driver both CPU and CUDA
         # implement; naming it keeps the same factorization on either device,
         # where the default would pick a different one per device and put the
-        # machine back into the answer.  It reports rank deficiency as an
-        # error rather than returning a minimum-norm answer for it, which is
-        # the required behaviour: with lambda above zero, rank deficiency
-        # requires a nearly empty mask.
+        # machine back into the answer.  With lambda above zero, rank
+        # deficiency requires a mask sparse enough to leave one of the
+        # penalty's four unpenalised affine components with no data pinning
+        # it down (module docstring, "svd").  "gels" does not raise there: it
+        # silently returns *a* solution, not the minimum-norm one -- use
+        # ``solver="svd"`` if that mask is a possibility.
         return torch.linalg.lstsq(stacked, right, driver="gels").solution
 
     def _solve_blocked(self, columns, weights, values):
@@ -526,6 +566,40 @@ class BSplineField:
             y = torch.linalg.solve(scaled, scaled_b)
 
         return y / d
+
+    def _solve_svd(self, columns, weights, values):
+        """``"qr"``'s stacked system, factorised by SVD and truncated.
+
+        Builds ``[A; sqrt(lam*N) D] c ~ [f; 0]`` exactly as :meth:`_solve_stacked`
+        does, but factorises it with :func:`torch.linalg.svd` (economy) instead
+        of Householder QR, then solves through the Moore-Penrose pseudoinverse
+        with singular values at or below ``max(rows, size) * eps * s_max``
+        (the threshold ``torch.linalg.lstsq``'s own rank-revealing drivers use)
+        treated as zero rather than divided by.  See the module docstring for
+        when this differs from ``"qr"`` and by how much.  ``solve_info``
+        records how many singular values were kept.
+        """
+        size = int(np.prod(self.n))
+        factor = bending_energy_factor(self.n, self.device)
+        scale = math.sqrt(self.lam * self._nsamples)
+
+        stacked = torch.zeros((columns.shape[0] + factor.shape[0], size),
+                              dtype=torch.float64, device=self.device)
+        stacked[:columns.shape[0]].scatter_(1, columns, weights)
+        stacked[columns.shape[0]:] = scale * factor
+
+        right = torch.zeros(stacked.shape[0], dtype=torch.float64,
+                            device=self.device)
+        right[:values.shape[0]] = values
+
+        u, s, vh = torch.linalg.svd(stacked, full_matrices=False)
+        threshold = max(stacked.shape) * torch.finfo(torch.float64).eps * s[0]
+        keep = s > threshold
+        inverse = torch.where(keep, 1.0 / s, torch.zeros_like(s))
+        self.solve_info = {"rank": int(keep.sum()),
+                           "truncated": int((~keep).sum()),
+                           "cond": float(s[0] / s[-1])}
+        return vh.T @ (inverse * (u.T @ right))
 
     def _solve_sparse(self, columns, weights, values):
         """``"qr"``'s stacked system, held sparse and solved iteratively.
