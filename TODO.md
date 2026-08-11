@@ -79,27 +79,48 @@ and fails loudly. The per-decision citations to the Perl line (`:1557`, `:499-50
 ## External BLAS/LAPACK for `legacy/EBTKS`/`legacy/N3`'s own build (PLAN §10)
 
 Separate from the `nu_correct_cxx` work above and orthogonal to it — a build-system item, not
-a change to a corrected voxel. Tracked in full in `/app/TODO_BLAS.md`; `/app/PLAN.md` §10 is
-the design. State at 2026-08-07:
+a change to a corrected voxel. `/app/PLAN.md` §10 is the design, already reframed to the
+four-value switch below (its own task 1 is done, in effect: the retractions and the
+"Default posture — resolved" section it called for are both present at `PLAN.md:776`,
+`:864`, `:933`). Closed: the four-value `EBTKS_BLAS_BACKEND` switch (`bundled` default,
+`lapack`, `lapacke`, `cblas`) in `legacy/EBTKS/CMakeLists.txt`, configure-time validation, no
+autodetection, `bundled` verified bit-identical to the pre-change archive, and propagation to
+`legacy/N3/CMakeLists.txt` on both the standalone (`FIND_PACKAGE(EBTKS)`) and superbuild
+(`MINC_TOOLKIT_BUILD`) paths — except the one gap below. All three non-`bundled` backends
+built, linked and measured against `bundled` on this machine: `lapack`/`cblas` (`openblas`)
+one-iteration `spline_smooth` relative RMS 9.77e-08, `cblas` (`gslcblas`) exactly 0 (both
+reference triple-loop implementations retracing the same summation order — explained, not
+just observed), `ctest` 37/37 under each (2026-08-07). `lapacke` followed on 2026-08-11 once
+`liblapacke-dev` was installed (user action; a standalone Debian package, unrelated to
+OpenBLAS's own `NO_LAPACKE` flag — the original assumption that only a superbuild-built
+OpenBLAS could supply it was wrong): the only backend that reaches real Cholesky
+(`N3_HAVE_LAPACK_CHOLESKY`, `TBSpline.cc:101-105`) in `nu_correct_cxx`/`nu_estimate_cxx`'s
+equilibration+Cholesky solve (`7d84753`), built in an isolated tree under `scratchpad/`, not
+`/app/legacy/_install`; no `dsysv` fallback through 30 iterations on `chunk.mnc`, field
+agreement with the `bundled` build 1.83e-09 to 4.32e-09 relative RMS across 1-20 iterations,
+`spline_smooth`'s own gate (which cannot reach the modern solve) the same 9.77e-08 as
+`lapack`/`cblas`, `ctest` 37/38.
 
-- [x] Design, source split, four-value `EBTKS_BLAS_BACKEND` switch (`bundled` default,
-  `lapack`, `lapacke`, `cblas`), configure-time validation, all four in
-  `legacy/EBTKS/CMakeLists.txt`. `bundled` verified bit-identical to the pre-change archive;
-  `legacy/N3/CMakeLists.txt` propagates the choice on both the standalone
-  (`FIND_PACKAGE(EBTKS)`) and superbuild (`MINC_TOOLKIT_BUILD`) paths.
-- [x] `lapack` and `cblas` built, linked, and measured against `bundled` on this machine
-  (`openblas`; `cblas` also against `libgslcblas`): one-iteration `spline_smooth` relative RMS
-  9.77e-08 (`openblas`, both backends) / exactly 0 (`gslcblas`, explained — see
-  `TODO_BLAS.md` task 9). `ctest` 37/37 under each.
-- [~] `lapacke` (`legacy/EBTKS/shim/dsysv_lapacke.c`) implemented but **not buildable on this
-  machine** — no system `lapacke.h`/`LAPACKE_*` (Debian's OpenBLAS ships `NO_LAPACKE=1`).
-  Verification deferred to a superbuild that builds OpenBLAS itself.
+Open:
+
+- [ ] **`EBTKS_BLAS_BACKEND` does not propagate to a standalone N3 configure**, found building
+  `lapacke`. `EBTKSConfig.cmake` exports `EBTKS_LAPACK_LIBRARIES`/`_LIBRARY_DIRS` but not
+  `EBTKS_BLAS_BACKEND` itself, so `N3/CMakeLists.txt:77`'s `EBTKS_DSYSV_LAPACKE_SHIM` switch
+  (needed for `N3_HAVE_LAPACK_CHOLESKY`) never fires under `FIND_PACKAGE(EBTKS)` unless
+  `EBTKS_BLAS_BACKEND=lapacke` is *also* passed to N3's own `cmake`, redundantly with EBTKS's
+  — silent, not a build failure. Unresolved in `legacy/N3/CMakeLists.txt`. (A related but
+  non-code pitfall from the same build, not tracked as an item: `-L/opt/minc/.../lib`
+  precedes an isolated EBTKS install in the link search order and shadows it, same as the
+  `lapack` backend's own gotcha — worked around with `CMAKE_EXE_LINKER_FLAGS`, nothing to fix
+  in the repository.)
 - [ ] `nu_reference_1` observation under a non-`bundled` backend with `PATH` pointed at the
-  build tree — not run.
-- [ ] Task 8's `ExternalProject_Add` argument lists — not written; no superbuild driver
-  exists in this tree yet to write them against.
-- `/app/legacy/_install` is unaffected: default stays `bundled`, confirmed byte-identical
-  before and after this work.
+  build tree — not run, any backend. It shells out to the Perl driver via `$ENV{PATH}`
+  regardless of backend, so `ctest`'s own 37/37 (or 37/38) never exercises this; the one
+  `lapacke` `ctest` failure is this same `PATH` shadow, not a regression.
+- [ ] `ExternalProject_Add` argument lists for a real superbuild — not written; no superbuild
+  driver exists in this tree yet to write them against.
+- `/app/legacy/_install` is unaffected throughout: default stays `bundled`, confirmed
+  byte-identical before and after this work.
 
 ## Standing risk
 

@@ -483,7 +483,9 @@ at configure time, compiling the bundled `clapack/` sources only when none is na
 "Untouched: … `legacy/EBTKS`" line belongs to the `nu_correct_cxx` feature above and does not
 apply here — this item edits `legacy/EBTKS/CMakeLists.txt`, `legacy/N3/CMakeLists.txt`,
 `EBTKSConfig.cmake.in` and `UseEBTKS.cmake.in`, deliberately, plus a new
-`legacy/EBTKS/shim/` directory. Tracked task by task in `/app/TODO_BLAS.md`.
+`legacy/EBTKS/shim/` directory. Status and remaining open items in `/app/TODO.md`, "External
+BLAS/LAPACK" — folded in from the retired `TODO_BLAS.md` on 2026-08-11 once its tasks were
+done and measured.
 
 **Governing rule: the choice is explicit and is never inferred.** Nothing is searched for, no
 capability is probed for in order to pick a default, and a named backend that cannot be
@@ -779,12 +781,13 @@ bundled archive: the eight BLAS symbols are defined as `EBTKS_dcopy`, `EBTKS_dge
   is resolved at link time, not compiled into `TBSpline.cc`'s translation unit, so an
   adapter is a standalone TU that can live anywhere the linker can find it —
   `legacy/EBTKS/shim/`, in this design. `legacy/N3/src` is untouched by it. The adapter is
-  now implemented, as backend `lapacke` (`shim/dsysv_lapacke.c`, via `LAPACKE_dsysv_work`)
-  — see `/app/TODO_BLAS.md` task 5. The checked-in 3.1e-11 measurement that motivated the
-  original rejection is not itself wrong: it shows the *unmodified* call already works, which
-  is why `lapack` (no adapter) is implemented too and lands first. The two are not
-  alternatives to each other; a superbuild picks between them per "Why `lapack` and
-  `lapacke` are both implemented" in `/app/TODO_BLAS.md`.
+  now implemented, as backend `lapacke` (`shim/dsysv_lapacke.c`, via `LAPACKE_dsysv_work`),
+  and — once unbuildable on this machine — built and measured here 2026-08-11 (`/app/TODO.md`,
+  "External BLAS/LAPACK"). The checked-in 3.1e-11 measurement that motivated the original
+  rejection is not itself wrong: it shows the *unmodified* call already works, which is why
+  `lapack` (no adapter) is implemented too and lands first. The two are not alternatives to
+  each other; a superbuild picks between them per "Why `lapack` and `lapacke` are both
+  implemented" below.
 
 ### Verification, once implemented
 
@@ -908,9 +911,10 @@ documentation, since the two can disagree on packaging defaults:
   a system copy instead of the superbuild's own is the same silent failure a probe would
   be, so nothing here queries it automatically.
 - A concrete `ExternalProject_Add(EBTKS ... DEPENDS OpenBLAS)` is required regardless of
-  backend, since the validation step (`/app/TODO_BLAS.md` task 3) checks that the named
-  library resolves at EBTKS-configure time — a superbuild that configures EBTKS before
-  OpenBLAS finishes building fails that check correctly rather than silently.
+  backend, since `legacy/EBTKS/CMakeLists.txt`'s configure-time validation checks that the
+  named library resolves at EBTKS-configure time — a superbuild that configures EBTKS before
+  OpenBLAS finishes building fails that check correctly rather than silently. Not written —
+  `/app/TODO.md`, "External BLAS/LAPACK".
 
 ### OpenBLAS, checked concretely on this machine
 
@@ -925,18 +929,24 @@ than assumed:
   `lapack`/`blas` package required, and it is the same library `update-alternatives`
   already points `liblapack.so.3`/`libblas.so.3` at on this machine (`README.md`, "Which
   LAPACK the legacy backend links"), so this is not a second code path, just a shorter one.
-- **LAPACKE is absent here, by packaging choice.** `nm -D libopenblas.so.0 | grep LAPACKE_`
-  is empty, no `lapacke.h` is installed system-wide (only a vendored copy under Eigen,
-  unrelated), and `openblas.pc` records why: `openblas_config = … NO_LAPACKE=1 …`. This is
-  Debian's build of OpenBLAS, not a limitation of OpenBLAS itself — a superbuild building
-  OpenBLAS from source with `NO_LAPACKE=0` produces the interface with nothing installed.
-  **An earlier version of this section said "nothing in this plan links or requires
+- **LAPACKE was absent here as of 2026-08-07, by packaging choice**, and is present now.
+  `nm -D libopenblas.so.0 | grep LAPACKE_` was empty, no `lapacke.h` was installed
+  system-wide (only a vendored copy under Eigen, unrelated), and `openblas.pc` recorded why:
+  `openblas_config = … NO_LAPACKE=1 …` — Debian's build of OpenBLAS, not a limitation of
+  OpenBLAS itself. The claim drawn from that at the time — that only a superbuild building
+  OpenBLAS from source with `NO_LAPACKE=0` could produce the interface — **was wrong**:
+  `liblapacke-dev` (source package `lapack`, standalone, unrelated to OpenBLAS's own
+  `NO_LAPACKE` flag) reaches it with a plain package install. Installed 2026-08-11 (user
+  action). **An earlier version of this section said "nothing in this plan links or requires
   `liblapacke`"; that is no longer true and is retracted.** Backend `lapacke`
   (`legacy/EBTKS/shim/dsysv_lapacke.c`, calling `LAPACKE_dsysv_work`) links it, is
   implemented alongside `lapack`, and is the backend a superbuild should prefer once it
   controls the OpenBLAS build: ILP64-safe by construction (the shim converts in both
-  directions) where `lapack` had to declare ILP64 out of scope. It remains unbuildable and
-  unmeasured *on this machine specifically*, tracked as `[~]` in `/app/TODO_BLAS.md` task 5.
+  directions) where `lapack` had to declare ILP64 out of scope. **Built and measured on this
+  machine 2026-08-11** (`/app/TODO.md`, "External BLAS/LAPACK"): real Cholesky reached with no
+  `dsysv` fallback through 30 iterations on real data, field agreement with the `bundled`
+  build 1.83e-09 to 4.32e-09 relative RMS, `ctest` 37/38 (the one failure a pre-existing,
+  backend-independent `PATH` shadow, not a regression).
 
 `-DEBTKS_BLAS_BACKEND=lapack -DEBTKS_LAPACK_LIBRARIES=openblas` is the primary case in
 "Verification, once implemented" above, ahead of the generic `lapack;blas` alternative,
