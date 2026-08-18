@@ -982,6 +982,11 @@ taking N3 from 0.7 s to 2.5 s and `hoyer` from 2.5 s to 4.4 s.
 it is worth considerably more than its cost. `--denoise --parzen-sigma 4` is the
 configuration to reach for.
 
+The filter is also available on its own, outside the N3 pipeline, as
+`python3 -m torch_n3.denoise_cli input.mnc output.mnc [--search N] [--patch N]
+[--strength X] [--device cuda]`. Unlike `--denoise` above, which filters a copy that
+feeds only the field estimate, this writes the filtered volume itself.
+
 #### Recovery under noise, over 450 random fields
 
 The same Monte Carlo as the window's, on colin27 at 75 mm knots, `--solver normal`,
